@@ -19,6 +19,7 @@ function Grid:new()
                 row = row,
                 col = col,
                 occupied = false,
+                reserved = false,  -- For units currently moving to this cell
                 unit = nil,
                 owner = self:getOwner(row) -- 1 for player 1, 2 for player 2
             }
@@ -139,6 +140,31 @@ function Grid:moveUnit(oldCol, oldRow, newCol, newRow, unit)
     newCell.unit = unit
 
     return true
+end
+
+-- Reserve a cell for a unit that's moving to it
+function Grid:reserveCell(col, row)
+    local cell = self:getCell(col, row)
+    if cell and not cell.occupied and not cell.reserved then
+        cell.reserved = true
+        return true
+    end
+    return false
+end
+
+-- Free a cell reservation
+function Grid:freeReservation(col, row)
+    local cell = self:getCell(col, row)
+    if cell then
+        cell.reserved = false
+    end
+end
+
+-- Check if a cell is available (not occupied and not reserved)
+function Grid:isCellAvailable(col, row)
+    local cell = self:getCell(col, row)
+    if not cell then return false end
+    return not cell.occupied and not cell.reserved
 end
 
 function Grid:getAllUnits()

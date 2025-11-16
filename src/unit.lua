@@ -1,6 +1,7 @@
 local Class = require('lib.classic')
 local Constants = require('src.constants')
 local Pathfinding = require('src.pathfinding')
+local tween = require('lib.tween')
 
 local Unit = Class:extend()
 
@@ -28,6 +29,26 @@ function Unit:new(row, col, owner, sprites)
     self.path = nil
     self.moveTimer = 0
 
+    -- Tween movement state
+    self.isMoving = false
+    self.tweenProgress = 0  -- 0 to 1
+    self.tweenDuration = 1 / self.moveSpeed  -- seconds
+    self.startCol = col
+    self.startRow = row
+    self.targetCol = nil
+    self.targetRow = nil
+
+    -- Attack animation state
+    self.attackAnimProgress = 0
+    self.attackAnimDuration = 0.15  -- Quick lunge animation
+    self.attackTargetCol = nil
+    self.attackTargetRow = nil
+
+    -- Hit animation state
+    self.hitAnimProgress = 0
+    self.hitAnimDuration = 0.1  -- Quick hit reaction
+    self.hitAnimIntensity = 0
+
     -- Visual
     self.sprite = self:getSprite()
 end
@@ -47,9 +68,52 @@ end
 function Unit:draw()
     local lg = love.graphics
 
-    -- Always use grid position (no interpolation)
-    local x = Constants.GRID_OFFSET_X + (self.col - 1) * Constants.CELL_SIZE
-    local y = Constants.GRID_OFFSET_Y + (self.row - 1) * Constants.CELL_SIZE
+    -- Calculate base position (with tween interpolation if moving)
+    local drawCol, drawRow = self.col, self.row
+
+    if self.isMoving and self.targetCol and self.targetRow then
+        -- Use inOutQuad easing for smooth acceleration/deceleration
+        local easedProgress = tween.easing.inOutQuad(self.tweenProgress, 0, 1, 1)
+
+        local colDiff = self.targetCol - self.startCol
+        local rowDiff = self.targetRow - self.startRow
+
+        drawCol = self.startCol + colDiff * easedProgress
+        drawRow = self.startRow + rowDiff * easedProgress
+    end
+
+    local x = Constants.GRID_OFFSET_X + (drawCol - 1) * Constants.CELL_SIZE
+    local y = Constants.GRID_OFFSET_Y + (drawRow - 1) * Constants.CELL_SIZE
+
+    -- Apply attack animation (lunge with outBack for punch effect)
+    if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then
+        local targetX = Constants.GRID_OFFSET_X + (self.attackTargetCol - 1) * Constants.CELL_SIZE
+        local targetY = Constants.GRID_OFFSET_Y + (self.attackTargetRow - 1) * Constants.CELL_SIZE
+
+        -- Calculate lunge direction
+        local dx = targetX - x
+        local dy = targetY - y
+        local distance = math.sqrt(dx * dx + dy * dy)
+
+        if distance > 0 then
+            -- Normalize direction
+            dx = dx / distance
+            dy = dy / distance
+
+            -- Use outBack easing for overshoot punch effect
+            local maxLunge = Constants.CELL_SIZE * 0.3
+            local lungeAmount = tween.easing.outBack(self.attackAnimProgress, 0, maxLunge, 1, 1.7)
+            x = x + dx * lungeAmount
+            y = y + dy * lungeAmount
+        end
+    end
+
+    -- Apply hit animation (elastic bounce for impact)
+    if self.hitAnimProgress < 1 and self.hitAnimIntensity > 0 then
+        -- Use inOutElastic for bouncy impact effect
+        local shakeAmount = tween.easing.inOutElastic(self.hitAnimProgress, 0, self.hitAnimIntensity, 1)
+        x = x + shakeAmount
+    end
 
     -- Get current sprite
     local sprite = self:getSprite()
@@ -92,9 +156,31 @@ function Unit:takeDamage(amount)
         self.health = 0
         self.isDead = true
     end
+
+    -- Trigger hit animation
+    self.hitAnimProgress = 0  -- Reset to start
+    self.hitAnimIntensity = 4  -- Pixels to shake
 end
 
 function Unit:update(dt, grid)
+    -- Update animations even when dead
+    if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then
+        self.attackAnimProgress = self.attackAnimProgress + (dt / self.attackAnimDuration)
+        if self.attackAnimProgress >= 1.0 then
+            self.attackAnimProgress = 1
+            self.attackTargetCol = nil
+            self.attackTargetRow = nil
+        end
+    end
+
+    if self.hitAnimProgress < 1 and self.hitAnimIntensity > 0 then
+        self.hitAnimProgress = self.hitAnimProgress + (dt / self.hitAnimDuration)
+        if self.hitAnimProgress >= 1.0 then
+            self.hitAnimProgress = 1
+            self.hitAnimIntensity = 0
+        end
+    end
+
     -- Dead units don't act
     if self.isDead then
         self.state = "dead"
@@ -229,6 +315,12 @@ end
 -- Attack the target
 function Unit:attack(target, grid)
     if target and not target.isDead then
+        -- Trigger attack animation
+        self.attackAnimProgress = 0  -- Reset to start
+        self.attackTargetCol = target.col
+        self.attackTargetRow = target.row
+
+        -- Apply damage
         target:takeDamage(self.damage)
 
         -- If target died, mark cell as unoccupied but keep unit visible
@@ -242,38 +334,63 @@ function Unit:attack(target, grid)
     end
 end
 
--- Move along the current path (discrete grid-to-grid movement)
+-- Move along the current path (with tween animation)
 function Unit:moveAlongPath(dt, grid)
     if not self.path or #self.path == 0 then return end
 
-    -- Wait for movement cooldown before moving to next cell
-    if self.moveTimer > 0 then return end
+    if self.isMoving then
+        -- Currently animating movement
+        self.tweenProgress = self.tweenProgress + (dt / self.tweenDuration)
 
-    local nextPos = self.path[1]
+        if self.tweenProgress >= 1.0 then
+            -- Tween complete - finalize movement
+            self.tweenProgress = 1.0
+            self.isMoving = false
 
-    -- Skip if next position is the same as current position
-    if nextPos.col == self.col and nextPos.row == self.row then
-        table.remove(self.path, 1)
-        return
-    end
+            -- Update grid: move from old position to new position
+            local oldCol, oldRow = self.col, self.row
+            grid:removeUnit(oldCol, oldRow)
+            grid:placeUnit(self.targetCol, self.targetRow, self)
 
-    -- Try to move to next cell atomically
-    local oldCol, oldRow = self.col, self.row
-    local success = grid:moveUnit(oldCol, oldRow, nextPos.col, nextPos.row, self)
+            -- Free the reservation
+            grid:freeReservation(self.targetCol, self.targetRow)
 
-    if success then
-        -- Move succeeded, update unit position (snap to grid)
-        self.col = nextPos.col
-        self.row = nextPos.row
+            -- Update unit position
+            self.col = self.targetCol
+            self.row = self.targetRow
 
-        -- Remove this waypoint from path
-        table.remove(self.path, 1)
-
-        -- Set movement cooldown (1 cell per second)
-        self.moveTimer = 1 / self.moveSpeed
+            -- Remove completed waypoint
+            table.remove(self.path, 1)
+        end
     else
-        -- Move failed (cell occupied), recalculate path
-        self.path = nil
+        -- Not currently moving - try to start next move
+        local nextPos = self.path[1]
+
+        -- Skip if next position is same as current
+        if nextPos.col == self.col and nextPos.row == self.row then
+            table.remove(self.path, 1)
+            return
+        end
+
+        -- Check if destination cell will be available
+        if grid:isCellAvailable(nextPos.col, nextPos.row) then
+            -- Reserve the destination cell
+            if grid:reserveCell(nextPos.col, nextPos.row) then
+                -- Start tween animation
+                self.isMoving = true
+                self.tweenProgress = 0
+                self.startCol = self.col
+                self.startRow = self.row
+                self.targetCol = nextPos.col
+                self.targetRow = nextPos.row
+            else
+                -- Reservation failed, recalculate path
+                self.path = nil
+            end
+        else
+            -- Destination not available, recalculate path
+            self.path = nil
+        end
     end
 end
 
