@@ -87,11 +87,7 @@ function Grid:canPlaceUnit(col, row, playerOwner)
         return false
     end
 
-    -- Check if cell belongs to the player
-    if cell.owner ~= playerOwner then
-        return false
-    end
-
+    -- Allow placement in any zone (for developer purposes)
     return true
 end
 
@@ -180,6 +176,15 @@ function Grid:getAllUnits()
     return units
 end
 
+-- Get the unit at a specific cell (returns nil if no unit)
+function Grid:getUnitAtCell(col, row)
+    local cell = self:getCell(col, row)
+    if cell then
+        return cell.unit
+    end
+    return nil
+end
+
 function Grid:update(dt, mouseX, mouseY)
     -- Update highlighted cell based on mouse/touch position
     local col, row = self:worldToGrid(mouseX, mouseY)
@@ -191,7 +196,7 @@ function Grid:update(dt, mouseX, mouseY)
     end
 end
 
-function Grid:draw()
+function Grid:draw(draggedUnit)
     local lg = love.graphics
 
     -- Draw grid background
@@ -239,11 +244,11 @@ function Grid:draw()
     lg.line(self.offsetX, centerY, self.offsetX + Constants.GRID_WIDTH, centerY)
     lg.setLineWidth(1)
 
-    -- Draw units
+    -- Draw units (skip the dragged unit if provided)
     for row = 1, self.rows do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
-            if cell.unit then
+            if cell.unit and cell.unit ~= draggedUnit then
                 cell.unit:draw()
             end
         end

@@ -3,6 +3,7 @@ local Constants = require('src.constants')
 local Grid = require('src.grid')
 local Unit = require('src.unit')
 local Card = require('src.card')
+local suit = require('lib.suit')
 
 local GameScreen = {}
 
@@ -20,37 +21,30 @@ function GameScreen.new()
         -- Create grid
         self.grid = Grid()
 
+        -- Initialize SUIT
+        self.suit = suit.new()
+
         -- Mouse/touch position
         self.mouseX = 0
         self.mouseY = 0
 
         -- Game state
         self.state = "setup" -- setup, battle, finished
-        self.timer = 30 -- seconds for setup phase
+        self.timer = 15 -- seconds for setup phase
         self.currentPlayer = 1  -- Player 1 is always the bottom player
 
         -- Card drafting
         self.cards = {}
         self.draggedCard = nil
+
+        -- Unit dragging (for repositioning during setup)
+        self.draggedUnit = nil
+        self.draggedUnitOriginalCol = nil
+        self.draggedUnitOriginalRow = nil
+        self.draggedUnitOffsetX = 0
+        self.draggedUnitOffsetY = 0
+
         self:generateCards()
-
-        -- Place Player 2 placeholder units for testing
-        self:placePlayer2Units()
-    end
-
-    function self:placePlayer2Units()
-        -- Place 4 Player 2 units in the top zone for testing
-        local positions = {
-            {col = 2, row = 3},
-            {col = 4, row = 3},
-            {col = 6, row = 3},
-            {col = 3, row = 5},
-        }
-
-        for _, pos in ipairs(positions) do
-            local unit = Unit(pos.row, pos.col, 2, self.sprites)
-            self.grid:placeUnit(pos.col, pos.row, unit)
-        end
     end
 
     function self:generateCards()
@@ -70,6 +64,9 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- SUIT frame management
+        self.suit:enterFrame()
+
         -- Update timer
         if self.state == "setup" then
             self.timer = self.timer - dt
@@ -110,13 +107,16 @@ function GameScreen.new()
 
         -- Update grid with current mouse position
         self.grid:update(dt, self.mouseX, self.mouseY)
+
+        -- SUIT frame management
+        self.suit:exitFrame()
     end
 
     function self:draw()
         local lg = love.graphics
 
-        -- Draw grid
-        self.grid:draw()
+        -- Draw grid (pass dragged unit so it can skip drawing it)
+        self.grid:draw(self.draggedUnit)
 
         -- Draw UI
         self:drawUI()
@@ -132,6 +132,14 @@ function GameScreen.new()
         if self.draggedCard then
             self.draggedCard:draw()
         end
+
+        -- Draw dragged unit on top (if repositioning during setup)
+        if self.draggedUnit then
+            self.draggedUnit:draw()
+        end
+
+        -- Draw SUIT UI elements
+        self.suit:draw()
     end
 
     function self:drawUI()
@@ -168,9 +176,19 @@ function GameScreen.new()
         if self.state == "setup" then
             lg.printf("Drag cards to place units", 0, Constants.GAME_HEIGHT - 130,
                       Constants.GAME_WIDTH, 'center')
-        elseif self.state == "finished" then
-            lg.printf("Press 'R' to restart", 0, Constants.GAME_HEIGHT - 130,
+            lg.printf("Drag units to reposition them", 0, Constants.GAME_HEIGHT - 110,
                       Constants.GAME_WIDTH, 'center')
+        elseif self.state == "finished" then
+            -- Restart button using SUIT
+            local buttonWidth = 120
+            local buttonHeight = 40
+            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+            local buttonY = Constants.GAME_HEIGHT / 2 + 40
+
+            local button = self.suit:Button("Restart", buttonX, buttonY, buttonWidth, buttonHeight)
+            if button.hit then
+                self:init()
+            end
         end
 
         -- Debug: Show highlighted cell
@@ -193,6 +211,13 @@ function GameScreen.new()
         if self.draggedCard then
             self.draggedCard:updateDrag(x, y)
         end
+
+        -- Update dragged unit position
+        if self.draggedUnit then
+            -- Store the screen position for rendering
+            self.draggedUnit.dragX = x - self.draggedUnitOffsetX
+            self.draggedUnit.dragY = y - self.draggedUnitOffsetY
+        end
     end
 
     function self:touchmoved(id, x, y, dx, dy, pressure)
@@ -203,11 +228,44 @@ function GameScreen.new()
         if self.draggedCard then
             self.draggedCard:updateDrag(x, y)
         end
+
+        -- Update dragged unit position
+        if self.draggedUnit then
+            -- Store the screen position for rendering
+            self.draggedUnit.dragX = x - self.draggedUnitOffsetX
+            self.draggedUnit.dragY = y - self.draggedUnitOffsetY
+        end
     end
 
     function self:mousepressed(x, y, button)
         if button == 1 and self.state == "setup" then
-            -- Check if clicking on a card
+            -- First, check if clicking on an existing unit to reposition it
+            local col, row = self.grid:worldToGrid(x, y)
+            if col and row then
+                local unit = self.grid:getUnitAtCell(col, row)
+                if unit then
+                    -- Pick up the unit
+                    self.draggedUnit = unit
+                    self.draggedUnitOriginalCol = col
+                    self.draggedUnitOriginalRow = row
+
+                    -- Calculate offset so unit doesn't jump to cursor
+                    local unitX = Constants.GRID_OFFSET_X + (col - 1) * Constants.CELL_SIZE
+                    local unitY = Constants.GRID_OFFSET_Y + (row - 1) * Constants.CELL_SIZE
+                    self.draggedUnitOffsetX = x - unitX
+                    self.draggedUnitOffsetY = y - unitY
+
+                    -- Initialize drag position
+                    unit.dragX = unitX
+                    unit.dragY = unitY
+
+                    -- Remove unit from grid temporarily
+                    self.grid:removeUnit(col, row)
+                    return
+                end
+            end
+
+            -- If not clicking on a unit, check if clicking on a card
             for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
                 local card = self.cards[i]
                 if card:contains(x, y) then
@@ -220,34 +278,68 @@ function GameScreen.new()
     end
 
     function self:mousereleased(x, y, button)
-        if button == 1 and self.draggedCard then
-            -- Try to place unit on grid
-            local col, row = self.grid:worldToGrid(x, y)
+        if button == 1 then
+            -- Handle unit repositioning
+            if self.draggedUnit then
+                local col, row = self.grid:worldToGrid(x, y)
 
-            if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
-                -- Create and place unit
-                local unit = Unit(row, col, self.currentPlayer, self.sprites)
-                if self.grid:placeUnit(col, row, unit) then
-                    -- Remove the card from hand
-                    for i, card in ipairs(self.cards) do
-                        if card == self.draggedCard then
-                            table.remove(self.cards, i)
-                            break
-                        end
-                    end
-
-                    -- Generate new cards
-                    self:generateCards()
-
-                    print(string.format("Placed unit at [%d, %d]", col, row))
+                -- Try to place unit at new position
+                if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                    -- Place unit at new position
+                    self.draggedUnit.col = col
+                    self.draggedUnit.row = row
+                    self.grid:placeUnit(col, row, self.draggedUnit)
+                    print(string.format("Repositioned unit to [%d, %d]", col, row))
+                else
+                    -- Invalid position, return to original spot
+                    self.draggedUnit.col = self.draggedUnitOriginalCol
+                    self.draggedUnit.row = self.draggedUnitOriginalRow
+                    self.grid:placeUnit(self.draggedUnitOriginalCol, self.draggedUnitOriginalRow, self.draggedUnit)
+                    print(string.format("Returned unit to original position [%d, %d]", self.draggedUnitOriginalCol, self.draggedUnitOriginalRow))
                 end
-            else
-                -- Snap card back to original position
-                self.draggedCard:snapBack()
+
+                -- Clear dragging state
+                self.draggedUnit.dragX = nil
+                self.draggedUnit.dragY = nil
+                self.draggedUnit = nil
+                self.draggedUnitOriginalCol = nil
+                self.draggedUnitOriginalRow = nil
+                return
             end
 
-            self.draggedCard:stopDrag()
-            self.draggedCard = nil
+            -- Handle card placement
+            if self.draggedCard then
+                -- Try to place unit on grid
+                local col, row = self.grid:worldToGrid(x, y)
+
+                if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                    -- Determine owner based on which zone the card is dropped in
+                    local owner = self.grid:getOwner(row)
+
+                    -- Create and place unit with the appropriate owner
+                    local unit = Unit(row, col, owner, self.sprites)
+                    if self.grid:placeUnit(col, row, unit) then
+                        -- Remove the card from hand
+                        for i, card in ipairs(self.cards) do
+                            if card == self.draggedCard then
+                                table.remove(self.cards, i)
+                                break
+                            end
+                        end
+
+                        -- Generate new cards
+                        self:generateCards()
+
+                        print(string.format("Placed Player %d unit at [%d, %d]", owner, col, row))
+                    end
+                else
+                    -- Snap card back to original position
+                    self.draggedCard:snapBack()
+                end
+
+                self.draggedCard:stopDrag()
+                self.draggedCard = nil
+            end
         end
     end
 

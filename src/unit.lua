@@ -68,22 +68,29 @@ end
 function Unit:draw()
     local lg = love.graphics
 
-    -- Calculate base position (with tween interpolation if moving)
-    local drawCol, drawRow = self.col, self.row
+    -- If being dragged, use drag position
+    local x, y
+    if self.dragX and self.dragY then
+        x = self.dragX
+        y = self.dragY
+    else
+        -- Calculate base position (with tween interpolation if moving)
+        local drawCol, drawRow = self.col, self.row
 
-    if self.isMoving and self.targetCol and self.targetRow then
-        -- Use inOutQuad easing for smooth acceleration/deceleration
-        local easedProgress = tween.easing.inOutQuad(self.tweenProgress, 0, 1, 1)
+        if self.isMoving and self.targetCol and self.targetRow then
+            -- Use inOutQuad easing for smooth acceleration/deceleration
+            local easedProgress = tween.easing.inOutQuad(self.tweenProgress, 0, 1, 1)
 
-        local colDiff = self.targetCol - self.startCol
-        local rowDiff = self.targetRow - self.startRow
+            local colDiff = self.targetCol - self.startCol
+            local rowDiff = self.targetRow - self.startRow
 
-        drawCol = self.startCol + colDiff * easedProgress
-        drawRow = self.startRow + rowDiff * easedProgress
+            drawCol = self.startCol + colDiff * easedProgress
+            drawRow = self.startRow + rowDiff * easedProgress
+        end
+
+        x = Constants.GRID_OFFSET_X + (drawCol - 1) * Constants.CELL_SIZE
+        y = Constants.GRID_OFFSET_Y + (drawRow - 1) * Constants.CELL_SIZE
     end
-
-    local x = Constants.GRID_OFFSET_X + (drawCol - 1) * Constants.CELL_SIZE
-    local y = Constants.GRID_OFFSET_Y + (drawRow - 1) * Constants.CELL_SIZE
 
     -- Apply attack animation (lunge with outBack for punch effect)
     if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then

@@ -5,17 +5,17 @@ Constants.GAME_WIDTH = 540
 Constants.GAME_HEIGHT = 960
 
 -- Grid configuration
-Constants.GRID_COLS = 7
-Constants.GRID_ROWS = 12
-Constants.CELL_SIZE = 48  -- Larger cells for better visibility
+Constants.GRID_COLS = 5
+Constants.GRID_ROWS = 8
+Constants.CELL_SIZE = 64  -- Larger cells for better visibility
 
 -- Grid dimensions in pixels
-Constants.GRID_WIDTH = Constants.GRID_COLS * Constants.CELL_SIZE  -- 336px
-Constants.GRID_HEIGHT = Constants.GRID_ROWS * Constants.CELL_SIZE -- 576px
+Constants.GRID_WIDTH = Constants.GRID_COLS * Constants.CELL_SIZE  -- 320px
+Constants.GRID_HEIGHT = Constants.GRID_ROWS * Constants.CELL_SIZE -- 512px
 
 -- Player sides (rows are split between two players)
-Constants.PLAYER1_ROWS = 6  -- Bottom half (rows 7-12)
-Constants.PLAYER2_ROWS = 6  -- Top half (rows 1-6)
+Constants.PLAYER1_ROWS = 4  -- Bottom half (rows 5-8)
+Constants.PLAYER2_ROWS = 4  -- Top half (rows 1-4)
 
 -- Colors (placeholder)
 Constants.COLORS = {
