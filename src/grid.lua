@@ -199,28 +199,27 @@ end
 function Grid:draw(draggedUnit)
     local lg = love.graphics
 
+    -- Reset color state to ensure no tinting
+    lg.setColor(1, 1, 1, 1)
+
     -- Draw grid background
     lg.setColor(Constants.COLORS.GRID_BG)
     lg.rectangle('fill', self.offsetX, self.offsetY,
                  Constants.GRID_WIDTH, Constants.GRID_HEIGHT)
 
-    -- Draw cells with player zones
+    -- Draw cells with chess pattern
     for row = 1, self.rows do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
             local x, y = self:gridToWorld(col, row)
 
-            -- Color cells based on owner
-            if cell.owner == 1 then
-                lg.setColor(Constants.COLORS.PLAYER1_CELL)
+            -- Chess pattern: alternate colors based on row + col
+            if (row + col) % 2 == 0 then
+                lg.setColor(Constants.COLORS.CHESS_LIGHT)
             else
-                lg.setColor(Constants.COLORS.PLAYER2_CELL)
+                lg.setColor(Constants.COLORS.CHESS_DARK)
             end
             lg.rectangle('fill', x, y, self.cellSize, self.cellSize)
-
-            -- Draw grid lines
-            lg.setColor(Constants.COLORS.GRID_LINE)
-            lg.rectangle('line', x, y, self.cellSize, self.cellSize)
         end
     end
 

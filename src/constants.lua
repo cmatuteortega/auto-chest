@@ -22,8 +22,9 @@ Constants.COLORS = {
     BACKGROUND = {0.1, 0.1, 0.15, 1},
     GRID_LINE = {0.3, 0.3, 0.35, 1},
     GRID_BG = {0.15, 0.15, 0.2, 1},
-    PLAYER1_CELL = {0.2, 0.3, 0.5, 0.3},
-    PLAYER2_CELL = {0.5, 0.2, 0.3, 0.3},
+    -- Chess pattern colors
+    CHESS_LIGHT = {0x26/255, 0x38/255, 0x4D/255, 1},  -- #26384D
+    CHESS_DARK = {0x16/255, 0x2A/255, 0x3D/255, 1},   -- #162A3D
     CELL_HIGHLIGHT = {1, 1, 1, 0.2},
 }
 

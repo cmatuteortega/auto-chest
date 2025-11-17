@@ -172,13 +172,25 @@ function GameScreen.new()
         lg.printf("Player 1 (Bottom)", 0, Constants.GAME_HEIGHT - 100,
                   Constants.GAME_WIDTH, 'center')
 
-        -- Instructions
+        -- Instructions and buttons
         lg.setColor(0.6, 0.6, 0.6, 1)
         if self.state == "setup" then
             lg.printf("Drag cards to place units", 0, Constants.GAME_HEIGHT - 130,
                       Constants.GAME_WIDTH, 'center')
             lg.printf("Drag units to reposition them", 0, Constants.GAME_HEIGHT - 110,
                       Constants.GAME_WIDTH, 'center')
+
+            -- Ready button below the grid
+            local buttonWidth = 120
+            local buttonHeight = 40
+            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+            local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + 20
+
+            local readyButton = self.suit:Button("READY", buttonX, buttonY, buttonWidth, buttonHeight)
+            if readyButton.hit then
+                self.timer = 0
+                self.state = "battle"
+            end
         elseif self.state == "finished" then
             -- Restart button using SUIT
             local buttonWidth = 120
