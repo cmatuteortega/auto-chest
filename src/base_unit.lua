@@ -25,6 +25,10 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     -- Combat stats
     self.attackCooldown = 0
 
+    -- Taunt system
+    self.tauntedBy = nil  -- Reference to unit that taunted this unit
+    self.tauntTimer = 0   -- Time remaining for taunt effect
+
     -- AI state
     self.target = nil
     self.state = "idle"  -- idle, moving, attacking, dead
@@ -166,6 +170,23 @@ function BaseUnit:draw()
 
     -- Let subclasses draw additional things (like arrows)
     self:drawAttackVisuals()
+
+    -- Draw taunt indicator if taunted
+    if self.tauntedBy and not self.tauntedBy.isDead and self.tauntTimer > 0 then
+        -- Draw exclamation mark above unit
+        lg.setColor(1, 0.8, 0, 1)  -- Yellow/orange color
+
+        local centerX = x + Constants.CELL_SIZE / 2
+        local iconY = y - 8  -- Above the unit
+
+        -- Draw exclamation mark (simple shape)
+        -- Vertical line
+        lg.setLineWidth(2)
+        lg.line(centerX, iconY, centerX, iconY + 6)
+        -- Dot at bottom
+        lg.circle('fill', centerX, iconY + 8, 1.5)
+        lg.setLineWidth(1)
+    end
 end
 
 -- Override this in subclasses for custom attack visuals
@@ -183,6 +204,21 @@ function BaseUnit:takeDamage(amount)
     -- Trigger hit animation
     self.hitAnimProgress = 0  -- Reset to start
     self.hitAnimIntensity = 4  -- Pixels to shake
+end
+
+-- Hook: Get damage amount (can be overridden for conditional damage)
+function BaseUnit:getDamage(grid)
+    return self.damage
+end
+
+-- Hook: Called when this unit kills an enemy
+function BaseUnit:onKill(target)
+    -- Override in subclasses for kill-triggered abilities
+end
+
+-- Hook: Called when battle starts
+function BaseUnit:onBattleStart(grid)
+    -- Override in subclasses for battle start abilities
 end
 
 function BaseUnit:update(dt, grid)
@@ -220,10 +256,26 @@ function BaseUnit:update(dt, grid)
         self.moveTimer = self.moveTimer - dt
     end
 
-    -- Find or validate target
-    if not self.target or self.target.isDead then
-        self.target = self:findNearestEnemy(grid)
-        self.path = nil
+    -- Update taunt timer
+    if self.tauntTimer > 0 then
+        self.tauntTimer = self.tauntTimer - dt
+        if self.tauntTimer <= 0 then
+            self.tauntedBy = nil  -- Taunt expired
+        end
+    end
+
+    -- TAUNT OVERRIDE: If taunted, always target the taunter (highest priority)
+    if self.tauntedBy and not self.tauntedBy.isDead and self.tauntTimer > 0 then
+        if self.target ~= self.tauntedBy then
+            self.target = self.tauntedBy
+            self.path = nil  -- Recalculate path to taunter
+        end
+    else
+        -- Find or validate target (normal behavior)
+        if not self.target or self.target.isDead then
+            self.target = self:findNearestEnemy(grid)
+            self.path = nil
+        end
     end
 
     -- No enemies left, go idle

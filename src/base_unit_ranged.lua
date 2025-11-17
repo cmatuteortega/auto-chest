@@ -83,7 +83,7 @@ end
 function BaseUnitRanged:attack(target, grid)
     if target and not target.isDead then
         -- Create projectile (flies directly to target, ignoring obstacles)
-        local projectile = self:createProjectile(target)
+        local projectile = self:createProjectile(target, grid)
         table.insert(self.arrows, projectile)
 
         -- Note: Damage is applied when projectile reaches target, not instantly
@@ -91,7 +91,7 @@ function BaseUnitRanged:attack(target, grid)
 end
 
 -- Create a projectile (can be overridden for custom projectile properties)
-function BaseUnitRanged:createProjectile(target)
+function BaseUnitRanged:createProjectile(target, grid)
     -- Units only attack when stationary, so use current position
     return {
         startCol = self.col,
@@ -101,7 +101,8 @@ function BaseUnitRanged:createProjectile(target)
         progress = 0,
         duration = self.projectileSpeed,
         target = target,
-        damage = self.damage
+        damage = self:getDamage(grid),  -- Use getDamage() for passive abilities
+        shooter = self  -- Reference to unit that shot this projectile (for onKill callback)
     }
 end
 
@@ -117,11 +118,16 @@ function BaseUnitRanged:update(dt, grid)
             if projectile.target and not projectile.target.isDead then
                 projectile.target:takeDamage(projectile.damage)
 
-                -- If target died, mark cell as unoccupied
+                -- If target died, mark cell as unoccupied and trigger onKill
                 if projectile.target.isDead then
                     local cell = grid:getCell(projectile.target.col, projectile.target.row)
                     if cell then
                         cell.occupied = false
+                    end
+
+                    -- Trigger onKill hook for passive abilities
+                    if projectile.shooter then
+                        projectile.shooter:onKill(projectile.target)
                     end
                 end
             end

@@ -17,6 +17,29 @@ function Samurai:new(row, col, owner, sprites)
     Samurai.super.new(self, row, col, owner, sprites, stats)
 end
 
+-- Check if Samurai is isolated (no friendly units within 2 cells)
+function Samurai:isIsolated(grid)
+    local allUnits = grid:getAllUnits()
+    for _, unit in ipairs(allUnits) do
+        if unit ~= self and unit.owner == self.owner and not unit.isDead then
+            local distance = math.sqrt((unit.col - self.col)^2 + (unit.row - self.row)^2)
+            if distance <= 2 then
+                return false  -- Found a friendly nearby, not isolated
+            end
+        end
+    end
+    return true  -- No friendlies nearby, isolated
+end
+
+-- Passive: 50% more damage when isolated
+function Samurai:getDamage(grid)
+    if grid and self:isIsolated(grid) then
+        return self.damage * 1.5
+    end
+    return self.damage
+end
+
+
 -- Melee attack: lunge toward target and apply damage
 function Samurai:attack(target, grid)
     if target and not target.isDead then
@@ -25,8 +48,8 @@ function Samurai:attack(target, grid)
         self.attackTargetCol = target.col
         self.attackTargetRow = target.row
 
-        -- Apply damage
-        target:takeDamage(self.damage)
+        -- Apply damage (use getDamage() for passive abilities, pass grid)
+        target:takeDamage(self:getDamage(grid))
 
         -- If target died, mark cell as unoccupied but keep unit visible
         if target.isDead then
@@ -35,6 +58,9 @@ function Samurai:attack(target, grid)
                 cell.occupied = false  -- Allow movement through this cell
                 -- Keep cell.unit so the dead sprite remains visible
             end
+
+            -- Trigger onKill hook for passive abilities
+            self:onKill(target)
         end
     end
 end

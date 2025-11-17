@@ -71,6 +71,12 @@ function GameScreen.new()
             if self.timer <= 0 then
                 self.timer = 0
                 self.state = "battle"
+
+                -- Trigger onBattleStart for all units
+                local allUnits = self.grid:getAllUnits()
+                for _, unit in ipairs(allUnits) do
+                    unit:onBattleStart(self.grid)
+                end
             end
         elseif self.state == "battle" then
             -- Update all units during battle
@@ -185,6 +191,12 @@ function GameScreen.new()
             if readyButton.hit then
                 self.timer = 0
                 self.state = "battle"
+
+                -- Trigger onBattleStart for all units
+                local allUnits = self.grid:getAllUnits()
+                for _, unit in ipairs(allUnits) do
+                    unit:onBattleStart(self.grid)
+                end
             end
         elseif self.state == "finished" then
             -- Restart button at same position as Ready button

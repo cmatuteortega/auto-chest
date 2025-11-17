@@ -18,7 +18,11 @@ function Marrow:new(row, col, owner, sprites)
     Marrow.super.new(self, row, col, owner, sprites, stats)
 end
 
--- Marrow uses default arrow projectile from BaseUnitRanged
--- No need to override drawProjectile() unless you want custom visuals
+-- Passive: Gain attack speed on kill
+function Marrow:onKill(target)
+    -- Increase attack speed by 0.2 per kill (stacks permanently for the battle)
+    self.attackSpeed = self.attackSpeed + 0.2
+end
+
 
 return Marrow

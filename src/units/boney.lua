@@ -17,6 +17,15 @@ function Boney:new(row, col, owner, sprites)
     Boney.super.new(self, row, col, owner, sprites, stats)
 end
 
+-- Passive: Double damage when below 50% HP
+function Boney:getDamage(grid)
+    if self.health < self.maxHealth * 0.5 then
+        return self.damage * 2
+    end
+    return self.damage
+end
+
+
 -- Melee attack: lunge toward target and apply damage
 function Boney:attack(target, grid)
     if target and not target.isDead then
@@ -25,8 +34,8 @@ function Boney:attack(target, grid)
         self.attackTargetCol = target.col
         self.attackTargetRow = target.row
 
-        -- Apply damage
-        target:takeDamage(self.damage)
+        -- Apply damage (use getDamage() for passive abilities, pass grid)
+        target:takeDamage(self:getDamage(grid))
 
         -- If target died, mark cell as unoccupied but keep unit visible
         if target.isDead then
@@ -35,6 +44,9 @@ function Boney:attack(target, grid)
                 cell.occupied = false  -- Allow movement through this cell
                 -- Keep cell.unit so the dead sprite remains visible
             end
+
+            -- Trigger onKill hook for passive abilities
+            self:onKill(target)
         end
     end
 end
