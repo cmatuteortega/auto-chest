@@ -38,6 +38,14 @@ UnitRegistry.spritePaths = {
     }
 }
 
+-- Map of unit type names to their passive ability descriptions
+UnitRegistry.passiveDescriptions = {
+    knight = "Taunt all enemies within 3 cells for 3 seconds at battle start",
+    boney = "Deal 2x damage when below 50% HP",
+    samurai = "Deal 1.5x damage when no allies are within 2 cells",
+    marrow = "Gain +0.2 attack speed per kill"
+}
+
 -- Load sprites for a specific unit type
 function UnitRegistry.loadSprites(unitType)
     local paths = UnitRegistry.spritePaths[unitType]

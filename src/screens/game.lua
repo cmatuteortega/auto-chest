@@ -4,6 +4,7 @@ local Grid = require('src.grid')
 local UnitRegistry = require('src.unit_registry')
 local Card = require('src.card')
 local suit = require('lib.suit')
+local Tooltip = require('src.tooltip')
 
 local GameScreen = {}
 
@@ -19,6 +20,9 @@ function GameScreen.new()
 
         -- Initialize SUIT
         self.suit = suit.new()
+
+        -- Initialize Tooltip
+        self.tooltip = Tooltip()
 
         -- Mouse/touch position
         self.mouseX = 0
@@ -141,6 +145,9 @@ function GameScreen.new()
 
         -- Draw SUIT UI elements
         self.suit:draw()
+
+        -- Draw tooltip on top of everything
+        self.tooltip:draw()
     end
 
     function self:drawUI()
@@ -232,6 +239,40 @@ function GameScreen.new()
         -- Update SUIT mouse position
         self.suit:updateMouse(x, y)
 
+        -- Check if we should start dragging a pressed unit (drag threshold)
+        if self.pressedUnit and not self.draggedUnit then
+            local dragThreshold = 5  -- pixels
+            local distMoved = math.sqrt((x - self.pressX)^2 + (y - self.pressY)^2)
+
+            if distMoved > dragThreshold then
+                -- Start dragging the unit
+                self.tooltip:hide()
+
+                self.draggedUnit = self.pressedUnit
+                self.draggedUnitOriginalCol = self.pressedUnitCol
+                self.draggedUnitOriginalRow = self.pressedUnitRow
+
+                -- Calculate offset so unit doesn't jump to cursor
+                local Constants = require("src.constants")
+                local unitX = Constants.GRID_OFFSET_X + (self.pressedUnitCol - 1) * Constants.CELL_SIZE
+                local unitY = Constants.GRID_OFFSET_Y + (self.pressedUnitRow - 1) * Constants.CELL_SIZE
+                self.draggedUnitOffsetX = self.pressX - unitX
+                self.draggedUnitOffsetY = self.pressY - unitY
+
+                -- Initialize drag position
+                self.draggedUnit.dragX = unitX
+                self.draggedUnit.dragY = unitY
+
+                -- Remove unit from grid temporarily
+                self.grid:removeUnit(self.pressedUnitCol, self.pressedUnitRow)
+
+                -- Clear pressed state
+                self.pressedUnit = nil
+                self.pressedUnitCol = nil
+                self.pressedUnitRow = nil
+            end
+        end
+
         -- Update dragged card position
         if self.draggedCard then
             self.draggedCard:updateDrag(x, y)
@@ -246,23 +287,7 @@ function GameScreen.new()
     end
 
     function self:touchmoved(id, x, y, dx, dy, pressure)
-        self.mouseX = x
-        self.mouseY = y
-
-        -- Update SUIT mouse position
-        self.suit:updateMouse(x, y)
-
-        -- Update dragged card position
-        if self.draggedCard then
-            self.draggedCard:updateDrag(x, y)
-        end
-
-        -- Update dragged unit position
-        if self.draggedUnit then
-            -- Store the screen position for rendering
-            self.draggedUnit.dragX = x - self.draggedUnitOffsetX
-            self.draggedUnit.dragY = y - self.draggedUnitOffsetY
-        end
+        self:mousemoved(x, y, dx, dy)
     end
 
     function self:mousepressed(x, y, button)
@@ -272,28 +297,20 @@ function GameScreen.new()
         end
 
         if button == 1 and self.state == "setup" then
+            -- Store initial press position for drag detection
+            self.pressX = x
+            self.pressY = y
+            self.pressedUnit = nil
+
             -- First, check if clicking on an existing unit to reposition it
             local col, row = self.grid:worldToGrid(x, y)
             if col and row then
                 local unit = self.grid:getUnitAtCell(col, row)
                 if unit then
-                    -- Pick up the unit
-                    self.draggedUnit = unit
-                    self.draggedUnitOriginalCol = col
-                    self.draggedUnitOriginalRow = row
-
-                    -- Calculate offset so unit doesn't jump to cursor
-                    local unitX = Constants.GRID_OFFSET_X + (col - 1) * Constants.CELL_SIZE
-                    local unitY = Constants.GRID_OFFSET_Y + (row - 1) * Constants.CELL_SIZE
-                    self.draggedUnitOffsetX = x - unitX
-                    self.draggedUnitOffsetY = y - unitY
-
-                    -- Initialize drag position
-                    unit.dragX = unitX
-                    unit.dragY = unitY
-
-                    -- Remove unit from grid temporarily
-                    self.grid:removeUnit(col, row)
+                    -- Store the unit but don't start dragging yet
+                    self.pressedUnit = unit
+                    self.pressedUnitCol = col
+                    self.pressedUnitRow = row
                     return
                 end
             end
@@ -302,6 +319,9 @@ function GameScreen.new()
             for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
                 local card = self.cards[i]
                 if card:contains(x, y) then
+                    -- Hide tooltip when starting to drag
+                    self.tooltip:hide()
+
                     self.draggedCard = card
                     card:startDrag(x, y)
                     return
@@ -317,6 +337,19 @@ function GameScreen.new()
         end
 
         if button == 1 then
+            -- Check if a unit was pressed but not dragged (tap for tooltip)
+            if self.pressedUnit and not self.draggedUnit then
+                local unit = self.pressedUnit
+                -- Clear pressed state
+                self.pressedUnit = nil
+                self.pressedUnitCol = nil
+                self.pressedUnitRow = nil
+
+                -- Toggle tooltip for this unit
+                self.tooltip:toggle(unit)
+                return
+            end
+
             -- Handle unit repositioning
             if self.draggedUnit then
                 local col, row = self.grid:worldToGrid(x, y)
@@ -379,6 +412,26 @@ function GameScreen.new()
 
                 self.draggedCard:stopDrag()
                 self.draggedCard = nil
+                return
+            end
+        end
+
+        if button == 1 then
+            -- Handle tooltip toggle in all game states (only if not dragging anything)
+            -- Check if tap is on a unit
+            local col, row = self.grid:worldToGrid(x, y)
+            if col and row then
+                local unit = self.grid:getUnitAtCell(col, row)
+                if unit then
+                    -- Toggle tooltip for this unit
+                    self.tooltip:toggle(unit)
+                    return
+                end
+            end
+
+            -- If tapping anywhere else (not on a unit), hide tooltip
+            if self.tooltip:isVisible() then
+                self.tooltip:hide()
             end
         end
     end

@@ -20,11 +20,11 @@ function love.load()
     -- Disable line smoothing for pixel-perfect rendering
     love.graphics.setLineStyle('rough')
 
-    -- Load fonts once globally for pixel-perfect rendering
-    Fonts.large = love.graphics.newFont(Constants.FONT_SIZES.LARGE)
-    Fonts.medium = love.graphics.newFont(Constants.FONT_SIZES.MEDIUM)
-    Fonts.small = love.graphics.newFont(Constants.FONT_SIZES.SMALL)
-    Fonts.tiny = love.graphics.newFont(Constants.FONT_SIZES.TINY)
+    -- Load Pixellari font once globally
+    Fonts.large = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
+    Fonts.medium = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.MEDIUM)
+    Fonts.small = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
+    Fonts.tiny = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
 
     -- Setup push for resolution scaling
     Push:setupScreen(
