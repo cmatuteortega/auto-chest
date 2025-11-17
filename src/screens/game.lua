@@ -65,9 +65,6 @@ function GameScreen.new()
     end
 
     function self:update(dt)
-        -- SUIT frame management
-        self.suit:enterFrame()
-
         -- Update timer
         if self.state == "setup" then
             self.timer = self.timer - dt
@@ -108,9 +105,6 @@ function GameScreen.new()
 
         -- Update grid with current mouse position
         self.grid:update(dt, self.mouseX, self.mouseY)
-
-        -- SUIT frame management
-        self.suit:exitFrame()
     end
 
     function self:draw()
@@ -172,6 +166,12 @@ function GameScreen.new()
         lg.printf("Player 1 (Bottom)", 0, Constants.GAME_HEIGHT - 100,
                   Constants.GAME_WIDTH, 'center')
 
+        -- Button dimensions (consistent for both Ready and Restart)
+        local buttonWidth = 120
+        local buttonHeight = 40
+        local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+        local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + 20
+
         -- Instructions and buttons
         lg.setColor(0.6, 0.6, 0.6, 1)
         if self.state == "setup" then
@@ -181,25 +181,22 @@ function GameScreen.new()
                       Constants.GAME_WIDTH, 'center')
 
             -- Ready button below the grid
-            local buttonWidth = 120
-            local buttonHeight = 40
-            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-            local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + 20
-
-            local readyButton = self.suit:Button("READY", buttonX, buttonY, buttonWidth, buttonHeight)
+            local readyButton = self.suit:Button("READY", {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
             if readyButton.hit then
                 self.timer = 0
                 self.state = "battle"
             end
         elseif self.state == "finished" then
-            -- Restart button using SUIT
-            local buttonWidth = 120
-            local buttonHeight = 40
-            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-            local buttonY = Constants.GAME_HEIGHT / 2 + 40
+            -- Restart button at same position as Ready button
+            local restartButton = self.suit:Button("RESTART", {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
 
-            local button = self.suit:Button("Restart", buttonX, buttonY, buttonWidth, buttonHeight)
-            if button.hit then
+            -- Debug output
+            lg.setColor(0.8, 0.8, 0.8, 1)
+            lg.printf(string.format("Hit: %s, Hovered: %s", tostring(restartButton.hit), tostring(restartButton.hovered)),
+                      0, buttonY + 50, Constants.GAME_WIDTH, 'center')
+
+            if restartButton.hit then
+                print("Restart button clicked!")
                 self:init()
             end
         end
@@ -220,6 +217,9 @@ function GameScreen.new()
         self.mouseX = x
         self.mouseY = y
 
+        -- Update SUIT mouse position
+        self.suit:updateMouse(x, y)
+
         -- Update dragged card position
         if self.draggedCard then
             self.draggedCard:updateDrag(x, y)
@@ -237,6 +237,9 @@ function GameScreen.new()
         self.mouseX = x
         self.mouseY = y
 
+        -- Update SUIT mouse position
+        self.suit:updateMouse(x, y)
+
         -- Update dragged card position
         if self.draggedCard then
             self.draggedCard:updateDrag(x, y)
@@ -251,6 +254,11 @@ function GameScreen.new()
     end
 
     function self:mousepressed(x, y, button)
+        -- Update SUIT mouse state
+        if button == 1 then
+            self.suit:updateMouse(x, y, true)
+        end
+
         if button == 1 and self.state == "setup" then
             -- First, check if clicking on an existing unit to reposition it
             local col, row = self.grid:worldToGrid(x, y)
@@ -291,6 +299,11 @@ function GameScreen.new()
     end
 
     function self:mousereleased(x, y, button)
+        -- Update SUIT mouse state
+        if button == 1 then
+            self.suit:updateMouse(x, y, false)
+        end
+
         if button == 1 then
             -- Handle unit repositioning
             if self.draggedUnit then
