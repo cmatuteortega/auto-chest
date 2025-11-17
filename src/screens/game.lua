@@ -77,6 +77,11 @@ function GameScreen.new()
             local card = Card(x, cardY, sprite, i, unitType)
             table.insert(self.cards, card)
         end
+
+        -- Calculate reroll button position (aligned to right edge with 10px offset)
+        self.rerollButtonSize = 40  -- Square button same size as READY button height
+        self.rerollButtonX = Constants.GAME_WIDTH - self.rerollButtonSize - 10
+        self.rerollButtonY = cardY + (100 - self.rerollButtonSize) / 2  -- Center vertically with cards
     end
 
     function self:update(dt)
@@ -164,11 +169,6 @@ function GameScreen.new()
     function self:drawUI()
         local lg = love.graphics
 
-        -- Title at top
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", 0, 20, Constants.GAME_WIDTH, 'center')
-
         -- State and timer
         lg.setFont(Fonts.medium)
         lg.setColor(0.9, 0.9, 0.9, 1)
@@ -182,13 +182,15 @@ function GameScreen.new()
         lg.printf(stateText, 0, 50, Constants.GAME_WIDTH, 'center')
 
         -- Player labels
-        lg.setFont(Fonts.small)
+        lg.setFont(Fonts.medium)
         lg.setColor(0.5, 0.7, 1, 1)
-        lg.printf("Player 2 (Top)", 0, 100, Constants.GAME_WIDTH, 'center')
+        lg.print("P2", 10, 10)
 
         lg.setColor(1, 0.7, 0.5, 1)
-        lg.printf("Player 1 (Bottom)", 0, Constants.GAME_HEIGHT - 100,
-                  Constants.GAME_WIDTH, 'center')
+        -- Measure text width to align right with same offset as P2 (10px from edge)
+        local p1Text = "P1"
+        local p1Width = Fonts.medium:getWidth(p1Text)
+        lg.print(p1Text, Constants.GAME_WIDTH - p1Width - 10, Constants.GAME_HEIGHT - 30)
 
         -- Button dimensions (consistent for both Ready and Restart)
         local buttonWidth = 120
@@ -196,14 +198,8 @@ function GameScreen.new()
         local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
         local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + 20
 
-        -- Instructions and buttons
-        lg.setColor(0.6, 0.6, 0.6, 1)
+        -- Buttons
         if self.state == "setup" then
-            lg.printf("Drag cards to place units", 0, Constants.GAME_HEIGHT - 130,
-                      Constants.GAME_WIDTH, 'center')
-            lg.printf("Drag units to reposition them", 0, Constants.GAME_HEIGHT - 110,
-                      Constants.GAME_WIDTH, 'center')
-
             -- Ready button below the grid
             local readyButton = self.suit:Button("READY", {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
             if readyButton.hit then
@@ -216,30 +212,22 @@ function GameScreen.new()
                     unit:onBattleStart(self.grid)
                 end
             end
+
+            -- Reroll button to the right of cards
+            local rerollButton = self.suit:Button("@", {id="reroll_btn"},
+                self.rerollButtonX, self.rerollButtonY,
+                self.rerollButtonSize, self.rerollButtonSize)
+            if rerollButton.hit then
+                self:generateCards()
+            end
         elseif self.state == "finished" then
             -- Restart button at same position as Ready button
             local restartButton = self.suit:Button("RESTART", {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
-
-            -- Debug output
-            lg.setColor(0.8, 0.8, 0.8, 1)
-            lg.printf(string.format("Hit: %s, Hovered: %s", tostring(restartButton.hit), tostring(restartButton.hovered)),
-                      0, buttonY + 50, Constants.GAME_WIDTH, 'center')
 
             if restartButton.hit then
                 print("Restart button clicked!")
                 self:init()
             end
-        end
-
-        -- Debug: Show highlighted cell
-        if self.grid.highlightedCell then
-            lg.setFont(Fonts.tiny)
-            local cellInfo = string.format("Cell: [%d, %d]",
-                                          self.grid.highlightedCell.col,
-                                          self.grid.highlightedCell.row)
-            lg.setColor(1, 1, 0, 1)
-            lg.printf(cellInfo, 0, Constants.GAME_HEIGHT - 40,
-                      Constants.GAME_WIDTH, 'center')
         end
     end
 
