@@ -50,6 +50,10 @@ function GameScreen.new()
         self.pressedUnitRow = nil
         self.pressX = 0
         self.pressY = 0
+        self.hasMoved = false  -- Track if user has actually moved (not just tap jitter)
+
+        -- Touch tracking (to prevent double-handling on mobile)
+        self.activeTouchId = nil
 
         self:generateCards()
     end
@@ -246,38 +250,41 @@ function GameScreen.new()
         -- Update SUIT mouse position
         self.suit:updateMouse(x, y)
 
-        -- Check if we should start dragging a pressed unit (only during setup)
-        if self.pressedUnit and not self.draggedUnit and self.state == "setup" then
-            local dragThreshold = 5  -- pixels
+        -- Track if user has moved significantly (for tap vs drag detection)
+        if self.pressedUnit or self.draggedUnit or self.draggedCard then
             local distMoved = math.sqrt((x - self.pressX)^2 + (y - self.pressY)^2)
-
-            if distMoved > dragThreshold then
-                -- Start dragging the unit
-                self.tooltip:hide()
-
-                self.draggedUnit = self.pressedUnit
-                self.draggedUnitOriginalCol = self.pressedUnitCol
-                self.draggedUnitOriginalRow = self.pressedUnitRow
-
-                -- Calculate offset so unit doesn't jump to cursor
-                local Constants = require("src.constants")
-                local unitX = Constants.GRID_OFFSET_X + (self.pressedUnitCol - 1) * Constants.CELL_SIZE
-                local unitY = Constants.GRID_OFFSET_Y + (self.pressedUnitRow - 1) * Constants.CELL_SIZE
-                self.draggedUnitOffsetX = self.pressX - unitX
-                self.draggedUnitOffsetY = self.pressY - unitY
-
-                -- Initialize drag position
-                self.draggedUnit.dragX = unitX
-                self.draggedUnit.dragY = unitY
-
-                -- Remove unit from grid temporarily
-                self.grid:removeUnit(self.pressedUnitCol, self.pressedUnitRow)
-
-                -- Clear pressed state
-                self.pressedUnit = nil
-                self.pressedUnitCol = nil
-                self.pressedUnitRow = nil
+            if distMoved > 10 then  -- Increased threshold for mobile
+                self.hasMoved = true
             end
+        end
+
+        -- Check if we should start dragging a pressed unit (only during setup AND with movement)
+        if self.pressedUnit and not self.draggedUnit and self.state == "setup" and self.hasMoved then
+            -- Start dragging the unit
+            self.tooltip:hide()
+
+            self.draggedUnit = self.pressedUnit
+            self.draggedUnitOriginalCol = self.pressedUnitCol
+            self.draggedUnitOriginalRow = self.pressedUnitRow
+
+            -- Calculate offset so unit doesn't jump to cursor
+            local Constants = require("src.constants")
+            local unitX = Constants.GRID_OFFSET_X + (self.pressedUnitCol - 1) * Constants.CELL_SIZE
+            local unitY = Constants.GRID_OFFSET_Y + (self.pressedUnitRow - 1) * Constants.CELL_SIZE
+            self.draggedUnitOffsetX = self.pressX - unitX
+            self.draggedUnitOffsetY = self.pressY - unitY
+
+            -- Initialize drag position
+            self.draggedUnit.dragX = unitX
+            self.draggedUnit.dragY = unitY
+
+            -- Remove unit from grid temporarily
+            self.grid:removeUnit(self.pressedUnitCol, self.pressedUnitRow)
+
+            -- Clear pressed state
+            self.pressedUnit = nil
+            self.pressedUnitCol = nil
+            self.pressedUnitRow = nil
         end
 
         -- Update dragged card position
@@ -297,7 +304,12 @@ function GameScreen.new()
         self:mousemoved(x, y, dx, dy)
     end
 
-    function self:mousepressed(x, y, button)
+    function self:mousepressed(x, y, button, istouch)
+        -- Skip if this is a touch-generated mouse event (we handle it in touchpressed)
+        if istouch and self.activeTouchId then
+            return
+        end
+
         -- Update SUIT mouse state
         if button == 1 then
             self.suit:updateMouse(x, y, true)
@@ -308,6 +320,7 @@ function GameScreen.new()
             self.pressX = x
             self.pressY = y
             self.pressedUnit = nil
+            self.hasMoved = false  -- Reset movement flag
 
             -- Check if clicking on a unit (in any game state)
             local col, row = self.grid:worldToGrid(x, y)
@@ -345,7 +358,12 @@ function GameScreen.new()
         end
     end
 
-    function self:mousereleased(x, y, button)
+    function self:mousereleased(x, y, button, istouch)
+        -- Skip if this is a touch-generated mouse event (we handle it in touchreleased)
+        if istouch and self.activeTouchId then
+            return
+        end
+
         -- Update SUIT mouse state
         if button == 1 then
             self.suit:updateMouse(x, y, false)
@@ -438,11 +456,149 @@ function GameScreen.new()
     end
 
     function self:touchpressed(id, x, y, dx, dy, pressure)
-        self:mousepressed(x, y, 1)
+        -- Track the active touch to prevent double-handling
+        self.activeTouchId = id
+
+        -- Handle the touch event (bypasses the istouch check since we called it directly)
+        -- Update SUIT mouse state
+        self.suit:updateMouse(x, y, true)
+
+        -- Always store initial press position for tap vs drag detection
+        self.pressX = x
+        self.pressY = y
+        self.pressedUnit = nil
+        self.hasMoved = false  -- Reset movement flag
+
+        -- Check if clicking on a unit (in any game state)
+        local col, row = self.grid:worldToGrid(x, y)
+        if col and row then
+            local unit = self.grid:getUnitAtCell(col, row)
+            if unit then
+                -- Store the unit but don't start dragging yet
+                -- Drag threshold will determine if this is a tap or drag
+                self.pressedUnit = unit
+                self.pressedUnitCol = col
+                self.pressedUnitRow = row
+                return
+            end
+        end
+
+        -- During setup, also check for card dragging
+        if self.state == "setup" then
+            for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
+                local card = self.cards[i]
+                if card:contains(x, y) then
+                    -- Hide tooltip when starting to drag
+                    self.tooltip:hide()
+
+                    -- Clear pressedUnit to prevent tooltip on card release
+                    self.pressedUnit = nil
+                    self.pressedUnitCol = nil
+                    self.pressedUnitRow = nil
+
+                    self.draggedCard = card
+                    card:startDrag(x, y)
+                    return
+                end
+            end
+        end
     end
 
     function self:touchreleased(id, x, y, dx, dy, pressure)
-        self:mousereleased(x, y, 1)
+        -- Only handle if this is our active touch
+        if self.activeTouchId ~= id then
+            return
+        end
+
+        -- Clear active touch
+        self.activeTouchId = nil
+
+        -- Handle the touch release
+        -- Update SUIT mouse state
+        self.suit:updateMouse(x, y, false)
+
+        -- Check if a unit was pressed but not dragged (tap for tooltip)
+        if self.pressedUnit and not self.draggedUnit then
+            local unit = self.pressedUnit
+            -- Clear pressed state
+            self.pressedUnit = nil
+            self.pressedUnitCol = nil
+            self.pressedUnitRow = nil
+
+            -- Toggle tooltip for this unit
+            self.tooltip:toggle(unit)
+            return
+        end
+
+        -- Handle unit repositioning
+        if self.draggedUnit then
+            local col, row = self.grid:worldToGrid(x, y)
+
+            -- Try to place unit at new position
+            if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                -- Place unit at new position
+                self.draggedUnit.col = col
+                self.draggedUnit.row = row
+                self.grid:placeUnit(col, row, self.draggedUnit)
+                print(string.format("Repositioned unit to [%d, %d]", col, row))
+            else
+                -- Invalid position, return to original spot
+                self.draggedUnit.col = self.draggedUnitOriginalCol
+                self.draggedUnit.row = self.draggedUnitOriginalRow
+                self.grid:placeUnit(self.draggedUnitOriginalCol, self.draggedUnitOriginalRow, self.draggedUnit)
+                print(string.format("Returned unit to original position [%d, %d]", self.draggedUnitOriginalCol, self.draggedUnitOriginalRow))
+            end
+
+            -- Clear dragging state
+            self.draggedUnit.dragX = nil
+            self.draggedUnit.dragY = nil
+            self.draggedUnit = nil
+            self.draggedUnitOriginalCol = nil
+            self.draggedUnitOriginalRow = nil
+            return
+        end
+
+        -- Handle card placement
+        if self.draggedCard then
+            -- Try to place unit on grid
+            local col, row = self.grid:worldToGrid(x, y)
+
+            if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                -- Determine owner based on which zone the card is dropped in
+                local owner = self.grid:getOwner(row)
+
+                -- Create and place unit with the appropriate owner using the card's unit type
+                local unitType = self.draggedCard.unitType
+                local unitSprites = self.sprites[unitType]
+                local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
+                if self.grid:placeUnit(col, row, unit) then
+                    -- Remove the card from hand
+                    for i, card in ipairs(self.cards) do
+                        if card == self.draggedCard then
+                            table.remove(self.cards, i)
+                            break
+                        end
+                    end
+
+                    -- Generate new cards
+                    self:generateCards()
+
+                    print(string.format("Placed Player %d unit at [%d, %d]", owner, col, row))
+                end
+            else
+                -- Snap card back to original position
+                self.draggedCard:snapBack()
+            end
+
+            self.draggedCard:stopDrag()
+            self.draggedCard = nil
+            return
+        end
+
+        -- If tapping anywhere else (not on a unit), hide tooltip
+        if self.tooltip:isVisible() then
+            self.tooltip:hide()
+        end
     end
 
     function self:keypressed(key)

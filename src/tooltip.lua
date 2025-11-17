@@ -77,8 +77,9 @@ function Tooltip:draw()
     local unitCenterX = unitX + Constants.CELL_SIZE / 2
     local unitCenterY = unitY + Constants.CELL_SIZE / 2
 
-    local screenWidth = love.graphics.getWidth()
-    local screenHeight = love.graphics.getHeight()
+    -- Use virtual game resolution, not window dimensions
+    local screenWidth = Constants.GAME_WIDTH
+    local screenHeight = Constants.GAME_HEIGHT
 
     -- Spacing between unit and tooltip
     local spacing = 16
