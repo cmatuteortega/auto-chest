@@ -44,6 +44,13 @@ function GameScreen.new()
         self.draggedUnitOffsetX = 0
         self.draggedUnitOffsetY = 0
 
+        -- Press tracking (for tap vs drag detection)
+        self.pressedUnit = nil
+        self.pressedUnitCol = nil
+        self.pressedUnitRow = nil
+        self.pressX = 0
+        self.pressY = 0
+
         self:generateCards()
     end
 
@@ -239,8 +246,8 @@ function GameScreen.new()
         -- Update SUIT mouse position
         self.suit:updateMouse(x, y)
 
-        -- Check if we should start dragging a pressed unit (drag threshold)
-        if self.pressedUnit and not self.draggedUnit then
+        -- Check if we should start dragging a pressed unit (only during setup)
+        if self.pressedUnit and not self.draggedUnit and self.state == "setup" then
             local dragThreshold = 5  -- pixels
             local distMoved = math.sqrt((x - self.pressX)^2 + (y - self.pressY)^2)
 
@@ -296,18 +303,19 @@ function GameScreen.new()
             self.suit:updateMouse(x, y, true)
         end
 
-        if button == 1 and self.state == "setup" then
-            -- Store initial press position for drag detection
+        if button == 1 then
+            -- Always store initial press position for tap vs drag detection
             self.pressX = x
             self.pressY = y
             self.pressedUnit = nil
 
-            -- First, check if clicking on an existing unit to reposition it
+            -- Check if clicking on a unit (in any game state)
             local col, row = self.grid:worldToGrid(x, y)
             if col and row then
                 local unit = self.grid:getUnitAtCell(col, row)
                 if unit then
                     -- Store the unit but don't start dragging yet
+                    -- Drag threshold will determine if this is a tap or drag
                     self.pressedUnit = unit
                     self.pressedUnitCol = col
                     self.pressedUnitRow = row
@@ -315,16 +323,23 @@ function GameScreen.new()
                 end
             end
 
-            -- If not clicking on a unit, check if clicking on a card
-            for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
-                local card = self.cards[i]
-                if card:contains(x, y) then
-                    -- Hide tooltip when starting to drag
-                    self.tooltip:hide()
+            -- During setup, also check for card dragging
+            if self.state == "setup" then
+                for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
+                    local card = self.cards[i]
+                    if card:contains(x, y) then
+                        -- Hide tooltip when starting to drag
+                        self.tooltip:hide()
 
-                    self.draggedCard = card
-                    card:startDrag(x, y)
-                    return
+                        -- Clear pressedUnit to prevent tooltip on card release
+                        self.pressedUnit = nil
+                        self.pressedUnitCol = nil
+                        self.pressedUnitRow = nil
+
+                        self.draggedCard = card
+                        card:startDrag(x, y)
+                        return
+                    end
                 end
             end
         end
@@ -413,20 +428,6 @@ function GameScreen.new()
                 self.draggedCard:stopDrag()
                 self.draggedCard = nil
                 return
-            end
-        end
-
-        if button == 1 then
-            -- Handle tooltip toggle in all game states (only if not dragging anything)
-            -- Check if tap is on a unit
-            local col, row = self.grid:worldToGrid(x, y)
-            if col and row then
-                local unit = self.grid:getUnitAtCell(col, row)
-                if unit then
-                    -- Toggle tooltip for this unit
-                    self.tooltip:toggle(unit)
-                    return
-                end
             end
 
             -- If tapping anywhere else (not on a unit), hide tooltip
