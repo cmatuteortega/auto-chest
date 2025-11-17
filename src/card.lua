@@ -3,13 +3,14 @@ local Constants = require('src.constants')
 
 local Card = Class:extend()
 
-function Card:new(x, y, cardSprite, index)
+function Card:new(x, y, cardSprite, index, unitType)
     self.x = x
     self.y = y
     self.startX = x  -- Original position for snap-back
     self.startY = y
     self.cardSprite = cardSprite
     self.index = index
+    self.unitType = unitType or "unknown"  -- Type of unit this card will spawn
 
     -- Card dimensions (scaled up for better visibility)
     self.width = 80
@@ -64,17 +65,20 @@ function Card:draw()
     lg.setLineWidth(2)
     lg.rectangle('line', self.x, self.y, self.width, self.height, 4, 4)
 
-    -- Draw sprite in center of card (scaled up)
+    -- Draw sprite in center of card (scaled up, supports variable height: 16xH)
     lg.setColor(1, 1, 1, 1)
-    local spriteScale = 3  -- 16x16 -> 48x48 (larger for visibility)
-    local spriteX = self.x + (self.width - 16 * spriteScale) / 2
+    local spriteScale = 3  -- 16px width -> 48px (larger for visibility)
+    local spriteWidth = self.cardSprite:getWidth()
+    local spriteHeight = self.cardSprite:getHeight()
+    local spriteX = self.x + (self.width - spriteWidth * spriteScale) / 2
     local spriteY = self.y + 12
     lg.draw(self.cardSprite, spriteX, spriteY, 0, spriteScale, spriteScale)
 
-    -- Card name placeholder
+    -- Card name (capitalize first letter)
     lg.setFont(Fonts.tiny)
     lg.setColor(0.8, 0.8, 0.8, 1)
-    lg.printf("Unit", self.x, self.y + self.height - 24, self.width, 'center')
+    local displayName = self.unitType:sub(1, 1):upper() .. self.unitType:sub(2)
+    lg.printf(displayName, self.x, self.y + self.height - 24, self.width, 'center')
 end
 
 return Card

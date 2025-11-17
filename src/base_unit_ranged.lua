@@ -1,0 +1,193 @@
+local BaseUnit = require('src.base_unit')
+local Constants = require('src.constants')
+local tween = require('lib.tween')
+
+local BaseUnitRanged = BaseUnit:extend()
+
+function BaseUnitRanged:new(row, col, owner, sprites, stats)
+    -- Call parent constructor
+    BaseUnitRanged.super.new(self, row, col, owner, sprites, stats)
+
+    -- Ranged unit specific properties
+    self.arrows = {}  -- Array of active projectiles
+    self.projectileSpeed = stats.projectileSpeed or 0.2  -- Flight time in seconds
+end
+
+-- Override: Ranged units stop when within attack range (don't need to be adjacent)
+-- Note: Can target enemies even with obstacles between them (projectiles fly over)
+function BaseUnitRanged:findGoalNearTarget(grid, target)
+    if not target then return nil, nil end
+
+    -- If already in range, don't move (can shoot over obstacles)
+    if self:isInAttackRange(target) then
+        return self.col, self.row
+    end
+
+    -- Find a position within attack range of the target
+    local targetDistance = self.attackRange
+
+    -- Calculate direction vector from target to us
+    local dx = self.col - target.col
+    local dy = self.row - target.row
+    local currentDistance = math.sqrt(dx * dx + dy * dy)
+
+    if currentDistance == 0 then
+        -- We're on top of the target somehow, move to any adjacent cell
+        return BaseUnit.findGoalNearTarget(self, grid, target)
+    end
+
+    -- Normalize direction
+    dx = dx / currentDistance
+    dy = dy / currentDistance
+
+    -- Try positions at attackRange distance from target
+    local attempts = {
+        -- Ideal position at exactly attackRange
+        {
+            col = math.floor(target.col + dx * targetDistance + 0.5),
+            row = math.floor(target.row + dy * targetDistance + 0.5)
+        },
+        -- Closer positions if ideal is blocked
+        {
+            col = math.floor(target.col + dx * (targetDistance - 1) + 0.5),
+            row = math.floor(target.row + dy * (targetDistance - 1) + 0.5)
+        },
+        -- Try positions around the target at range
+        {col = target.col + targetDistance, row = target.row},
+        {col = target.col - targetDistance, row = target.row},
+        {col = target.col, row = target.row + targetDistance},
+        {col = target.col, row = target.row - targetDistance},
+    }
+
+    -- Find first valid empty position
+    for _, pos in ipairs(attempts) do
+        if grid:isValidCell(pos.col, pos.row) then
+            local cell = grid:getCell(pos.col, pos.row)
+            -- Check if cell is empty or is our current position
+            if not cell.occupied or (pos.col == self.col and pos.row == self.row) then
+                -- Verify this position is within attack range
+                local dist = math.abs(pos.col - target.col) + math.abs(pos.row - target.row)
+                if dist <= self.attackRange and dist > 0 then
+                    return pos.col, pos.row
+                end
+            end
+        end
+    end
+
+    -- Fallback: use base implementation (adjacent)
+    return BaseUnit.findGoalNearTarget(self, grid, target)
+end
+
+-- Ranged attack: shoot projectile at target
+-- Note: Projectiles fly over obstacles - no line-of-sight required
+function BaseUnitRanged:attack(target, grid)
+    if target and not target.isDead then
+        -- Create projectile (flies directly to target, ignoring obstacles)
+        local projectile = self:createProjectile(target)
+        table.insert(self.arrows, projectile)
+
+        -- Note: Damage is applied when projectile reaches target, not instantly
+    end
+end
+
+-- Create a projectile (can be overridden for custom projectile properties)
+function BaseUnitRanged:createProjectile(target)
+    -- Units only attack when stationary, so use current position
+    return {
+        startCol = self.col,
+        startRow = self.row,
+        targetCol = target.col,
+        targetRow = target.row,
+        progress = 0,
+        duration = self.projectileSpeed,
+        target = target,
+        damage = self.damage
+    }
+end
+
+-- Override update to handle projectile animations
+function BaseUnitRanged:update(dt, grid)
+    -- Update projectiles
+    for i = #self.arrows, 1, -1 do
+        local projectile = self.arrows[i]
+        projectile.progress = projectile.progress + (dt / projectile.duration)
+
+        if projectile.progress >= 1.0 then
+            -- Projectile reached target, apply damage
+            if projectile.target and not projectile.target.isDead then
+                projectile.target:takeDamage(projectile.damage)
+
+                -- If target died, mark cell as unoccupied
+                if projectile.target.isDead then
+                    local cell = grid:getCell(projectile.target.col, projectile.target.row)
+                    if cell then
+                        cell.occupied = false
+                    end
+                end
+            end
+
+            -- Remove projectile
+            table.remove(self.arrows, i)
+        end
+    end
+
+    -- Call parent update for movement and AI
+    BaseUnit.update(self, dt, grid)
+end
+
+-- Override draw to render projectiles
+function BaseUnitRanged:drawAttackVisuals()
+    -- Draw all active projectiles
+    for _, projectile in ipairs(self.arrows) do
+        self:drawProjectile(projectile)
+    end
+end
+
+-- Draw a single projectile (override this in subclasses for custom visuals)
+function BaseUnitRanged:drawProjectile(projectile)
+    local lg = love.graphics
+
+    -- Use easing for smooth projectile flight
+    local easedProgress = tween.easing.linear(projectile.progress, 0, 1, 1)
+
+    -- Calculate projectile position
+    local startX = Constants.GRID_OFFSET_X + (projectile.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local startY = Constants.GRID_OFFSET_Y + (projectile.startRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local endX = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local endY = Constants.GRID_OFFSET_Y + (projectile.targetRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+
+    local currentX = startX + (endX - startX) * easedProgress
+    local currentY = startY + (endY - startY) * easedProgress
+
+    -- Default projectile: arrow shape
+    lg.setColor(0.8, 0.6, 0.3, 1)  -- Brown/tan color
+    lg.setLineWidth(2)
+
+    -- Arrow shaft
+    local dx = endX - startX
+    local dy = endY - startY
+    local angle = math.atan2(dy, dx)
+
+    -- Draw line from start toward current position
+    local arrowLength = 12
+    local backX = currentX - math.cos(angle) * arrowLength
+    local backY = currentY - math.sin(angle) * arrowLength
+
+    lg.line(backX, backY, currentX, currentY)
+
+    -- Draw arrowhead (simple triangle)
+    local headSize = 6
+    local perpAngle1 = angle + math.pi * 0.75
+    local perpAngle2 = angle - math.pi * 0.75
+
+    local tip1X = currentX + math.cos(perpAngle1) * headSize
+    local tip1Y = currentY + math.sin(perpAngle1) * headSize
+    local tip2X = currentX + math.cos(perpAngle2) * headSize
+    local tip2Y = currentY + math.sin(perpAngle2) * headSize
+
+    lg.polygon('fill', currentX, currentY, tip1X, tip1Y, tip2X, tip2Y)
+
+    lg.setLineWidth(1)
+end
+
+return BaseUnitRanged

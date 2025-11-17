@@ -1,7 +1,7 @@
 local Screen = require('lib.screen')
 local Constants = require('src.constants')
 local Grid = require('src.grid')
-local Unit = require('src.unit')
+local UnitRegistry = require('src.unit_registry')
 local Card = require('src.card')
 local suit = require('lib.suit')
 
@@ -11,12 +11,8 @@ function GameScreen.new()
     local self = Screen.new()
 
     function self:init()
-        -- Load sprites
-        self.sprites = {
-            front = love.graphics.newImage('src/assets/front.png'),
-            back = love.graphics.newImage('src/assets/back.png'),
-            dead = love.graphics.newImage('src/assets/dead.png')
-        }
+        -- Load sprites for all unit types
+        self.sprites = UnitRegistry.loadAllSprites()
 
         -- Create grid
         self.grid = Grid()
@@ -58,7 +54,12 @@ function GameScreen.new()
 
         for i = 1, 3 do
             local x = startX + (i - 1) * (cardWidth + cardSpacing)
-            local card = Card(x, cardY, self.sprites.front, i)
+
+            -- Randomly assign a unit type to each card
+            local unitType = UnitRegistry.getRandomUnitType()
+            local sprite = self.sprites[unitType].front
+
+            local card = Card(x, cardY, sprite, i, unitType)
             table.insert(self.cards, card)
         end
     end
@@ -316,8 +317,10 @@ function GameScreen.new()
                     -- Determine owner based on which zone the card is dropped in
                     local owner = self.grid:getOwner(row)
 
-                    -- Create and place unit with the appropriate owner
-                    local unit = Unit(row, col, owner, self.sprites)
+                    -- Create and place unit with the appropriate owner using the card's unit type
+                    local unitType = self.draggedCard.unitType
+                    local unitSprites = self.sprites[unitType]
+                    local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
                     if self.grid:placeUnit(col, row, unit) then
                         -- Remove the card from hand
                         for i, card in ipairs(self.cards) do

@@ -3,25 +3,27 @@ local Constants = require('src.constants')
 local Pathfinding = require('src.pathfinding')
 local tween = require('lib.tween')
 
-local Unit = Class:extend()
+local BaseUnit = Class:extend()
 
-function Unit:new(row, col, owner, sprites)
+function BaseUnit:new(row, col, owner, sprites, stats)
     self.row = row
     self.col = col
     self.owner = owner  -- 1 or 2
     self.sprites = sprites
 
-    -- Stats
-    self.health = 10
-    self.maxHealth = 10
-    self.damage = 1
+    -- Stats (passed from subclasses)
+    self.health = stats.health or 10
+    self.maxHealth = stats.maxHealth or 10
+    self.damage = stats.damage or 1
+    self.attackSpeed = stats.attackSpeed or 1  -- attacks per second
+    self.moveSpeed = stats.moveSpeed or 1  -- cells per second
+    self.attackRange = stats.attackRange or 0  -- 0 = melee
+    self.unitType = stats.unitType or "unknown"
+
     self.isDead = false
 
     -- Combat stats
-    self.attackSpeed = 1  -- attacks per second
     self.attackCooldown = 0
-    self.moveSpeed = 1  -- cells per second
-    self.attackRange = 0  -- 0 = melee (adjacent cells only)
 
     -- AI state
     self.target = nil
@@ -53,7 +55,7 @@ function Unit:new(row, col, owner, sprites)
     self.sprite = self:getSprite()
 end
 
-function Unit:getSprite()
+function BaseUnit:getSprite()
     if self.isDead then
         return self.sprites.dead
     elseif self.owner == 1 then
@@ -65,7 +67,7 @@ function Unit:getSprite()
     end
 end
 
-function Unit:draw()
+function BaseUnit:draw()
     local lg = love.graphics
 
     -- If being dragged, use drag position
@@ -128,10 +130,16 @@ function Unit:draw()
     -- Draw sprite centered in cell
     lg.setColor(1, 1, 1, 1)
 
-    -- Scale sprite to fit cell (16x16 sprite -> 32x32 cell = 2x scale)
+    -- Get sprite dimensions (supports variable height sprites: 16xH)
+    local spriteWidth = sprite:getWidth()
+    local spriteHeight = sprite:getHeight()
+
+    -- Scale based on width (assuming 16px width)
     local scale = Constants.CELL_SIZE / 16
-    local offsetX = (Constants.CELL_SIZE - 16 * scale) / 2
-    local offsetY = (Constants.CELL_SIZE - 16 * scale) / 2
+
+    -- Center horizontally, anchor at bottom of cell (allows taller sprites to overflow upward)
+    local offsetX = (Constants.CELL_SIZE - spriteWidth * scale) / 2
+    local offsetY = Constants.CELL_SIZE - (spriteHeight * scale)
 
     lg.draw(sprite, x + offsetX, y + offsetY, 0, scale, scale)
 
@@ -155,9 +163,17 @@ function Unit:draw()
         end
         lg.rectangle('fill', barX, barY, barWidth * healthPercent, barHeight)
     end
+
+    -- Let subclasses draw additional things (like arrows)
+    self:drawAttackVisuals()
 end
 
-function Unit:takeDamage(amount)
+-- Override this in subclasses for custom attack visuals
+function BaseUnit:drawAttackVisuals()
+    -- Base implementation does nothing
+end
+
+function BaseUnit:takeDamage(amount)
     self.health = self.health - amount
     if self.health <= 0 then
         self.health = 0
@@ -169,7 +185,7 @@ function Unit:takeDamage(amount)
     self.hitAnimIntensity = 4  -- Pixels to shake
 end
 
-function Unit:update(dt, grid)
+function BaseUnit:update(dt, grid)
     -- Update animations even when dead
     if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then
         self.attackAnimProgress = self.attackAnimProgress + (dt / self.attackAnimDuration)
@@ -216,11 +232,11 @@ function Unit:update(dt, grid)
         return
     end
 
-    -- Check if target is in attack range (adjacent cells for melee)
+    -- Check if target is in attack range
     local inRange = self:isInAttackRange(self.target)
 
-    if inRange then
-        -- Target in range, attack!
+    if inRange and not self.isMoving then
+        -- Target in range and we're stationary, attack!
         self.state = "attacking"
         self.path = nil
 
@@ -229,32 +245,48 @@ function Unit:update(dt, grid)
             self.attackCooldown = 1 / self.attackSpeed
         end
     else
-        -- Target out of range, move toward it
+        -- Target out of range, or we're still moving - move toward it
         self.state = "moving"
 
-        -- Generate new path if we don't have one
-        if not self.path or #self.path == 0 then
-            -- Find best adjacent cell to target (not the target's cell itself)
-            local goalCol, goalRow = self:findAdjacentGoal(grid, self.target)
-            if goalCol and goalRow then
-                self.path = Pathfinding.findPath(grid, self.col, self.row, goalCol, goalRow, self.owner)
-            end
-        end
-
-        -- Move along path if we have one
-        if self.path and #self.path > 0 then
-            self:moveAlongPath(dt, grid)
-        else
-            -- No valid path found, clear path to retry next frame
+        -- Check if any enemy has come within attack range while moving
+        -- But only attack if we're not currently tweening between cells
+        local enemyInRange = self:findEnemyInRange(grid)
+        if enemyInRange and not self.isMoving then
+            -- Found an enemy in attack range and we're stationary! Switch to attacking
+            self.target = enemyInRange
+            self.state = "attacking"
             self.path = nil
+
+            if self.attackCooldown <= 0 then
+                self:attack(self.target, grid)
+                self.attackCooldown = 1 / self.attackSpeed
+            end
+        else
+            -- Generate new path if we don't have one
+            if not self.path or #self.path == 0 then
+                -- Find best goal cell based on attack range
+                local goalCol, goalRow = self:findGoalNearTarget(grid, self.target)
+                if goalCol and goalRow then
+                    self.path = Pathfinding.findPath(grid, self.col, self.row, goalCol, goalRow, self.owner)
+                end
+            end
+
+            -- Move along path if we have one
+            if self.path and #self.path > 0 then
+                self:moveAlongPath(dt, grid)
+            else
+                -- No valid path found, clear path to retry next frame
+                self.path = nil
+            end
         end
     end
 end
 
--- Find the best adjacent cell to move to near the target
-function Unit:findAdjacentGoal(grid, target)
+-- Find the goal position near target (override in subclasses for ranged behavior)
+function BaseUnit:findGoalNearTarget(grid, target)
     if not target then return nil, nil end
 
+    -- Default: find adjacent cell (for melee units)
     -- Get all cells adjacent to target (8 directions)
     local adjacentCells = {
         {col = target.col - 1, row = target.row},     -- left
@@ -290,7 +322,7 @@ function Unit:findAdjacentGoal(grid, target)
 end
 
 -- Find the nearest enemy unit
-function Unit:findNearestEnemy(grid)
+function BaseUnit:findNearestEnemy(grid)
     local allUnits = grid:getAllUnits()
     local nearestEnemy = nil
     local shortestDistance = math.huge
@@ -308,41 +340,47 @@ function Unit:findNearestEnemy(grid)
     return nearestEnemy
 end
 
--- Check if target is in attack range (adjacent cells for melee)
-function Unit:isInAttackRange(target)
+-- Find any enemy unit within attack range
+function BaseUnit:findEnemyInRange(grid)
+    local allUnits = grid:getAllUnits()
+
+    for _, unit in ipairs(allUnits) do
+        if unit.owner ~= self.owner and not unit.isDead then
+            if self:isInAttackRange(unit) then
+                return unit
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Check if target is in attack range (override in subclasses for different ranges)
+-- Note: Ranged units can attack over obstacles - no line-of-sight check
+function BaseUnit:isInAttackRange(target)
     if not target then return false end
 
     local colDiff = math.abs(self.col - target.col)
     local rowDiff = math.abs(self.row - target.row)
 
-    -- Melee range: 8 surrounding cells
-    return colDiff <= 1 and rowDiff <= 1 and not (colDiff == 0 and rowDiff == 0)
-end
-
--- Attack the target
-function Unit:attack(target, grid)
-    if target and not target.isDead then
-        -- Trigger attack animation
-        self.attackAnimProgress = 0  -- Reset to start
-        self.attackTargetCol = target.col
-        self.attackTargetRow = target.row
-
-        -- Apply damage
-        target:takeDamage(self.damage)
-
-        -- If target died, mark cell as unoccupied but keep unit visible
-        if target.isDead then
-            local cell = grid:getCell(target.col, target.row)
-            if cell then
-                cell.occupied = false  -- Allow movement through this cell
-                -- Keep cell.unit so the dead sprite remains visible
-            end
-        end
+    if self.attackRange == 0 then
+        -- Melee range: 8 surrounding cells (adjacent only)
+        return colDiff <= 1 and rowDiff <= 1 and not (colDiff == 0 and rowDiff == 0)
+    else
+        -- Ranged: check Manhattan distance (ignores obstacles between attacker and target)
+        local distance = colDiff + rowDiff
+        return distance > 0 and distance <= self.attackRange
     end
 end
 
+-- Attack the target (abstract method - override in subclasses)
+function BaseUnit:attack(target, grid)
+    -- Base implementation - subclasses should override this
+    error("BaseUnit:attack() must be overridden in subclass")
+end
+
 -- Move along the current path (with tween animation)
-function Unit:moveAlongPath(dt, grid)
+function BaseUnit:moveAlongPath(dt, grid)
     if not self.path or #self.path == 0 then return end
 
     if self.isMoving then
@@ -401,4 +439,4 @@ function Unit:moveAlongPath(dt, grid)
     end
 end
 
-return Unit
+return BaseUnit

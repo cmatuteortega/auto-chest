@@ -1,0 +1,42 @@
+local BaseUnit = require('src.base_unit')
+
+local Boney = BaseUnit:extend()
+
+function Boney:new(row, col, owner, sprites)
+    -- Boney stats: melee fighter
+    local stats = {
+        health = 10,
+        maxHealth = 10,
+        damage = 1,
+        attackSpeed = 1,  -- 1 attack per second
+        moveSpeed = 1,    -- 1 cell per second
+        attackRange = 0,  -- Melee (adjacent cells only)
+        unitType = "boney"
+    }
+
+    Boney.super.new(self, row, col, owner, sprites, stats)
+end
+
+-- Melee attack: lunge toward target and apply damage
+function Boney:attack(target, grid)
+    if target and not target.isDead then
+        -- Trigger attack animation (lunge)
+        self.attackAnimProgress = 0  -- Reset to start
+        self.attackTargetCol = target.col
+        self.attackTargetRow = target.row
+
+        -- Apply damage
+        target:takeDamage(self.damage)
+
+        -- If target died, mark cell as unoccupied but keep unit visible
+        if target.isDead then
+            local cell = grid:getCell(target.col, target.row)
+            if cell then
+                cell.occupied = false  -- Allow movement through this cell
+                -- Keep cell.unit so the dead sprite remains visible
+            end
+        end
+    end
+end
+
+return Boney
