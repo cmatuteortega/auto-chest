@@ -13,32 +13,45 @@ local GameScreen = require('src.screens.game')
 -- Global fonts (loaded once, shared by all screens)
 Fonts = {}
 
+-- Resize debouncing
+local resizeTimer = 0
+local resizeDelay = 0.1  -- Wait 0.1 seconds after resize stops before applying changes
+local pendingResize = nil
+local lastWidth, lastHeight = 0, 0  -- Track last applied size
+
 function love.load()
-    -- Set default font filter to 'nearest' for crisp pixel art
+    -- Set default filter to 'nearest' for crisp pixel art
     love.graphics.setDefaultFilter('nearest', 'nearest')
 
     -- Disable line smoothing for pixel-perfect rendering
     love.graphics.setLineStyle('rough')
 
-    -- Load Pixellari font once globally
+    -- Get window dimensions
+    local windowWidth = love.graphics.getWidth()
+    local windowHeight = love.graphics.getHeight()
+
+    -- Calculate dynamic resolution based on window size
+    Constants.updateResolution(windowWidth, windowHeight)
+
+    -- Load Pixellari font once globally with scaled sizes
     Fonts.large = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
     Fonts.medium = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.MEDIUM)
     Fonts.small = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
     Fonts.tiny = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
 
-    -- Setup push for resolution scaling
+    -- Setup push for resolution scaling with dynamic virtual resolution
     Push:setupScreen(
-        Constants.GAME_WIDTH,    -- Game width (virtual resolution)
-        Constants.GAME_HEIGHT,   -- Game height (virtual resolution)
-        love.graphics.getWidth(),  -- Window width (actual)
-        love.graphics.getHeight(), -- Window height (actual)
+        Constants.GAME_WIDTH,    -- Game width (virtual resolution - matches window)
+        Constants.GAME_HEIGHT,   -- Game height (virtual resolution - matches window)
+        windowWidth,             -- Window width (actual)
+        windowHeight,            -- Window height (actual)
         {
             fullscreen = false,
-            resizable = true,        -- Enable resizable window support
-            pixelperfect = true,     -- Force integer scaling for crisp pixels
-            highdpi = false,         -- Disable highdpi to prevent scaling issues
+            resizable = true,    -- Enable resizable window support
+            pixelperfect = false, -- Allow smooth scaling for any resolution
+            highdpi = false,     -- Disable highdpi to prevent scaling issues
             canvas = true,
-            stretched = false        -- Maintain aspect ratio (no distortion)
+            stretched = true     -- Fill entire window (no letterboxing)
         }
     )
 
@@ -49,13 +62,36 @@ function love.load()
     }
     ScreenManager.init(screens, 'menu')
 
+    -- Track initial size
+    lastWidth = windowWidth
+    lastHeight = windowHeight
+
     print("AutoChest loaded!")
-    print(string.format("Game Resolution: %dx%d", Constants.GAME_WIDTH, Constants.GAME_HEIGHT))
+    print(string.format("Window: %dx%d", windowWidth, windowHeight))
+    print(string.format("Virtual Resolution: %dx%d", Constants.GAME_WIDTH, Constants.GAME_HEIGHT))
     print(string.format("Grid: %dx%d cells (%dpx cells)",
                        Constants.GRID_COLS, Constants.GRID_ROWS, Constants.CELL_SIZE))
+    print(string.format("Scale: %.2f", Constants.SCALE))
 end
 
 function love.update(dt)
+    -- Handle debounced resize
+    if pendingResize then
+        resizeTimer = resizeTimer + dt
+        if resizeTimer >= resizeDelay then
+            local w, h = pendingResize.w, pendingResize.h
+            pendingResize = nil
+            resizeTimer = 0
+
+            -- Only apply if size actually changed
+            if w ~= lastWidth or h ~= lastHeight then
+                applyResize(w, h)
+                lastWidth = w
+                lastHeight = h
+            end
+        end
+    end
+
     ScreenManager.update(dt)
 end
 
@@ -131,8 +167,45 @@ function love.keyreleased(key, scancode)
     ScreenManager.keyreleased(key, scancode)
 end
 
+-- Apply resize (debounced)
+function applyResize(w, h)
+    -- Recalculate dynamic resolution for new window size
+    Constants.updateResolution(w, h)
+
+    -- Reload fonts with new sizes
+    Fonts.large = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
+    Fonts.medium = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.MEDIUM)
+    Fonts.small = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
+    Fonts.tiny = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
+
+    -- Update the virtual resolution canvas
+    Push:setupScreen(
+        Constants.GAME_WIDTH,
+        Constants.GAME_HEIGHT,
+        w, h,
+        {
+            fullscreen = false,
+            resizable = true,
+            pixelperfect = false,
+            highdpi = false,
+            canvas = true,
+            stretched = true
+        }
+    )
+
+    print(string.format("Resized to: %dx%d (Virtual: %dx%d, Scale: %.2f)",
+                       w, h, Constants.GAME_WIDTH, Constants.GAME_HEIGHT, Constants.SCALE))
+end
+
 function love.resize(w, h)
-    Push:resize(w, h)
+    -- Ignore resize events that don't actually change the size
+    if w == lastWidth and h == lastHeight then
+        return
+    end
+
+    -- Debounce the heavy operations (font loading, recalculation)
+    pendingResize = {w = w, h = h}
+    resizeTimer = 0
 end
 
 function love.quit()

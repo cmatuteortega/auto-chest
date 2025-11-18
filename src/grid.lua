@@ -4,11 +4,7 @@ local Constants = require('src.constants')
 local Grid = Class:extend()
 
 function Grid:new()
-    self.cols = Constants.GRID_COLS
-    self.rows = Constants.GRID_ROWS
-    self.cellSize = Constants.CELL_SIZE
-    self.offsetX = Constants.GRID_OFFSET_X
-    self.offsetY = Constants.GRID_OFFSET_Y
+    self:refreshDimensions()
 
     -- Grid data (2D array)
     self.cells = {}
@@ -28,6 +24,15 @@ function Grid:new()
 
     -- Highlighted cell (for touch/mouse input)
     self.highlightedCell = nil
+end
+
+-- Refresh grid dimensions from Constants (called on resize)
+function Grid:refreshDimensions()
+    self.cols = Constants.GRID_COLS
+    self.rows = Constants.GRID_ROWS
+    self.cellSize = Constants.CELL_SIZE
+    self.offsetX = Constants.GRID_OFFSET_X
+    self.offsetY = Constants.GRID_OFFSET_Y
 end
 
 function Grid:getOwner(row)
@@ -186,6 +191,9 @@ function Grid:getUnitAtCell(col, row)
 end
 
 function Grid:update(dt, mouseX, mouseY)
+    -- Refresh dimensions in case window was resized
+    self:refreshDimensions()
+
     -- Update highlighted cell based on mouse/touch position
     local col, row = self:worldToGrid(mouseX, mouseY)
 
@@ -229,16 +237,16 @@ function Grid:draw(draggedUnit)
         lg.setColor(Constants.COLORS.CELL_HIGHLIGHT)
         lg.rectangle('fill', x, y, self.cellSize, self.cellSize)
 
-        -- Draw border
+        -- Draw border (scaled)
         lg.setColor(1, 1, 1, 0.5)
-        lg.setLineWidth(2)
+        lg.setLineWidth(2 * Constants.SCALE)
         lg.rectangle('line', x, y, self.cellSize, self.cellSize)
         lg.setLineWidth(1)
     end
 
-    -- Draw center line between players
+    -- Draw center line between players (scaled)
     lg.setColor(1, 1, 1, 0.3)
-    lg.setLineWidth(2)
+    lg.setLineWidth(2 * Constants.SCALE)
     local centerY = self.offsetY + (Constants.PLAYER2_ROWS * self.cellSize)
     lg.line(self.offsetX, centerY, self.offsetX + Constants.GRID_WIDTH, centerY)
     lg.setLineWidth(1)

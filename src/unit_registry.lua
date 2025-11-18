@@ -53,10 +53,20 @@ function UnitRegistry.loadSprites(unitType)
         error("Unknown unit type: " .. tostring(unitType))
     end
 
+    -- Load sprites with nearest-neighbor filtering for pixel-perfect scaling
+    local front = love.graphics.newImage(paths.front)
+    front:setFilter('nearest', 'nearest')
+
+    local back = love.graphics.newImage(paths.back)
+    back:setFilter('nearest', 'nearest')
+
+    local dead = love.graphics.newImage(paths.dead)
+    dead:setFilter('nearest', 'nearest')
+
     return {
-        front = love.graphics.newImage(paths.front),
-        back = love.graphics.newImage(paths.back),
-        dead = love.graphics.newImage(paths.dead)
+        front = front,
+        back = back,
+        dead = dead
     }
 end
 

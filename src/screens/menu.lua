@@ -15,22 +15,28 @@ function MenuScreen.new()
     function self:draw()
         local lg = love.graphics
 
+        -- Calculate proportional spacing
+        local centerY = Constants.GAME_HEIGHT / 2
+        local titleOffset = 100 * Constants.SCALE
+        local subtitleOffset = 50 * Constants.SCALE
+        local instructionOffset = 50 * Constants.SCALE
+
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf(self.title, 0, Constants.GAME_HEIGHT / 2 - 100,
+        lg.printf(self.title, 0, centerY - titleOffset,
                   Constants.GAME_WIDTH, 'center')
 
         -- Subtitle
         lg.setFont(Fonts.medium)
         lg.setColor(0.7, 0.7, 0.7, 1)
-        lg.printf(self.subtitle, 0, Constants.GAME_HEIGHT / 2 - 50,
+        lg.printf(self.subtitle, 0, centerY - subtitleOffset,
                   Constants.GAME_WIDTH, 'center')
 
         -- Instruction
         lg.setFont(Fonts.small)
         lg.setColor(0.5, 0.5, 0.5, 1)
-        lg.printf("Click anywhere to start", 0, Constants.GAME_HEIGHT / 2 + 50,
+        lg.printf("Click anywhere to start", 0, centerY + instructionOffset,
                   Constants.GAME_WIDTH, 'center')
     end
 

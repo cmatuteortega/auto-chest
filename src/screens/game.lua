@@ -59,13 +59,17 @@ function GameScreen.new()
     end
 
     function self:generateCards()
-        -- Generate 3 cards at bottom of screen
+        -- Generate 3 cards at bottom with 10% margin (matching grid top margin)
         self.cards = {}
-        local cardWidth = 80  -- Updated to match new card size
-        local cardSpacing = 30
+        local cardWidth = 80 * Constants.SCALE
+        local cardHeight = 100 * Constants.SCALE
+        local cardSpacing = 30 * Constants.SCALE
         local totalWidth = (cardWidth * 3) + (cardSpacing * 2)
         local startX = (Constants.GAME_WIDTH - totalWidth) / 2
-        local cardY = Constants.GAME_HEIGHT - 130  -- More space for larger cards
+
+        -- Position cards with 15% bottom margin (matching grid's 15% top margin)
+        local bottomMarginPercent = 0.10
+        local cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
 
         for i = 1, 3 do
             local x = startX + (i - 1) * (cardWidth + cardSpacing)
@@ -78,10 +82,11 @@ function GameScreen.new()
             table.insert(self.cards, card)
         end
 
-        -- Calculate reroll button position (aligned to right edge with 10px offset)
-        self.rerollButtonSize = 40  -- Square button same size as READY button height
-        self.rerollButtonX = Constants.GAME_WIDTH - self.rerollButtonSize - 10
-        self.rerollButtonY = cardY + (100 - self.rerollButtonSize) / 2  -- Center vertically with cards
+        -- Calculate reroll button position (aligned to right of cards with spacing)
+        self.rerollButtonSize = 40 * Constants.SCALE
+        local cardsEndX = startX + totalWidth
+        self.rerollButtonX = cardsEndX + cardSpacing
+        self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
     end
 
     function self:update(dt)
@@ -169,7 +174,7 @@ function GameScreen.new()
     function self:drawUI()
         local lg = love.graphics
 
-        -- State and timer
+        -- State and timer (positioned as percentage from top)
         lg.setFont(Fonts.medium)
         lg.setColor(0.9, 0.9, 0.9, 1)
         local stateText = self.state:upper()
@@ -179,24 +184,29 @@ function GameScreen.new()
             stateText = "PLAYER " .. self.winner .. " WINS!"
             lg.setColor(1, 1, 0, 1)
         end
-        lg.printf(stateText, 0, 50, Constants.GAME_WIDTH, 'center')
+        local stateTextY = Constants.GAME_HEIGHT * 0.025  -- 2.5% from top
+        lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
-        -- Player labels
+        -- Player labels (proportional positioning)
         lg.setFont(Fonts.medium)
+        local labelMargin = 10 * Constants.SCALE
+
         lg.setColor(0.5, 0.7, 1, 1)
-        lg.print("P2", 10, 10)
+        lg.print("P2", labelMargin, labelMargin)
 
         lg.setColor(1, 0.7, 0.5, 1)
-        -- Measure text width to align right with same offset as P2 (10px from edge)
+        -- Measure text width to align right with same offset as P2
         local p1Text = "P1"
         local p1Width = Fonts.medium:getWidth(p1Text)
-        lg.print(p1Text, Constants.GAME_WIDTH - p1Width - 10, Constants.GAME_HEIGHT - 30)
+        lg.print(p1Text, Constants.GAME_WIDTH - p1Width - labelMargin,
+                 Constants.GAME_HEIGHT - (30 * Constants.SCALE))
 
-        -- Button dimensions (consistent for both Ready and Restart)
-        local buttonWidth = 120
-        local buttonHeight = 40
+        -- Button dimensions (scaled proportionally)
+        local buttonWidth = 120 * Constants.SCALE
+        local buttonHeight = 40 * Constants.SCALE
         local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-        local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + 20
+        local buttonSpacing = 20 * Constants.SCALE
+        local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + buttonSpacing
 
         -- Buttons
         if self.state == "setup" then

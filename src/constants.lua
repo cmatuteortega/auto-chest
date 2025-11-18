@@ -1,23 +1,35 @@
 local Constants = {}
 
--- Game resolution (virtual)
+-- Base reference resolution (used for proportional scaling)
+Constants.BASE_WIDTH = 540
+Constants.BASE_HEIGHT = 960
+
+-- Current game resolution (will be set dynamically)
 Constants.GAME_WIDTH = 540
 Constants.GAME_HEIGHT = 960
+
+-- Scale factor for UI elements (calculated based on actual screen size)
+Constants.SCALE = 1
 
 -- Grid configuration
 Constants.GRID_COLS = 5
 Constants.GRID_ROWS = 8
-Constants.CELL_SIZE = 64  -- Larger cells for better visibility
 
--- Grid dimensions in pixels
-Constants.GRID_WIDTH = Constants.GRID_COLS * Constants.CELL_SIZE  -- 320px
-Constants.GRID_HEIGHT = Constants.GRID_ROWS * Constants.CELL_SIZE -- 512px
+-- Base cell size (at reference resolution)
+Constants.BASE_CELL_SIZE = 64
+
+-- Current cell size (will be calculated dynamically)
+Constants.CELL_SIZE = 64
+
+-- Grid dimensions in pixels (will be calculated dynamically)
+Constants.GRID_WIDTH = Constants.GRID_COLS * Constants.CELL_SIZE
+Constants.GRID_HEIGHT = Constants.GRID_ROWS * Constants.CELL_SIZE
 
 -- Player sides (rows are split between two players)
 Constants.PLAYER1_ROWS = 4  -- Bottom half (rows 5-8)
 Constants.PLAYER2_ROWS = 4  -- Top half (rows 1-4)
 
--- Colors (placeholder)
+-- Colors
 Constants.COLORS = {
     BACKGROUND = {0.1, 0.1, 0.15, 1},
     GRID_LINE = {0.3, 0.3, 0.35, 1},
@@ -28,16 +40,98 @@ Constants.COLORS = {
     CELL_HIGHLIGHT = {1, 1, 1, 0.2},
 }
 
--- UI spacing
-Constants.GRID_OFFSET_X = (Constants.GAME_WIDTH - Constants.GRID_WIDTH) / 2
-Constants.GRID_OFFSET_Y = 180  -- Leave room for UI at top and bottom
+-- UI spacing (dynamic values, will be calculated)
+Constants.GRID_OFFSET_X = 110
+Constants.GRID_OFFSET_Y = 180
 
--- Font sizes (larger for better visibility)
-Constants.FONT_SIZES = {
-    LARGE = 48,   -- Titles
-    MEDIUM = 32,  -- Subtitles, important text
-    SMALL = 24,   -- UI elements, instructions
-    TINY = 16     -- Debug text, card labels
+-- Base font sizes (at reference resolution)
+Constants.BASE_FONT_SIZES = {
+    LARGE = 48,
+    MEDIUM = 32,
+    SMALL = 24,
+    TINY = 16
 }
+
+-- Current font sizes (will be scaled)
+Constants.FONT_SIZES = {
+    LARGE = 48,
+    MEDIUM = 32,
+    SMALL = 24,
+    TINY = 16
+}
+
+-- Margin percentages (relative to screen dimensions)
+Constants.MARGINS = {
+    TOP = 0.05,        -- 5% top margin
+    BOTTOM = 0.15,     -- 15% bottom margin for card row
+    SIDE = 0.05,       -- 5% side margins for grid
+    CARD_ROW = 0.135,  -- Card row distance from bottom (13.5% of height)
+}
+
+-- Calculate dynamic resolution and scaling based on window size
+function Constants.updateResolution(windowWidth, windowHeight)
+    -- Calculate the best virtual resolution that maintains aspect ratio and fills the screen
+    -- We'll use a virtual resolution that matches the window aspect ratio
+    local windowAspect = windowWidth / windowHeight
+    local baseAspect = Constants.BASE_WIDTH / Constants.BASE_HEIGHT
+
+    -- Set virtual resolution to match window aspect ratio
+    -- Scale to match the window while maintaining reasonable resolution
+    if windowAspect > baseAspect then
+        -- Wider than base (landscape-ish)
+        Constants.GAME_HEIGHT = Constants.BASE_HEIGHT
+        Constants.GAME_WIDTH = math.floor(Constants.BASE_HEIGHT * windowAspect)
+    else
+        -- Taller than base (portrait-ish) or same
+        Constants.GAME_WIDTH = Constants.BASE_WIDTH
+        Constants.GAME_HEIGHT = math.floor(Constants.BASE_WIDTH / windowAspect)
+    end
+
+    -- Calculate scale factor for UI elements
+    local scaleX = Constants.GAME_WIDTH / Constants.BASE_WIDTH
+    local scaleY = Constants.GAME_HEIGHT / Constants.BASE_HEIGHT
+    Constants.SCALE = math.min(scaleX, scaleY)
+
+    -- Calculate grid cell size with 1.5 cell margin on all sides
+    -- Grid margin: 1.5 cells on left/right, 1.5 cells on top, 1.5 cells + card row on bottom
+    local gridMarginCells = 1.5
+
+    -- Available space accounting for margins (in cell units)
+    local totalColsWithMargins = Constants.GRID_COLS + (gridMarginCells * 2)
+    local topMarginCells = gridMarginCells
+    local bottomMarginCells = gridMarginCells + (Constants.MARGINS.CARD_ROW * Constants.BASE_HEIGHT / Constants.BASE_CELL_SIZE)
+    local totalRowsWithMargins = Constants.GRID_ROWS + topMarginCells + bottomMarginCells
+
+    -- Calculate cell size based on available space
+    local cellByWidth = Constants.GAME_WIDTH / totalColsWithMargins
+    local cellByHeight = Constants.GAME_HEIGHT / totalRowsWithMargins
+
+    -- Use the smaller value to ensure grid fits with margins
+    -- Round down to nearest multiple of 16 for crisp pixel art scaling (sprites are 16px wide)
+    local minCellSize = math.floor(math.min(cellByWidth, cellByHeight))
+    Constants.CELL_SIZE = math.floor(minCellSize / 16) * 16
+
+    -- Update grid dimensions
+    Constants.GRID_WIDTH = Constants.GRID_COLS * Constants.CELL_SIZE
+    Constants.GRID_HEIGHT = Constants.GRID_ROWS * Constants.CELL_SIZE
+
+    -- Center grid horizontally with less top margin
+    Constants.GRID_OFFSET_X = (Constants.GAME_WIDTH - Constants.GRID_WIDTH) / 2
+    -- Position grid with small top margin (10% of height from top)
+    local topMarginPercent = 0.15
+    Constants.GRID_OFFSET_Y = Constants.GAME_HEIGHT * topMarginPercent
+
+    -- Scale font sizes proportionally
+    Constants.FONT_SIZES.LARGE = math.floor(Constants.BASE_FONT_SIZES.LARGE * Constants.SCALE)
+    Constants.FONT_SIZES.MEDIUM = math.floor(Constants.BASE_FONT_SIZES.MEDIUM * Constants.SCALE)
+    Constants.FONT_SIZES.SMALL = math.floor(Constants.BASE_FONT_SIZES.SMALL * Constants.SCALE)
+    Constants.FONT_SIZES.TINY = math.floor(Constants.BASE_FONT_SIZES.TINY * Constants.SCALE)
+
+    -- Ensure minimum readable font sizes
+    Constants.FONT_SIZES.LARGE = math.max(Constants.FONT_SIZES.LARGE, 24)
+    Constants.FONT_SIZES.MEDIUM = math.max(Constants.FONT_SIZES.MEDIUM, 18)
+    Constants.FONT_SIZES.SMALL = math.max(Constants.FONT_SIZES.SMALL, 14)
+    Constants.FONT_SIZES.TINY = math.max(Constants.FONT_SIZES.TINY, 10)
+end
 
 return Constants

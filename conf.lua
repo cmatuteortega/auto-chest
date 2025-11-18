@@ -11,12 +11,12 @@ function love.conf(t)
 
     t.window.title = "AutoChest"
     t.window.icon = nil
-    t.window.width = 540  -- Half of 1080 for desktop testing
-    t.window.height = 960 -- Half of 1920 for desktop testing
+    t.window.width = 540  -- Default window width
+    t.window.height = 960 -- Default window height
     t.window.borderless = false
     t.window.resizable = true  -- Enable window resizing on desktop
-    t.window.minwidth = 540    -- Minimum = virtual resolution for pixelperfect 1x scale
-    t.window.minheight = 960   -- Minimum = virtual resolution for pixelperfect 1x scale
+    t.window.minwidth = 270    -- Minimum width (half of base)
+    t.window.minheight = 480   -- Minimum height (half of base)
     t.window.fullscreen = false
     t.window.fullscreentype = "desktop"
     t.window.vsync = 1

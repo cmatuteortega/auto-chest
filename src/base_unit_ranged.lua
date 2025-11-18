@@ -165,24 +165,24 @@ function BaseUnitRanged:drawProjectile(projectile)
     local currentX = startX + (endX - startX) * easedProgress
     local currentY = startY + (endY - startY) * easedProgress
 
-    -- Default projectile: arrow shape
+    -- Default projectile: arrow shape (scaled)
     lg.setColor(0.8, 0.6, 0.3, 1)  -- Brown/tan color
-    lg.setLineWidth(2)
+    lg.setLineWidth(2 * Constants.SCALE)
 
     -- Arrow shaft
     local dx = endX - startX
     local dy = endY - startY
     local angle = math.atan2(dy, dx)
 
-    -- Draw line from start toward current position
-    local arrowLength = 12
+    -- Draw line from start toward current position (scaled)
+    local arrowLength = 12 * Constants.SCALE
     local backX = currentX - math.cos(angle) * arrowLength
     local backY = currentY - math.sin(angle) * arrowLength
 
     lg.line(backX, backY, currentX, currentY)
 
-    -- Draw arrowhead (simple triangle)
-    local headSize = 6
+    -- Draw arrowhead (simple triangle, scaled)
+    local headSize = 6 * Constants.SCALE
     local perpAngle1 = angle + math.pi * 0.75
     local perpAngle2 = angle - math.pi * 0.75
 

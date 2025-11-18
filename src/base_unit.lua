@@ -138,21 +138,26 @@ function BaseUnit:draw()
     local spriteWidth = sprite:getWidth()
     local spriteHeight = sprite:getHeight()
 
-    -- Scale based on width (assuming 16px width)
-    local scale = Constants.CELL_SIZE / 16
+    -- Scale based on width (assuming 16px width) - use integer scale for crisp pixels
+    local scale = math.floor(Constants.CELL_SIZE / 16)
+
+    -- Ensure scale is at least 1 to prevent invisible sprites
+    scale = math.max(1, scale)
 
     -- Center horizontally, anchor at bottom of cell (allows taller sprites to overflow upward)
-    local offsetX = (Constants.CELL_SIZE - spriteWidth * scale) / 2
-    local offsetY = Constants.CELL_SIZE - (spriteHeight * scale)
+    -- Use floor to ensure pixel-perfect positioning
+    local offsetX = math.floor((Constants.CELL_SIZE - spriteWidth * scale) / 2)
+    local offsetY = math.floor(Constants.CELL_SIZE - (spriteHeight * scale))
 
-    lg.draw(sprite, x + offsetX, y + offsetY, 0, scale, scale)
+    lg.draw(sprite, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
 
-    -- Draw health bar if damaged
+    -- Draw health bar if damaged (scaled)
     if self.health < self.maxHealth and not self.isDead then
-        local barWidth = Constants.CELL_SIZE - 4
-        local barHeight = 3
-        local barX = x + 2
-        local barY = y + Constants.CELL_SIZE - barHeight - 2
+        local barPadding = 4 * Constants.SCALE
+        local barHeight = 3 * Constants.SCALE
+        local barWidth = Constants.CELL_SIZE - barPadding
+        local barX = x + (barPadding / 2)
+        local barY = y + Constants.CELL_SIZE - barHeight - (barPadding / 2)
 
         -- Background
         lg.setColor(0.3, 0.3, 0.3, 1)
@@ -171,20 +176,20 @@ function BaseUnit:draw()
     -- Let subclasses draw additional things (like arrows)
     self:drawAttackVisuals()
 
-    -- Draw taunt indicator if taunted
+    -- Draw taunt indicator if taunted (scaled)
     if self.tauntedBy and not self.tauntedBy.isDead and self.tauntTimer > 0 then
         -- Draw exclamation mark above unit
         lg.setColor(1, 0.8, 0, 1)  -- Yellow/orange color
 
         local centerX = x + Constants.CELL_SIZE / 2
-        local iconY = y - 8  -- Above the unit
+        local iconY = y - (8 * Constants.SCALE)  -- Above the unit
 
-        -- Draw exclamation mark (simple shape)
+        -- Draw exclamation mark (simple shape, scaled)
         -- Vertical line
-        lg.setLineWidth(2)
-        lg.line(centerX, iconY, centerX, iconY + 6)
+        lg.setLineWidth(2 * Constants.SCALE)
+        lg.line(centerX, iconY, centerX, iconY + (6 * Constants.SCALE))
         -- Dot at bottom
-        lg.circle('fill', centerX, iconY + 8, 1.5)
+        lg.circle('fill', centerX, iconY + (8 * Constants.SCALE), 1.5 * Constants.SCALE)
         lg.setLineWidth(1)
     end
 end
@@ -201,9 +206,9 @@ function BaseUnit:takeDamage(amount)
         self.isDead = true
     end
 
-    -- Trigger hit animation
+    -- Trigger hit animation (scaled)
     self.hitAnimProgress = 0  -- Reset to start
-    self.hitAnimIntensity = 4  -- Pixels to shake
+    self.hitAnimIntensity = 4 * Constants.SCALE  -- Pixels to shake (scaled)
 end
 
 -- Hook: Get damage amount (can be overridden for conditional damage)
