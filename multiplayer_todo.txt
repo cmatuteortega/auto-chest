@@ -1,0 +1,53 @@
+Architecture Overview
+Recommended approach: Peer-to-peer with deterministic simulation Since both devices run the same autobattle simulation, you only need to sync:
+Unit placements during setup phase
+"Ready" signals to start battle
+Battle runs identically on both devices (deterministic)
+Implementation Plan
+For Love2D, use sock.lua (already in your lib folder!) - it's a simple, reliable networking library that handles both client/server modes.
+Server Technology Options
+Simple Lua Server (Recommended for prototyping):
+Use sock.lua server mode on one device
+Other device connects as client
+Minimal setup, runs on any device
+Dedicated Server (For production):
+Node.js + Socket.io (most popular)
+Python + websockets
+Runs on a VPS/cloud server
+Key Implementation Steps
+Network Messages to send:
+-- During setup phase:
+{type = "place_unit", unitType = "knight", col = 3, row = 8, owner = 1}
+{type = "upgrade_unit", unitType = "knight", owner = 1}
+{type = "remove_unit", col = 3, row = 8}
+{type = "ready"}
+
+-- After both ready:
+{type = "battle_start", seed = 12345}  -- Use same RNG seed for determinism
+Sync approach:
+Setup phase: Send every unit placement action to opponent
+Battle phase: No sync needed! Both devices simulate with same initial state + RNG seed
+Winner is computed locally (should match on both devices)
+Code Structure
+You'd modify src/screens/game.lua to:
+Initialize sock.lua connection
+In mousereleased(): Send placement/upgrade events over network
+Receive opponent's placements and mirror them on their side of the grid
+When both players hit "READY", sync start signal + RNG seed
+Battle runs locally (no network during combat)
+Determinism Requirements
+Your combat is already mostly deterministic! Just ensure:
+Same RNG seed on both devices for battle
+No floating-point drift (Lua handles this well)
+Process units in same order (your grid:getAllUnits() already does this)
+Why This Works Well
+Your game structure is perfect for this:
+Turn-based setup (low latency tolerance)
+Deterministic autobattle (no sync needed during combat)
+Small state space (just unit placements)
+Would you like me to:
+Show example code for integrating sock.lua
+Create a simple matchmaking flow
+Set up a basic Node.js relay server
+Add turn synchronization logic
+This approach is exactly how Clash Mini works - only syncing setup, running battles locally!
