@@ -378,6 +378,45 @@ function GameScreen.new()
         end
 
         if button == 1 then
+            -- First, check if we clicked directly on an upgrade button in the tooltip
+            if self.tooltip:isVisible() then
+                local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
+                if upgradeIndex then
+                    local unit = self.tooltip.unit
+                    -- Player clicked an upgrade button - apply the upgrade
+                    if unit:upgrade(upgradeIndex) then
+                        print(string.format("Upgraded %s with upgrade %d to level %d", unit.unitType, upgradeIndex, unit.level))
+
+                        -- Remove the matching card from hand
+                        for i, card in ipairs(self.cards) do
+                            if card.unitType == unit.unitType then
+                                table.remove(self.cards, i)
+                                break
+                            end
+                        end
+
+                        -- Generate new cards
+                        self:generateCards()
+
+                        -- Update tooltip to reflect new state
+                        local hasMatchingCard = false
+                        for _, card in ipairs(self.cards) do
+                            if card.unitType == unit.unitType then
+                                hasMatchingCard = true
+                                break
+                            end
+                        end
+                        self.tooltip:show(unit, hasMatchingCard)
+                    end
+
+                    -- Clear pressed state
+                    self.pressedUnit = nil
+                    self.pressedUnitCol = nil
+                    self.pressedUnitRow = nil
+                    return
+                end
+            end
+
             -- Check if a unit was pressed but not dragged (tap for tooltip)
             if self.pressedUnit and not self.draggedUnit then
                 local unit = self.pressedUnit
@@ -386,8 +425,17 @@ function GameScreen.new()
                 self.pressedUnitCol = nil
                 self.pressedUnitRow = nil
 
-                -- Toggle tooltip for this unit
-                self.tooltip:toggle(unit)
+                -- Check if player has a matching card in hand
+                local hasMatchingCard = false
+                for _, card in ipairs(self.cards) do
+                    if card.unitType == unit.unitType then
+                        hasMatchingCard = true
+                        break
+                    end
+                end
+
+                -- Normal tooltip toggle
+                self.tooltip:toggle(unit, hasMatchingCard)
                 return
             end
 
@@ -551,6 +599,45 @@ function GameScreen.new()
         -- Update SUIT mouse state
         self.suit:updateMouse(x, y, false)
 
+        -- First, check if we tapped directly on an upgrade button in the tooltip
+        if self.tooltip:isVisible() then
+            local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
+            if upgradeIndex then
+                local unit = self.tooltip.unit
+                -- Player tapped an upgrade button - apply the upgrade
+                if unit:upgrade(upgradeIndex) then
+                    print(string.format("Upgraded %s with upgrade %d to level %d", unit.unitType, upgradeIndex, unit.level))
+
+                    -- Remove the matching card from hand
+                    for i, card in ipairs(self.cards) do
+                        if card.unitType == unit.unitType then
+                            table.remove(self.cards, i)
+                            break
+                        end
+                    end
+
+                    -- Generate new cards
+                    self:generateCards()
+
+                    -- Update tooltip to reflect new state
+                    local hasMatchingCard = false
+                    for _, card in ipairs(self.cards) do
+                        if card.unitType == unit.unitType then
+                            hasMatchingCard = true
+                            break
+                        end
+                    end
+                    self.tooltip:show(unit, hasMatchingCard)
+                end
+
+                -- Clear pressed state
+                self.pressedUnit = nil
+                self.pressedUnitCol = nil
+                self.pressedUnitRow = nil
+                return
+            end
+        end
+
         -- Check if a unit was pressed but not dragged (tap for tooltip)
         if self.pressedUnit and not self.draggedUnit then
             local unit = self.pressedUnit
@@ -559,8 +646,17 @@ function GameScreen.new()
             self.pressedUnitCol = nil
             self.pressedUnitRow = nil
 
+            -- Check if player has a matching card in hand
+            local hasMatchingCard = false
+            for _, card in ipairs(self.cards) do
+                if card.unitType == unit.unitType then
+                    hasMatchingCard = true
+                    break
+                end
+            end
+
             -- Toggle tooltip for this unit
-            self.tooltip:toggle(unit)
+            self.tooltip:toggle(unit, hasMatchingCard)
             return
         end
 

@@ -3,6 +3,83 @@ local Constants = require('src.constants')
 local Pathfinding = require('src.pathfinding')
 local tween = require('lib.tween')
 
+--[[
+================================================================================
+UPGRADE SYSTEM DOCUMENTATION (Clash Mini Style)
+================================================================================
+
+OVERVIEW:
+---------
+Each unit can be upgraded up to level 2 (from base level 0). Upgrades provide:
+1. STAT BOOST: 1.5x multiplier to HP and damage per level (automatic for all units)
+2. ABILITY UPGRADES: Units with upgrade trees get to choose special abilities
+
+UPGRADE TREE STRUCTURE:
+-----------------------
+Units can define an upgradeTree with 3 upgrade options. Players can only select
+2 of the 3 upgrades (at level 1 and level 2). Each upgrade has:
+  - name: Short display name (e.g., "Fury")
+  - description: Brief description for tooltip (e.g., "+50% ATKSPD below 50% HP")
+  - onApply: Optional function called when upgrade is selected
+
+EXAMPLE UPGRADE TREE (from Boney):
+----------------------------------
+self.upgradeTree = {
+    {
+        name = "Mend",
+        description = "Heal 25% HP when reaching 50% HP",
+        onApply = function(unit)
+            -- Called once when upgrade is purchased
+            -- For passive effects, check in update() or getDamage()
+        end
+    },
+    {
+        name = "Fury",
+        description = "+50% ATKSPD when below 50% HP",
+        onApply = function(unit)
+            -- Dynamic effects should be checked each frame in update()
+        end
+    },
+    {
+        name = "Desperate",
+        description = "3x damage (instead of 2x)",
+        onApply = function(unit)
+            -- Damage modifiers checked in getDamage()
+        end
+    }
+}
+
+KEY METHODS:
+------------
+- upgrade(upgradeIndex): Apply an upgrade. Pass nil to auto-select next available.
+- hasUpgrade(index): Check if a specific upgrade (1, 2, or 3) is active.
+- getNextAvailableUpgrade(): Returns first available upgrade index.
+
+IMPLEMENTING UPGRADE EFFECTS:
+-----------------------------
+1. ONE-TIME EFFECTS: Put logic in onApply function
+2. PASSIVE/CONDITIONAL EFFECTS: Check hasUpgrade() in relevant hooks:
+   - getDamage(grid): For damage modifiers
+   - update(dt, grid): For per-frame checks (HP thresholds, attack speed, etc.)
+   - onKill(target): For kill-triggered effects
+   - onBattleStart(grid): For battle start effects
+
+STAT SCALING:
+-------------
+- Level 0: Base stats (e.g., 10 HP, 1 damage)
+- Level 1: 1.5x stats (15 HP, 1 damage)
+- Level 2: 2.25x stats (22 HP, 2 damage)
+
+Note: damage uses math.floor, so low base damage may not increase until level 2.
+
+UNITS WITHOUT UPGRADE TREES:
+----------------------------
+Units that don't define an upgradeTree will still get the stat multiplier
+when upgraded, but won't have special abilities to choose from.
+
+================================================================================
+--]]
+
 local BaseUnit = Class:extend()
 
 function BaseUnit:new(row, col, owner, sprites, stats)
@@ -20,10 +97,15 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.attackRange = stats.attackRange or 0  -- 0 = melee
     self.unitType = stats.unitType or "unknown"
 
-    -- Upgrade system (Clash Mini style)
+    -- Upgrade system (Clash Mini style - 3 upgrades, can choose 2)
     self.level = 0  -- 0, 1, or 2
     self.baseHealth = stats.health or 10
     self.baseDamage = stats.damage or 1
+    self.baseAttackSpeed = stats.attackSpeed or 1
+
+    -- Upgrade tree: each unit can have up to 3 upgrades, but only 2 can be selected
+    self.activeUpgrades = {}  -- List of upgrade indices that have been selected (e.g., {1, 2})
+    self.upgradeTree = {}  -- Defined in subclasses: {name, description, apply function}
 
     self.isDead = false
 
@@ -242,15 +324,55 @@ function BaseUnit:onBattleStart(grid)
     -- Override in subclasses for battle start abilities
 end
 
--- Upgrade unit (multiply stats by 1.5x, max level 2)
-function BaseUnit:upgrade()
+-- Upgrade unit with specific upgrade choice (Clash Mini style)
+-- upgradeIndex: 1, 2, or 3 (which upgrade to apply)
+function BaseUnit:upgrade(upgradeIndex)
     if self.level >= 2 then
         return false  -- Already max level
     end
 
-    self.level = self.level + 1
+    -- Check if this unit has an upgrade tree
+    local hasUpgradeTree = self.upgradeTree and #self.upgradeTree > 0
 
-    -- Calculate new stats with 1.5x multiplier per level
+    if hasUpgradeTree then
+        -- New Clash Mini style upgrade system
+        -- Default to first available upgrade if not specified
+        if not upgradeIndex then
+            upgradeIndex = self:getNextAvailableUpgrade()
+        end
+
+        -- Validate upgrade index
+        if not upgradeIndex or upgradeIndex < 1 or upgradeIndex > 3 then
+            return false
+        end
+
+        -- Check if upgrade is already active
+        for _, activeIdx in ipairs(self.activeUpgrades) do
+            if activeIdx == upgradeIndex then
+                return false  -- Already purchased
+            end
+        end
+
+        -- Check if we have this upgrade defined
+        if not self.upgradeTree[upgradeIndex] then
+            return false
+        end
+
+        -- Apply the upgrade
+        self.level = self.level + 1
+        table.insert(self.activeUpgrades, upgradeIndex)
+
+        -- Call the upgrade's apply function if it exists
+        local upgrade = self.upgradeTree[upgradeIndex]
+        if upgrade.onApply then
+            upgrade.onApply(self)
+        end
+    else
+        -- Units without upgrade trees just level up
+        self.level = self.level + 1
+    end
+
+    -- Always apply stat multiplier on upgrade (for all units)
     local multiplier = 1.5 ^ self.level
     self.maxHealth = math.floor(self.baseHealth * multiplier)
     self.damage = math.floor(self.baseDamage * multiplier)
@@ -259,6 +381,33 @@ function BaseUnit:upgrade()
     self.health = self.maxHealth
 
     return true
+end
+
+-- Get the next available upgrade (used for drag-to-upgrade auto-selection)
+function BaseUnit:getNextAvailableUpgrade()
+    for i = 1, 3 do
+        local alreadyActive = false
+        for _, activeIdx in ipairs(self.activeUpgrades) do
+            if activeIdx == i then
+                alreadyActive = true
+                break
+            end
+        end
+        if not alreadyActive and self.upgradeTree[i] then
+            return i
+        end
+    end
+    return nil
+end
+
+-- Check if a specific upgrade is active
+function BaseUnit:hasUpgrade(upgradeIndex)
+    for _, activeIdx in ipairs(self.activeUpgrades) do
+        if activeIdx == upgradeIndex then
+            return true
+        end
+    end
+    return false
 end
 
 function BaseUnit:update(dt, grid)

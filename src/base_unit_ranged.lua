@@ -2,6 +2,72 @@ local BaseUnit = require('src.base_unit')
 local Constants = require('src.constants')
 local tween = require('lib.tween')
 
+--[[
+================================================================================
+RANGED UNIT EXTENSION
+================================================================================
+
+This class extends BaseUnit to provide ranged attack behavior with projectiles.
+See BaseUnit for full upgrade system documentation.
+
+RANGED-SPECIFIC FEATURES:
+-------------------------
+- Projectile system with flight time
+- Can attack over obstacles (no line-of-sight required)
+- Stops moving when within attackRange (doesn't need to be adjacent)
+- Damage applied when projectile reaches target, not instantly
+
+RANGED STATS:
+-------------
+- attackRange: Manhattan distance for attacks (default 3 for most ranged units)
+- projectileSpeed: Flight time in seconds (default 0.2)
+- baseProjectileSpeed: Stored for upgrades that modify projectile speed
+
+UPGRADE CONSIDERATIONS FOR RANGED UNITS:
+----------------------------------------
+When implementing upgrades for ranged units, consider:
+
+1. PROJECTILE SPEED: Modify self.projectileSpeed in update() based on hasUpgrade()
+2. ATTACK RANGE: Can be modified via onApply or checked dynamically
+3. DAMAGE: Override getDamage() - projectile captures damage at fire time
+4. ON-HIT EFFECTS: Projectile stores shooter reference, onKill() is called properly
+5. MULTI-SHOT: Override createProjectile() or attack() for multiple projectiles
+
+EXAMPLE RANGED UPGRADE TREE:
+----------------------------
+self.upgradeTree = {
+    {
+        name = "Piercing",
+        description = "Arrows deal +1 damage",
+        onApply = function(unit)
+            unit.damage = unit.damage + 1
+        end
+    },
+    {
+        name = "Swift",
+        description = "+50% attack speed",
+        onApply = function(unit)
+            -- Check in update() for dynamic effects
+        end
+    },
+    {
+        name = "Sniper",
+        description = "+2 attack range",
+        onApply = function(unit)
+            unit.attackRange = unit.attackRange + 2
+        end
+    }
+}
+
+KEY OVERRIDABLE METHODS:
+------------------------
+- createProjectile(target, grid): Customize projectile properties
+- drawProjectile(projectile): Custom projectile visuals
+- findGoalNearTarget(grid, target): Movement behavior (already optimized for ranged)
+
+================================================================================
+--]]
+
 local BaseUnitRanged = BaseUnit:extend()
 
 function BaseUnitRanged:new(row, col, owner, sprites, stats)
