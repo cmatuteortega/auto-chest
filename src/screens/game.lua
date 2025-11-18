@@ -30,7 +30,7 @@ function GameScreen.new()
 
         -- Game state
         self.state = "setup" -- setup, battle, finished
-        self.timer = 15 -- seconds for setup phase
+        self.timer = 30 -- seconds for setup phase
         self.currentPlayer = 1  -- Player 1 is always the bottom player
 
         -- Card drafting
@@ -472,56 +472,90 @@ function GameScreen.new()
                 -- Try to place unit on grid
                 local col, row = self.grid:worldToGrid(x, y)
 
-                if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                if col and row then
                     -- Determine owner based on which zone the card is dropped in
                     local owner = self.grid:getOwner(row)
-
-                    -- Check if this unit type already exists for this owner (upgrade system)
                     local unitType = self.draggedCard.unitType
-                    local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
+                    local cell = self.grid:getCell(col, row)
 
-                    if existingUnit then
-                        -- Unit type exists - try to upgrade it
-                        if existingUnit:upgrade() then
-                            -- Upgrade successful
-                            print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
+                    -- Check if dropping directly on a unit for upgrade
+                    if cell and cell.occupied and cell.unit then
+                        local targetUnit = cell.unit
+                        -- Allow upgrade if same type, same owner zone, and not max level
+                        if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 2 then
+                            if targetUnit:upgrade() then
+                                -- Upgrade successful
+                                print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
 
-                            -- Remove the card from hand
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i)
-                                    break
+                                -- Remove the card from hand
+                                for i, card in ipairs(self.cards) do
+                                    if card == self.draggedCard then
+                                        table.remove(self.cards, i)
+                                        break
+                                    end
                                 end
-                            end
 
-                            -- Generate new cards
-                            self:generateCards()
+                                -- Generate new cards
+                                self:generateCards()
+                            else
+                                -- Already max level, snap card back
+                                print(string.format("Player %d %s is already max level", owner, unitType))
+                                self.draggedCard:snapBack()
+                            end
                         else
-                            -- Already max level, snap card back
-                            print(string.format("Player %d %s is already max level", owner, unitType))
+                            -- Type mismatch or wrong owner - snap back
                             self.draggedCard:snapBack()
                         end
-                    else
-                        -- No existing unit of this type - place new unit
-                        local unitSprites = self.sprites[unitType]
-                        local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
-                        if self.grid:placeUnit(col, row, unit) then
-                            -- Remove the card from hand
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i)
-                                    break
+                    elseif self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                        -- Empty cell - check if this unit type already exists for this owner (upgrade system)
+                        local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
+
+                        if existingUnit then
+                            -- Unit type exists - try to upgrade it
+                            if existingUnit:upgrade() then
+                                -- Upgrade successful
+                                print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
+
+                                -- Remove the card from hand
+                                for i, card in ipairs(self.cards) do
+                                    if card == self.draggedCard then
+                                        table.remove(self.cards, i)
+                                        break
+                                    end
                                 end
+
+                                -- Generate new cards
+                                self:generateCards()
+                            else
+                                -- Already max level, snap card back
+                                print(string.format("Player %d %s is already max level", owner, unitType))
+                                self.draggedCard:snapBack()
                             end
+                        else
+                            -- No existing unit of this type - place new unit
+                            local unitSprites = self.sprites[unitType]
+                            local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
+                            if self.grid:placeUnit(col, row, unit) then
+                                -- Remove the card from hand
+                                for i, card in ipairs(self.cards) do
+                                    if card == self.draggedCard then
+                                        table.remove(self.cards, i)
+                                        break
+                                    end
+                                end
 
-                            -- Generate new cards
-                            self:generateCards()
+                                -- Generate new cards
+                                self:generateCards()
 
-                            print(string.format("Placed Player %d %s at [%d, %d]", owner, unitType, col, row))
+                                print(string.format("Placed Player %d %s at [%d, %d]", owner, unitType, col, row))
+                            end
                         end
+                    else
+                        -- Snap card back to original position
+                        self.draggedCard:snapBack()
                     end
                 else
-                    -- Snap card back to original position
+                    -- Outside grid - snap card back
                     self.draggedCard:snapBack()
                 end
 
@@ -693,56 +727,90 @@ function GameScreen.new()
             -- Try to place unit on grid
             local col, row = self.grid:worldToGrid(x, y)
 
-            if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+            if col and row then
                 -- Determine owner based on which zone the card is dropped in
                 local owner = self.grid:getOwner(row)
-
-                -- Check if this unit type already exists for this owner (upgrade system)
                 local unitType = self.draggedCard.unitType
-                local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
+                local cell = self.grid:getCell(col, row)
 
-                if existingUnit then
-                    -- Unit type exists - try to upgrade it
-                    if existingUnit:upgrade() then
-                        -- Upgrade successful
-                        print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
+                -- Check if dropping directly on a unit for upgrade
+                if cell and cell.occupied and cell.unit then
+                    local targetUnit = cell.unit
+                    -- Allow upgrade if same type, same owner zone, and not max level
+                    if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 2 then
+                        if targetUnit:upgrade() then
+                            -- Upgrade successful
+                            print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
 
-                        -- Remove the card from hand
-                        for i, card in ipairs(self.cards) do
-                            if card == self.draggedCard then
-                                table.remove(self.cards, i)
-                                break
+                            -- Remove the card from hand
+                            for i, card in ipairs(self.cards) do
+                                if card == self.draggedCard then
+                                    table.remove(self.cards, i)
+                                    break
+                                end
                             end
-                        end
 
-                        -- Generate new cards
-                        self:generateCards()
+                            -- Generate new cards
+                            self:generateCards()
+                        else
+                            -- Already max level, snap card back
+                            print(string.format("Player %d %s is already max level", owner, unitType))
+                            self.draggedCard:snapBack()
+                        end
                     else
-                        -- Already max level, snap card back
-                        print(string.format("Player %d %s is already max level", owner, unitType))
+                        -- Type mismatch or wrong owner - snap back
                         self.draggedCard:snapBack()
                     end
-                else
-                    -- No existing unit of this type - place new unit
-                    local unitSprites = self.sprites[unitType]
-                    local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
-                    if self.grid:placeUnit(col, row, unit) then
-                        -- Remove the card from hand
-                        for i, card in ipairs(self.cards) do
-                            if card == self.draggedCard then
-                                table.remove(self.cards, i)
-                                break
+                elseif self.grid:canPlaceUnit(col, row, self.currentPlayer) then
+                    -- Empty cell - check if this unit type already exists for this owner (upgrade system)
+                    local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
+
+                    if existingUnit then
+                        -- Unit type exists - try to upgrade it
+                        if existingUnit:upgrade() then
+                            -- Upgrade successful
+                            print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
+
+                            -- Remove the card from hand
+                            for i, card in ipairs(self.cards) do
+                                if card == self.draggedCard then
+                                    table.remove(self.cards, i)
+                                    break
+                                end
                             end
+
+                            -- Generate new cards
+                            self:generateCards()
+                        else
+                            -- Already max level, snap card back
+                            print(string.format("Player %d %s is already max level", owner, unitType))
+                            self.draggedCard:snapBack()
                         end
+                    else
+                        -- No existing unit of this type - place new unit
+                        local unitSprites = self.sprites[unitType]
+                        local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
+                        if self.grid:placeUnit(col, row, unit) then
+                            -- Remove the card from hand
+                            for i, card in ipairs(self.cards) do
+                                if card == self.draggedCard then
+                                    table.remove(self.cards, i)
+                                    break
+                                end
+                            end
 
-                        -- Generate new cards
-                        self:generateCards()
+                            -- Generate new cards
+                            self:generateCards()
 
-                        print(string.format("Placed Player %d %s at [%d, %d]", owner, unitType, col, row))
+                            print(string.format("Placed Player %d %s at [%d, %d]", owner, unitType, col, row))
+                        end
                     end
+                else
+                    -- Snap card back to original position
+                    self.draggedCard:snapBack()
                 end
             else
-                -- Snap card back to original position
+                -- Outside grid - snap card back
                 self.draggedCard:snapBack()
             end
 

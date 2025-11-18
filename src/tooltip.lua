@@ -9,7 +9,7 @@ function Tooltip:new()
     self.hasMatchingCard = false  -- Track if player has a matching card in hand
 
     -- Base dimensions (will be scaled)
-    self.baseWidth = 160
+    self.baseWidth = 200
     self.basePadding = 10
 
     -- Styling
