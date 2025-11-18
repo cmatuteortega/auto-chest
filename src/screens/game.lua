@@ -202,16 +202,20 @@ function GameScreen.new()
                  Constants.GAME_HEIGHT - (30 * Constants.SCALE))
 
         -- Button dimensions (scaled proportionally)
-        local buttonWidth = 120 * Constants.SCALE
         local buttonHeight = 40 * Constants.SCALE
-        local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
         local buttonSpacing = 20 * Constants.SCALE
         local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + buttonSpacing
 
         -- Buttons
         if self.state == "setup" then
+            local buttonText = "READY"
+            local buttonPadding = 20 * Constants.SCALE
+            local textWidth = Fonts.medium:getWidth(buttonText)
+            local buttonWidth = textWidth + buttonPadding * 2
+            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+
             -- Ready button below the grid
-            local readyButton = self.suit:Button("READY", {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
+            local readyButton = self.suit:Button(buttonText, {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
             if readyButton.hit then
                 self.timer = 0
                 self.state = "battle"
@@ -231,8 +235,14 @@ function GameScreen.new()
                 self:generateCards()
             end
         elseif self.state == "finished" then
+            local buttonText = "RESTART"
+            local buttonPadding = 20 * Constants.SCALE
+            local textWidth = Fonts.medium:getWidth(buttonText)
+            local buttonWidth = textWidth + buttonPadding * 2
+            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+
             -- Restart button at same position as Ready button
-            local restartButton = self.suit:Button("RESTART", {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
+            local restartButton = self.suit:Button(buttonText, {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
 
             if restartButton.hit then
                 print("Restart button clicked!")

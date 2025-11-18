@@ -83,7 +83,8 @@ function Card:draw()
     local spriteWidth = self.cardSprite:getWidth()
     local spriteHeight = self.cardSprite:getHeight()
     local spriteX = math.floor(self.x + (self.width - spriteWidth * spriteScale) / 2)
-    local spriteY = math.floor(self.y + spriteYOffset)
+    -- Position sprite so its bottom aligns with the bottom of the card
+    local spriteY = math.floor(self.y + self.height - spriteHeight * spriteScale)
     lg.draw(self.cardSprite, spriteX, spriteY, 0, spriteScale, spriteScale)
 end
 
