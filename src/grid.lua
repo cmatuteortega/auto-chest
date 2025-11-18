@@ -181,6 +181,19 @@ function Grid:getAllUnits()
     return units
 end
 
+-- Find a unit by type and owner (for upgrade system)
+function Grid:findUnitByTypeAndOwner(unitType, owner)
+    for row = 1, self.rows do
+        for col = 1, self.cols do
+            local cell = self.cells[row][col]
+            if cell.unit and cell.unit.unitType == unitType and cell.unit.owner == owner and not cell.unit.isDead then
+                return cell.unit
+            end
+        end
+    end
+    return nil
+end
+
 -- Get the unit at a specific cell (returns nil if no unit)
 function Grid:getUnitAtCell(col, row)
     local cell = self:getCell(col, row)

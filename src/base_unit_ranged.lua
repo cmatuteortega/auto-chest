@@ -11,6 +11,7 @@ function BaseUnitRanged:new(row, col, owner, sprites, stats)
     -- Ranged unit specific properties
     self.arrows = {}  -- Array of active projectiles
     self.projectileSpeed = stats.projectileSpeed or 0.2  -- Flight time in seconds
+    self.baseProjectileSpeed = stats.projectileSpeed or 0.2  -- Store base for upgrades
 end
 
 -- Override: Ranged units stop when within attack range (don't need to be adjacent)

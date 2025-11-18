@@ -20,6 +20,11 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.attackRange = stats.attackRange or 0  -- 0 = melee
     self.unitType = stats.unitType or "unknown"
 
+    -- Upgrade system (Clash Mini style)
+    self.level = 0  -- 0, 1, or 2
+    self.baseHealth = stats.health or 10
+    self.baseDamage = stats.damage or 1
+
     self.isDead = false
 
     -- Combat stats
@@ -173,6 +178,17 @@ function BaseUnit:draw()
         lg.rectangle('fill', barX, barY, barWidth * healthPercent, barHeight)
     end
 
+    -- Draw level asterisks under health bar (if level > 0)
+    if self.level > 0 and not self.isDead then
+        lg.setFont(Fonts.tiny)
+        lg.setColor(1, 1, 1, 1)  -- White color for stars
+        local stars = string.rep("*", self.level)
+        local starWidth = Fonts.tiny:getWidth(stars)
+        local starX = x + (Constants.CELL_SIZE - starWidth) / 2
+        local starY = y + Constants.CELL_SIZE - (12 * Constants.SCALE)
+        lg.print(stars, starX, starY)
+    end
+
     -- Let subclasses draw additional things (like arrows)
     self:drawAttackVisuals()
 
@@ -224,6 +240,25 @@ end
 -- Hook: Called when battle starts
 function BaseUnit:onBattleStart(grid)
     -- Override in subclasses for battle start abilities
+end
+
+-- Upgrade unit (multiply stats by 1.5x, max level 2)
+function BaseUnit:upgrade()
+    if self.level >= 2 then
+        return false  -- Already max level
+    end
+
+    self.level = self.level + 1
+
+    -- Calculate new stats with 1.5x multiplier per level
+    local multiplier = 1.5 ^ self.level
+    self.maxHealth = math.floor(self.baseHealth * multiplier)
+    self.damage = math.floor(self.baseDamage * multiplier)
+
+    -- Heal to new max health when upgrading
+    self.health = self.maxHealth
+
+    return true
 end
 
 function BaseUnit:update(dt, grid)

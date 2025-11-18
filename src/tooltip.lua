@@ -54,7 +54,7 @@ function Tooltip:draw()
     local cornerRadius = self.baseCornerRadius * Constants.SCALE
 
     -- Prepare text content
-    local unitName = self:capitalize(self.unit.unitType)
+    local unitName = self:capitalize(self.unit.unitType) .. " Lv" .. self.unit.level
     local passiveDescription = self:getPassiveDescription(self.unit.unitType)
 
     -- Calculate text dimensions
