@@ -209,7 +209,7 @@ function Tooltip:draw()
             if self.unit.upgradeTree[i] then
                 local upgrade = self.unit.upgradeTree[i]
                 local isActive = self.unit:hasUpgrade(i)
-                local canAfford = self.unit.level < 2 and self.hasMatchingCard
+                local canAfford = self.unit.level < 3 and self.hasMatchingCard
 
                 -- Calculate button height
                 local _, descLines = Fonts.tiny:getWrap(upgrade.description, textWidth - (12 * Constants.SCALE))
@@ -289,7 +289,7 @@ function Tooltip:draw()
     love.graphics.setFont(Fonts.tiny)
     love.graphics.setColor(0.5, 0.5, 0.5, 1)
     local hintY = y + height - padding - hintHeight
-    if self.hasMatchingCard and self.unit.level < 2 then
+    if self.hasMatchingCard and self.unit.level < 3 then
         love.graphics.printf("Tap upgrade to select", x + padding, hintY, textWidth, "center")
     else
         love.graphics.printf("Tap to close", x + padding, hintY, textWidth, "center")

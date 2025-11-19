@@ -206,15 +206,6 @@ end
 function Grid:update(dt, mouseX, mouseY)
     -- Refresh dimensions in case window was resized
     self:refreshDimensions()
-
-    -- Update highlighted cell based on mouse/touch position
-    local col, row = self:worldToGrid(mouseX, mouseY)
-
-    if col and row then
-        self.highlightedCell = {col = col, row = row}
-    else
-        self.highlightedCell = nil
-    end
 end
 
 function Grid:draw(draggedUnit)
@@ -242,19 +233,6 @@ function Grid:draw(draggedUnit)
             end
             lg.rectangle('fill', x, y, self.cellSize, self.cellSize)
         end
-    end
-
-    -- Draw highlighted cell
-    if self.highlightedCell then
-        local x, y = self:gridToWorld(self.highlightedCell.col, self.highlightedCell.row)
-        lg.setColor(Constants.COLORS.CELL_HIGHLIGHT)
-        lg.rectangle('fill', x, y, self.cellSize, self.cellSize)
-
-        -- Draw border (scaled)
-        lg.setColor(1, 1, 1, 0.5)
-        lg.setLineWidth(2 * Constants.SCALE)
-        lg.rectangle('line', x, y, self.cellSize, self.cellSize)
-        lg.setLineWidth(1)
     end
 
     -- Draw center line between players (scaled)

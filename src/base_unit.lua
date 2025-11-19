@@ -10,14 +10,14 @@ UPGRADE SYSTEM DOCUMENTATION (Clash Mini Style)
 
 OVERVIEW:
 ---------
-Each unit can be upgraded up to level 2 (from base level 0). Upgrades provide:
+Each unit can be upgraded up to level 3 (from base level 0). Upgrades provide:
 1. STAT BOOST: 1.5x multiplier to HP and damage per level (automatic for all units)
 2. ABILITY UPGRADES: Units with upgrade trees get to choose special abilities
 
 UPGRADE TREE STRUCTURE:
 -----------------------
-Units can define an upgradeTree with 3 upgrade options. Players can only select
-2 of the 3 upgrades (at level 1 and level 2). Each upgrade has:
+Units can define an upgradeTree with 3 upgrade options. Players can select
+all 3 upgrades (at level 1, 2, and 3). Each upgrade has:
   - name: Short display name (e.g., "Fury")
   - description: Brief description for tooltip (e.g., "+50% ATKSPD below 50% HP")
   - onApply: Optional function called when upgrade is selected
@@ -69,6 +69,7 @@ STAT SCALING:
 - Level 0: Base stats (e.g., 10 HP, 1 damage)
 - Level 1: 1.5x stats (15 HP, 1 damage)
 - Level 2: 2.25x stats (22 HP, 2 damage)
+- Level 3: 3.375x stats (33 HP, 3 damage)
 
 Note: damage uses math.floor, so low base damage may not increase until level 2.
 
@@ -97,13 +98,13 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.attackRange = stats.attackRange or 0  -- 0 = melee
     self.unitType = stats.unitType or "unknown"
 
-    -- Upgrade system (Clash Mini style - 3 upgrades, can choose 2)
-    self.level = 0  -- 0, 1, or 2
+    -- Upgrade system (Clash Mini style - 3 upgrades, can choose all 3)
+    self.level = 0  -- 0, 1, 2, or 3
     self.baseHealth = stats.health or 10
     self.baseDamage = stats.damage or 1
     self.baseAttackSpeed = stats.attackSpeed or 1
 
-    -- Upgrade tree: each unit can have up to 3 upgrades, but only 2 can be selected
+    -- Upgrade tree: each unit can have up to 3 upgrades, all can be selected
     self.activeUpgrades = {}  -- List of upgrade indices that have been selected (e.g., {1, 2})
     self.upgradeTree = {}  -- Defined in subclasses: {name, description, apply function}
 
@@ -327,7 +328,7 @@ end
 -- Upgrade unit with specific upgrade choice (Clash Mini style)
 -- upgradeIndex: 1, 2, or 3 (which upgrade to apply)
 function BaseUnit:upgrade(upgradeIndex)
-    if self.level >= 2 then
+    if self.level >= 3 then
         return false  -- Already max level
     end
 

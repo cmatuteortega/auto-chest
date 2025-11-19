@@ -512,7 +512,7 @@ function GameScreen.new()
                     if cell and cell.occupied and cell.unit then
                         local targetUnit = cell.unit
                         -- Allow upgrade if same type, same owner zone, and not max level
-                        if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 2 then
+                        if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 3 then
                             if targetUnit:upgrade() then
                                 -- Upgrade successful
                                 print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
