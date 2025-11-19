@@ -6,6 +6,7 @@ local Tooltip = Class:extend()
 function Tooltip:new()
     self.visible = false
     self.unit = nil
+    self.card = nil  -- Track if showing a card tooltip
     self.hasMatchingCard = false  -- Track if player has a matching card in hand
 
     -- Base dimensions (will be scaled)
@@ -26,12 +27,21 @@ end
 function Tooltip:show(unit, hasMatchingCard)
     self.visible = true
     self.unit = unit
+    self.card = nil  -- Clear card when showing unit
     self.hasMatchingCard = hasMatchingCard or false
+end
+
+function Tooltip:showCard(card)
+    self.visible = true
+    self.unit = nil  -- Clear unit when showing card
+    self.card = card
+    self.hasMatchingCard = false
 end
 
 function Tooltip:hide()
     self.visible = false
     self.unit = nil
+    self.card = nil
     self.hasMatchingCard = false
     self.upgradeButtons = {}
 end
@@ -50,7 +60,18 @@ function Tooltip:isVisible()
 end
 
 function Tooltip:draw()
-    if not self.visible or not self.unit then
+    if not self.visible then
+        return
+    end
+
+    -- Draw card tooltip if showing a card
+    if self.card then
+        self:drawCardTooltip()
+        return
+    end
+
+    -- Otherwise draw unit tooltip
+    if not self.unit then
         return
     end
 
@@ -299,6 +320,97 @@ function Tooltip:checkUpgradeClick(x, y)
     end
 
     return nil
+end
+
+function Tooltip:drawCardTooltip()
+    -- Calculate scaled dimensions
+    local width = self.baseWidth * Constants.SCALE
+    local padding = self.basePadding * Constants.SCALE
+    local borderWidth = self.baseBorderWidth * Constants.SCALE
+    local cornerRadius = self.baseCornerRadius * Constants.SCALE
+
+    -- Prepare text content
+    local unitName = self:capitalize(self.card.unitType)
+    local passiveDescription = self:getPassiveDescription(self.card.unitType)
+
+    -- Calculate text dimensions
+    local textWidth = width - padding * 2
+    local nameHeight = Fonts.small:getHeight()
+    local separatorSpace = 6 * Constants.SCALE
+    local hintHeight = Fonts.tiny:getHeight()
+    local hintMargin = 6 * Constants.SCALE
+
+    -- Calculate passive description height
+    love.graphics.setFont(Fonts.tiny)
+    local _, passiveLines = Fonts.tiny:getWrap(passiveDescription, textWidth)
+    local passiveHeight = #passiveLines * Fonts.tiny:getHeight()
+    local passiveMargin = 6 * Constants.SCALE
+
+    -- Calculate total height
+    local height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + hintHeight + hintMargin + padding
+
+    -- Get card's screen position (center of card)
+    local cardCenterX = self.card.x + (80 * Constants.SCALE) / 2
+    local cardCenterY = self.card.y + (100 * Constants.SCALE) / 2
+
+    -- Use virtual game resolution
+    local screenWidth = Constants.GAME_WIDTH
+    local screenHeight = Constants.GAME_HEIGHT
+
+    -- Spacing between card and tooltip (scaled)
+    local spacing = 16 * Constants.SCALE
+    local screenMargin = 10 * Constants.SCALE
+
+    -- Position tooltip above the card
+    local x = cardCenterX - width / 2
+    local y = self.card.y - height - spacing
+
+    -- Clamp x to screen bounds
+    if x < screenMargin then
+        x = screenMargin
+    elseif x + width > screenWidth - screenMargin then
+        x = screenWidth - width - screenMargin
+    end
+
+    -- If tooltip would go off the top, position it below the card
+    if y < screenMargin then
+        y = self.card.y + (100 * Constants.SCALE) + spacing
+    end
+
+    -- Draw background with rounded corners
+    love.graphics.setColor(self.backgroundColor)
+    love.graphics.rectangle("fill", x, y, width, height, cornerRadius)
+
+    -- Draw border
+    love.graphics.setColor(self.borderColor)
+    love.graphics.setLineWidth(borderWidth)
+    love.graphics.rectangle("line", x, y, width, height, cornerRadius)
+
+    -- Draw unit name (title)
+    love.graphics.setColor(self.textColor)
+    love.graphics.setFont(Fonts.small)
+    local nameY = y + padding
+    love.graphics.printf(unitName, x + padding, nameY, textWidth, "center")
+
+    -- Draw separator line
+    local separatorY = nameY + nameHeight + (4 * Constants.SCALE)
+    love.graphics.setColor(self.borderColor)
+    love.graphics.setLineWidth(1 * Constants.SCALE)
+    love.graphics.line(x + padding, separatorY, x + width - padding, separatorY)
+
+    local contentY = separatorY + separatorSpace
+
+    -- Draw passive description
+    love.graphics.setColor(self.textColor)
+    love.graphics.setFont(Fonts.tiny)
+    love.graphics.printf(passiveDescription, x + padding, contentY, textWidth, "left")
+    contentY = contentY + passiveHeight + passiveMargin
+
+    -- Draw placement hint at bottom
+    love.graphics.setFont(Fonts.tiny)
+    love.graphics.setColor(0.5, 0.5, 0.5, 1)
+    local hintY = y + height - padding - hintHeight
+    love.graphics.printf("Drag to place on board", x + padding, hintY, textWidth, "center")
 end
 
 return Tooltip

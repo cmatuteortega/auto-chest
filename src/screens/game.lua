@@ -52,6 +52,10 @@ function GameScreen.new()
         self.pressY = 0
         self.hasMoved = false  -- Track if user has actually moved (not just tap jitter)
 
+        -- Card press tracking (for tap vs drag detection)
+        self.pressedCard = nil
+        self.pressedCardIndex = nil
+
         -- Touch tracking (to prevent double-handling on mobile)
         self.activeTouchId = nil
 
@@ -259,11 +263,23 @@ function GameScreen.new()
         self.suit:updateMouse(x, y)
 
         -- Track if user has moved significantly (for tap vs drag detection)
-        if self.pressedUnit or self.draggedUnit or self.draggedCard then
+        if self.pressedUnit or self.draggedUnit or self.draggedCard or self.pressedCard then
             local distMoved = math.sqrt((x - self.pressX)^2 + (y - self.pressY)^2)
             if distMoved > 10 then  -- Increased threshold for mobile
                 self.hasMoved = true
             end
+        end
+
+        -- Check if we should start dragging a pressed card (only during setup AND with movement)
+        if self.pressedCard and not self.draggedCard and self.state == "setup" and self.hasMoved then
+            -- Start dragging the card
+            self.draggedCard = self.pressedCard
+            self.pressedCard:startDrag(self.pressX, self.pressY)
+            self.pressedCard:updateDrag(x, y)
+
+            -- Clear pressed state
+            self.pressedCard = nil
+            self.pressedCardIndex = nil
         end
 
         -- Check if we should start dragging a pressed unit (only during setup AND with movement)
@@ -344,12 +360,12 @@ function GameScreen.new()
                 end
             end
 
-            -- During setup, also check for card dragging
+            -- During setup, also check for card press (tap vs drag detection)
             if self.state == "setup" then
                 for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
                     local card = self.cards[i]
                     if card:contains(x, y) then
-                        -- Hide tooltip when starting to drag
+                        -- Hide tooltip when pressing card
                         self.tooltip:hide()
 
                         -- Clear pressedUnit to prevent tooltip on card release
@@ -357,8 +373,10 @@ function GameScreen.new()
                         self.pressedUnitCol = nil
                         self.pressedUnitRow = nil
 
-                        self.draggedCard = card
-                        card:startDrag(x, y)
+                        -- Store the card but don't start dragging yet
+                        -- Drag threshold will determine if this is a tap or drag
+                        self.pressedCard = card
+                        self.pressedCardIndex = i
                         return
                     end
                 end
@@ -436,6 +454,18 @@ function GameScreen.new()
 
                 -- Normal tooltip toggle
                 self.tooltip:toggle(unit, hasMatchingCard)
+                return
+            end
+
+            -- Check if a card was pressed but not dragged (tap for tooltip)
+            if self.pressedCard and not self.draggedCard then
+                local card = self.pressedCard
+                -- Clear pressed state
+                self.pressedCard = nil
+                self.pressedCardIndex = nil
+
+                -- Show tooltip for card
+                self.tooltip:showCard(card)
                 return
             end
 
@@ -599,12 +629,12 @@ function GameScreen.new()
             end
         end
 
-        -- During setup, also check for card dragging
+        -- During setup, also check for card press (tap vs drag detection)
         if self.state == "setup" then
             for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
                 local card = self.cards[i]
                 if card:contains(x, y) then
-                    -- Hide tooltip when starting to drag
+                    -- Hide tooltip when pressing card
                     self.tooltip:hide()
 
                     -- Clear pressedUnit to prevent tooltip on card release
@@ -612,8 +642,10 @@ function GameScreen.new()
                     self.pressedUnitCol = nil
                     self.pressedUnitRow = nil
 
-                    self.draggedCard = card
-                    card:startDrag(x, y)
+                    -- Store the card but don't start dragging yet
+                    -- Drag threshold will determine if this is a tap or drag
+                    self.pressedCard = card
+                    self.pressedCardIndex = i
                     return
                 end
             end
@@ -691,6 +723,18 @@ function GameScreen.new()
 
             -- Toggle tooltip for this unit
             self.tooltip:toggle(unit, hasMatchingCard)
+            return
+        end
+
+        -- Check if a card was pressed but not dragged (tap for tooltip)
+        if self.pressedCard and not self.draggedCard then
+            local card = self.pressedCard
+            -- Clear pressed state
+            self.pressedCard = nil
+            self.pressedCardIndex = nil
+
+            -- Show tooltip for card
+            self.tooltip:showCard(card)
             return
         end
 
