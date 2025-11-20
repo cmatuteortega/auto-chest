@@ -29,7 +29,7 @@ function GameScreen.new()
         self.mouseY = 0
 
         -- Game state
-        self.state = "setup" -- setup, battle, finished
+        self.state = "setup" -- setup, battle, battle_ending, finished
         self.timer = 30 -- seconds for setup phase
         self.currentPlayer = 1  -- Player 1 is always the bottom player
 
@@ -128,13 +128,25 @@ function GameScreen.new()
             end
 
             -- Battle ends when one side has no units left
+            -- Transition to battle_ending to allow animations to complete
             if p1Alive == 0 or p2Alive == 0 then
-                self.state = "finished"
+                self.state = "battle_ending"
                 if p1Alive > 0 then
                     self.winner = 1
                 else
                     self.winner = 2
                 end
+            end
+        elseif self.state == "battle_ending" then
+            -- Continue updating units to allow animations to complete
+            local allUnits = self.grid:getAllUnits()
+            for _, unit in ipairs(allUnits) do
+                unit:update(dt, self.grid)
+            end
+
+            -- Transition to finished once all animations are complete
+            if self:areAllAnimationsComplete() then
+                self.state = "finished"
             end
         end
 
@@ -184,7 +196,7 @@ function GameScreen.new()
         local stateText = self.state:upper()
         if self.state == "setup" then
             stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
-        elseif self.state == "finished" and self.winner then
+        elseif (self.state == "battle_ending" or self.state == "finished") and self.winner then
             stateText = "PLAYER " .. self.winner .. " WINS!"
             lg.setColor(1, 1, 0, 1)
         end
@@ -876,6 +888,23 @@ function GameScreen.new()
             -- Reset
             self:init()
         end
+    end
+
+    -- Check if all attack animations have completed
+    function self:areAllAnimationsComplete()
+        local allUnits = self.grid:getAllUnits()
+        for _, unit in ipairs(allUnits) do
+            -- Check if unit is mid-attack animation
+            if unit.attackAnimProgress < 1 and unit.attackTargetCol and unit.attackTargetRow then
+                return false
+            end
+
+            -- Check for ranged units with projectiles in flight
+            if unit.arrows and #unit.arrows > 0 then
+                return false
+            end
+        end
+        return true
     end
 
     return self
