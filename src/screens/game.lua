@@ -209,7 +209,8 @@ function GameScreen.new()
 
         -- Player labels (proportional positioning)
         lg.setFont(Fonts.large)
-        local labelMargin = 10 * Constants.SCALE
+        local labelMargin = 15 * Constants.SCALE
+        local fontHeight = Fonts.large:getHeight()
 
         lg.setColor(0.5, 0.7, 1, 1)
         lg.print("P2", labelMargin, labelMargin)
@@ -219,12 +220,12 @@ function GameScreen.new()
         local p1Text = "P1"
         local p1Width = Fonts.large:getWidth(p1Text)
         lg.print(p1Text, Constants.GAME_WIDTH - p1Width - labelMargin,
-                 Constants.GAME_HEIGHT - (30 * Constants.SCALE))
+                 Constants.GAME_HEIGHT - fontHeight - labelMargin)
 
         -- Coin display in bottom left
         lg.setColor(1, 1, 1, 1)  -- White color
         local coinText = "¤ " .. self.playerCoins
-        lg.print(coinText, labelMargin, Constants.GAME_HEIGHT - (30 * Constants.SCALE))
+        lg.print(coinText, labelMargin, Constants.GAME_HEIGHT - fontHeight - labelMargin)
 
         -- Reset font for buttons
         lg.setFont(Fonts.medium)
