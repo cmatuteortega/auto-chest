@@ -33,6 +33,10 @@ function GameScreen.new()
         self.timer = 30 -- seconds for setup phase
         self.currentPlayer = 1  -- Player 1 is always the bottom player
 
+        -- Economy
+        self.playerCoins = 30
+        self.rerollCost = 1
+
         -- Card drafting
         self.cards = {}
         self.draggedCard = nil
@@ -204,7 +208,7 @@ function GameScreen.new()
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
         -- Player labels (proportional positioning)
-        lg.setFont(Fonts.medium)
+        lg.setFont(Fonts.large)
         local labelMargin = 10 * Constants.SCALE
 
         lg.setColor(0.5, 0.7, 1, 1)
@@ -213,9 +217,17 @@ function GameScreen.new()
         lg.setColor(1, 0.7, 0.5, 1)
         -- Measure text width to align right with same offset as P2
         local p1Text = "P1"
-        local p1Width = Fonts.medium:getWidth(p1Text)
+        local p1Width = Fonts.large:getWidth(p1Text)
         lg.print(p1Text, Constants.GAME_WIDTH - p1Width - labelMargin,
                  Constants.GAME_HEIGHT - (30 * Constants.SCALE))
+
+        -- Coin display in bottom left
+        lg.setColor(1, 1, 1, 1)  -- White color
+        local coinText = "¤ " .. self.playerCoins
+        lg.print(coinText, labelMargin, Constants.GAME_HEIGHT - (30 * Constants.SCALE))
+
+        -- Reset font for buttons
+        lg.setFont(Fonts.medium)
 
         -- Button dimensions (scaled proportionally)
         local buttonHeight = 40 * Constants.SCALE
@@ -248,7 +260,10 @@ function GameScreen.new()
                 self.rerollButtonX, self.rerollButtonY,
                 self.rerollButtonSize, self.rerollButtonSize)
             if rerollButton.hit then
-                self:generateCards()
+                if self.playerCoins >= self.rerollCost then
+                    self.playerCoins = self.playerCoins - self.rerollCost
+                    self:generateCards()
+                end
             end
         elseif self.state == "finished" then
             local buttonText = "RESTART"
@@ -413,8 +428,21 @@ function GameScreen.new()
                 local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
                 if upgradeIndex then
                     local unit = self.tooltip.unit
+                    -- Check if player can afford the upgrade
+                    local cost = UnitRegistry.unitCosts[unit.unitType] or 3
+                    if self.playerCoins < cost then
+                        print("Not enough coins for upgrade")
+                        -- Clear pressed state
+                        self.pressedUnit = nil
+                        self.pressedUnitCol = nil
+                        self.pressedUnitRow = nil
+                        return
+                    end
+
                     -- Player clicked an upgrade button - apply the upgrade
                     if unit:upgrade(upgradeIndex) then
+                        -- Deduct coins
+                        self.playerCoins = self.playerCoins - cost
                         print(string.format("Upgraded %s with upgrade %d to level %d", unit.unitType, upgradeIndex, unit.level))
 
                         -- Remove the matching card from hand
@@ -519,14 +547,20 @@ function GameScreen.new()
                     local owner = self.grid:getOwner(row)
                     local unitType = self.draggedCard.unitType
                     local cell = self.grid:getCell(col, row)
+                    local cost = UnitRegistry.unitCosts[unitType] or 3
 
+                    -- Check if player can afford this unit
+                    if self.playerCoins < cost then
+                        print("Not enough coins")
+                        self.draggedCard:snapBack()
                     -- Check if dropping directly on a unit for upgrade
-                    if cell and cell.occupied and cell.unit then
+                    elseif cell and cell.occupied and cell.unit then
                         local targetUnit = cell.unit
                         -- Allow upgrade if same type, same owner zone, and not max level
                         if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 3 then
                             if targetUnit:upgrade() then
-                                -- Upgrade successful
+                                -- Upgrade successful - deduct coins
+                                self.playerCoins = self.playerCoins - cost
                                 print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
 
                                 -- Remove the card from hand
@@ -555,7 +589,8 @@ function GameScreen.new()
                         if existingUnit then
                             -- Unit type exists - try to upgrade it
                             if existingUnit:upgrade() then
-                                -- Upgrade successful
+                                -- Upgrade successful - deduct coins
+                                self.playerCoins = self.playerCoins - cost
                                 print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
 
                                 -- Remove the card from hand
@@ -578,6 +613,9 @@ function GameScreen.new()
                             local unitSprites = self.sprites[unitType]
                             local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
                             if self.grid:placeUnit(col, row, unit) then
+                                -- Deduct coins
+                                self.playerCoins = self.playerCoins - cost
+
                                 -- Remove the card from hand
                                 for i, card in ipairs(self.cards) do
                                     if card == self.draggedCard then
@@ -682,8 +720,21 @@ function GameScreen.new()
             local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
             if upgradeIndex then
                 local unit = self.tooltip.unit
+                -- Check if player can afford the upgrade
+                local cost = UnitRegistry.unitCosts[unit.unitType] or 3
+                if self.playerCoins < cost then
+                    print("Not enough coins for upgrade")
+                    -- Clear pressed state
+                    self.pressedUnit = nil
+                    self.pressedUnitCol = nil
+                    self.pressedUnitRow = nil
+                    return
+                end
+
                 -- Player tapped an upgrade button - apply the upgrade
                 if unit:upgrade(upgradeIndex) then
+                    -- Deduct coins
+                    self.playerCoins = self.playerCoins - cost
                     print(string.format("Upgraded %s with upgrade %d to level %d", unit.unitType, upgradeIndex, unit.level))
 
                     -- Remove the matching card from hand
@@ -788,14 +839,20 @@ function GameScreen.new()
                 local owner = self.grid:getOwner(row)
                 local unitType = self.draggedCard.unitType
                 local cell = self.grid:getCell(col, row)
+                local cost = UnitRegistry.unitCosts[unitType] or 3
 
+                -- Check if player can afford this unit
+                if self.playerCoins < cost then
+                    print("Not enough coins")
+                    self.draggedCard:snapBack()
                 -- Check if dropping directly on a unit for upgrade
-                if cell and cell.occupied and cell.unit then
+                elseif cell and cell.occupied and cell.unit then
                     local targetUnit = cell.unit
                     -- Allow upgrade if same type, same owner zone, and not max level
                     if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 2 then
                         if targetUnit:upgrade() then
-                            -- Upgrade successful
+                            -- Upgrade successful - deduct coins
+                            self.playerCoins = self.playerCoins - cost
                             print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
 
                             -- Remove the card from hand
@@ -824,7 +881,8 @@ function GameScreen.new()
                     if existingUnit then
                         -- Unit type exists - try to upgrade it
                         if existingUnit:upgrade() then
-                            -- Upgrade successful
+                            -- Upgrade successful - deduct coins
+                            self.playerCoins = self.playerCoins - cost
                             print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
 
                             -- Remove the card from hand
@@ -847,6 +905,9 @@ function GameScreen.new()
                         local unitSprites = self.sprites[unitType]
                         local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
                         if self.grid:placeUnit(col, row, unit) then
+                            -- Deduct coins
+                            self.playerCoins = self.playerCoins - cost
+
                             -- Remove the card from hand
                             for i, card in ipairs(self.cards) do
                                 if card == self.draggedCard then

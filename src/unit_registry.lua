@@ -46,6 +46,14 @@ UnitRegistry.passiveDescriptions = {
     marrow = "Gain +0.2 attack speed per kill"
 }
 
+-- Map of unit type names to their costs
+UnitRegistry.unitCosts = {
+    boney = 3,
+    marrow = 3,
+    samurai = 3,
+    knight = 3
+}
+
 -- Load sprites for a specific unit type
 function UnitRegistry.loadSprites(unitType)
     local paths = UnitRegistry.spritePaths[unitType]

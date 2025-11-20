@@ -1,5 +1,6 @@
 local Class = require('lib.classic')
 local Constants = require('src.constants')
+local UnitRegistry = require('src.unit_registry')
 
 local Card = Class:extend()
 
@@ -86,6 +87,16 @@ function Card:draw()
     -- Position sprite so its bottom aligns with the bottom of the card
     local spriteY = math.floor(self.y + self.height - spriteHeight * spriteScale)
     lg.draw(self.cardSprite, spriteX, spriteY, 0, spriteScale, spriteScale)
+
+    -- Cost display below card (only when not dragging)
+    if not self.isDragging then
+        lg.setFont(Fonts.small)
+        lg.setColor(1, 1, 1, 1)  -- White color
+        local cost = UnitRegistry.unitCosts[self.unitType] or 3
+        local costText = "¤" .. cost
+        local costPadding = 8 * Constants.SCALE
+        lg.printf(costText, self.x, self.y + self.height + costPadding, self.width, 'center')
+    end
 end
 
 return Card
