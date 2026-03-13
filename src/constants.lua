@@ -29,6 +29,19 @@ Constants.GRID_HEIGHT = Constants.GRID_ROWS * Constants.CELL_SIZE
 Constants.PLAYER1_ROWS = 4  -- Bottom half (rows 5-8)
 Constants.PLAYER2_ROWS = 4  -- Top half (rows 1-4)
 
+-- Local player's perspective (1 = P1 at bottom, 2 = P2 at bottom).
+-- Set this before drawing to flip the board display for the guest player.
+Constants.PERSPECTIVE = 1
+
+-- Convert a canonical row to its visual (screen) row.
+-- When PERSPECTIVE == 2 the board is mirrored: canonical row 1 appears at the bottom.
+function Constants.toVisualRow(row)
+    if Constants.PERSPECTIVE == 2 then
+        return Constants.GRID_ROWS + 1 - row
+    end
+    return row
+end
+
 -- Colors
 Constants.COLORS = {
     BACKGROUND = {0.1, 0.1, 0.15, 1},

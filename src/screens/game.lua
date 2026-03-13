@@ -5,13 +5,36 @@ local UnitRegistry = require('src.unit_registry')
 local Card = require('src.card')
 local suit = require('lib.suit')
 local Tooltip = require('src.tooltip')
+local json = require('lib.json')
 
 local GameScreen = {}
 
 function GameScreen.new()
     local self = Screen.new()
 
-    function self:init()
+    -- ── init ──────────────────────────────────────────────────────────────────
+    -- Parameters (online mode only):
+    --   isOnline   (boolean) – true when playing over the network
+    --   playerRole (number)  – 1 (host/P1) or 2 (guest/P2)
+    --   socket     (table)   – sock.lua Client already connected to the relay server
+    function self:init(isOnline, playerRole, socket)
+        -- Online mode setup
+        self.isOnline   = isOnline   or false
+        self.playerRole = playerRole or 1   -- 1 = local is P1, 2 = local is P2
+        self.socket     = socket
+
+        -- Set rendering perspective so the local player always appears at the bottom
+        Constants.PERSPECTIVE = self.playerRole
+
+        -- Opponent ready / battle-start tracking (online only)
+        self.localReady    = false
+        self.opponentReady = false
+
+        -- Register network callbacks once (cleared when screen is closed)
+        if self.isOnline and self.socket then
+            self:registerNetworkCallbacks()
+        end
+
         -- Load sprites for all unit types
         self.sprites = UnitRegistry.loadAllSprites()
 
@@ -31,7 +54,7 @@ function GameScreen.new()
         -- Game state
         self.state = "setup" -- setup, battle, battle_ending, finished
         self.timer = 30 -- seconds for setup phase
-        self.currentPlayer = 1  -- Player 1 is always the bottom player
+        self.currentPlayer = 1  -- Player 1 is always the bottom player in canonical coords
 
         -- Economy
         self.playerCoins = 30
@@ -66,6 +89,79 @@ function GameScreen.new()
         self:generateCards()
     end
 
+    -- ── Network helpers ───────────────────────────────────────────────────────
+
+    function self:sendMsg(data)
+        if self.isOnline and self.socket then
+            self.socket:send("relay", data)
+        end
+    end
+
+    function self:registerNetworkCallbacks()
+        local s = self.socket
+
+        -- The relay server forwards the opponent's "relay" events to us
+        s:on("relay", function(data)
+            self:handleNetworkMessage(data)
+        end)
+
+        s:on("opponent_disconnected", function()
+            self.opponentDisconnected = true
+        end)
+    end
+
+    function self:handleNetworkMessage(msg)
+        local t = msg.type
+
+        if t == "place_unit" then
+            -- msg contains: unitType, col, row (in the SENDER's canonical coords)
+            -- Since both devices share the same canonical coordinate system, apply directly.
+            local unitSprites = self.sprites[msg.unitType]
+            local unit = UnitRegistry.createUnit(msg.unitType, msg.row, msg.col, msg.owner, unitSprites)
+            self.grid:placeUnit(msg.col, msg.row, unit)
+
+        elseif t == "remove_unit" then
+            self.grid:removeUnit(msg.col, msg.row)
+
+        elseif t == "upgrade_unit" then
+            local unit = self.grid:getUnitAtCell(msg.col, msg.row)
+            if unit then
+                unit:upgrade(msg.upgradeIndex)
+            end
+
+        elseif t == "ready" then
+            self.opponentReady = true
+            self:checkBattleStart()
+
+        elseif t == "battle_start" then
+            -- Host sent the shared RNG seed – apply it and start the battle
+            math.randomseed(msg.seed)
+            self:startBattle()
+        end
+    end
+
+    function self:checkBattleStart()
+        if not (self.localReady and self.opponentReady) then return end
+
+        if self.playerRole == 1 then
+            -- Host generates and broadcasts the shared seed
+            local seed = os.time()
+            math.randomseed(seed)
+            self:sendMsg({type = "battle_start", seed = seed})
+            self:startBattle()
+        end
+        -- Guest waits for the "battle_start" message (handled in handleNetworkMessage)
+    end
+
+    function self:startBattle()
+        self.timer = 0
+        self.state = "battle"
+        local allUnits = self.grid:getAllUnits()
+        for _, unit in ipairs(allUnits) do
+            unit:onBattleStart(self.grid)
+        end
+    end
+
     function self:generateCards()
         -- Generate 3 cards at bottom with 10% margin (matching grid top margin)
         self.cards = {}
@@ -98,17 +194,43 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- Poll network (must happen every frame)
+        if self.isOnline and self.socket then
+            self.socket:update()
+        end
+
+        -- Opponent disconnected mid-game
+        if self.opponentDisconnected and self.state ~= "finished" then
+            self.opponentDisconnected = false
+            self.winner    = self.playerRole   -- local player wins by forfeit
+            self.state     = "finished"
+            self.statusMsg = "Oponente desconectado. ¡Ganaste!"
+        end
+
         -- Update timer
         if self.state == "setup" then
-            self.timer = self.timer - dt
-            if self.timer <= 0 then
-                self.timer = 0
-                self.state = "battle"
-
-                -- Trigger onBattleStart for all units
-                local allUnits = self.grid:getAllUnits()
-                for _, unit in ipairs(allUnits) do
-                    unit:onBattleStart(self.grid)
+            -- In online mode only the host's timer auto-triggers the battle.
+            -- The guest waits for "battle_start".
+            local timerActive = not self.isOnline or self.playerRole == 1
+            if timerActive then
+                self.timer = self.timer - dt
+                if self.timer <= 0 then
+                    self.timer = 0
+                    if not self.isOnline then
+                        -- Local mode: start immediately
+                        self.state = "battle"
+                        local allUnits = self.grid:getAllUnits()
+                        for _, unit in ipairs(allUnits) do
+                            unit:onBattleStart(self.grid)
+                        end
+                    else
+                        -- Online host: mark self ready and check
+                        if not self.localReady then
+                            self.localReady = true
+                            self:sendMsg({type = "ready"})
+                            self:checkBattleStart()
+                        end
+                    end
                 end
             end
         elseif self.state == "battle" then
@@ -208,19 +330,24 @@ function GameScreen.new()
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
         -- Player labels (proportional positioning)
+        -- In online mode the local player is always shown at the bottom right.
         lg.setFont(Fonts.large)
         local topMargin = 15 * Constants.SCALE
         local fontHeight = Fonts.large:getHeight()
-        local bottomMargin = topMargin  -- Same margin as P2 from top
+        local bottomMargin = topMargin
 
-        lg.setColor(0.5, 0.7, 1, 1)
-        lg.print("P2", topMargin, topMargin)
+        -- Determine which label goes where based on perspective
+        local topLabel    = self.playerRole == 2 and "P1" or "P2"
+        local bottomLabel = self.playerRole == 2 and "P2" or "P1"
+        local topColor    = self.playerRole == 2 and {1, 0.7, 0.5, 1} or {0.5, 0.7, 1, 1}
+        local bottomColor = self.playerRole == 2 and {0.5, 0.7, 1, 1} or {1, 0.7, 0.5, 1}
 
-        lg.setColor(1, 0.7, 0.5, 1)
-        -- Measure text width to align right with same offset as P2
-        local p1Text = "P1"
-        local p1Width = Fonts.large:getWidth(p1Text)
-        lg.print(p1Text, Constants.GAME_WIDTH - p1Width - topMargin,
+        lg.setColor(topColor)
+        lg.print(topLabel, topMargin, topMargin)
+
+        lg.setColor(bottomColor)
+        local bLabelWidth = Fonts.large:getWidth(bottomLabel)
+        lg.print(bottomLabel, Constants.GAME_WIDTH - bLabelWidth - topMargin,
                  Constants.GAME_HEIGHT - fontHeight - bottomMargin)
 
         -- Coin display in bottom left
@@ -238,22 +365,31 @@ function GameScreen.new()
 
         -- Buttons
         if self.state == "setup" then
+            -- In online mode: show "READY" until pressed, then "Esperando…"
             local buttonText = "READY"
+            if self.isOnline and self.localReady then
+                buttonText = "Esperando…"
+            end
             local buttonPadding = 20 * Constants.SCALE
             local textWidth = Fonts.medium:getWidth(buttonText)
             local buttonWidth = textWidth + buttonPadding * 2
             local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
 
-            -- Ready button below the grid
+            -- Ready button below the grid (disabled after pressing in online mode)
             local readyButton = self.suit:Button(buttonText, {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
-            if readyButton.hit then
-                self.timer = 0
-                self.state = "battle"
-
-                -- Trigger onBattleStart for all units
-                local allUnits = self.grid:getAllUnits()
-                for _, unit in ipairs(allUnits) do
-                    unit:onBattleStart(self.grid)
+            if readyButton.hit and not (self.isOnline and self.localReady) then
+                if self.isOnline then
+                    self.localReady = true
+                    self:sendMsg({type = "ready"})
+                    self:checkBattleStart()
+                else
+                    -- Local mode: start immediately
+                    self.timer = 0
+                    self.state = "battle"
+                    local allUnits = self.grid:getAllUnits()
+                    for _, unit in ipairs(allUnits) do
+                        unit:onBattleStart(self.grid)
+                    end
                 end
             end
 
@@ -268,18 +404,25 @@ function GameScreen.new()
                 end
             end
         elseif self.state == "finished" then
-            local buttonText = "RESTART"
+            local buttonText = self.isOnline and "IR AL MENÚ" or "RESTART"
             local buttonPadding = 20 * Constants.SCALE
             local textWidth = Fonts.medium:getWidth(buttonText)
             local buttonWidth = textWidth + buttonPadding * 2
             local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
 
-            -- Restart button at same position as Ready button
             local restartButton = self.suit:Button(buttonText, {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
 
             if restartButton.hit then
-                print("Restart button clicked!")
-                self:init()
+                if self.isOnline then
+                    -- Disconnect and return to menu
+                    if self.socket then pcall(function() self.socket:disconnect() end) end
+                    Constants.PERSPECTIVE = 1
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('menu')
+                else
+                    print("Restart button clicked!")
+                    self:init()
+                end
             end
         end
     end
@@ -413,6 +556,202 @@ function GameScreen.new()
         end
     end
 
+    -- Shared release logic (called from both mousereleased and touchreleased)
+    function self:handleRelease(x, y)
+        -- ── Tooltip upgrade button ────────────────────────────────────────────
+        if self.tooltip:isVisible() then
+            local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
+            if upgradeIndex then
+                local unit = self.tooltip.unit
+                local cost = UnitRegistry.unitCosts[unit.unitType] or 3
+                if self.playerCoins < cost then
+                    print("Not enough coins for upgrade")
+                    self.pressedUnit = nil
+                    self.pressedUnitCol = nil
+                    self.pressedUnitRow = nil
+                    return
+                end
+                if unit:upgrade(upgradeIndex) then
+                    self.playerCoins = self.playerCoins - cost
+                    print(string.format("Upgraded %s with upgrade %d to level %d",
+                          unit.unitType, upgradeIndex, unit.level))
+                    for i, card in ipairs(self.cards) do
+                        if card.unitType == unit.unitType then
+                            table.remove(self.cards, i); break
+                        end
+                    end
+                    self:generateCards()
+                    -- Send upgrade over the network
+                    self:sendMsg({type = "upgrade_unit",
+                                  col = unit.col, row = unit.row,
+                                  upgradeIndex = upgradeIndex})
+                    local hasMatchingCard = false
+                    for _, card in ipairs(self.cards) do
+                        if card.unitType == unit.unitType then
+                            hasMatchingCard = true; break
+                        end
+                    end
+                    self.tooltip:show(unit, hasMatchingCard)
+                end
+                self.pressedUnit = nil
+                self.pressedUnitCol = nil
+                self.pressedUnitRow = nil
+                return
+            end
+        end
+
+        -- ── Tap on unit → tooltip ─────────────────────────────────────────────
+        if self.pressedUnit and not self.draggedUnit then
+            local unit = self.pressedUnit
+            self.pressedUnit = nil
+            self.pressedUnitCol = nil
+            self.pressedUnitRow = nil
+            local hasMatchingCard = false
+            for _, card in ipairs(self.cards) do
+                if card.unitType == unit.unitType then
+                    hasMatchingCard = true; break
+                end
+            end
+            self.tooltip:toggle(unit, hasMatchingCard)
+            return
+        end
+
+        -- ── Tap on card → tooltip ─────────────────────────────────────────────
+        if self.pressedCard and not self.draggedCard then
+            local card = self.pressedCard
+            self.pressedCard = nil
+            self.pressedCardIndex = nil
+            self.tooltip:showCard(card)
+            return
+        end
+
+        -- ── Unit repositioning drag ───────────────────────────────────────────
+        if self.draggedUnit then
+            local col, row = self.grid:worldToGrid(x, y)
+            local origCol = self.draggedUnitOriginalCol
+            local origRow = self.draggedUnitOriginalRow
+            -- In online mode only allow repositioning within own zone
+            local zoneOwner = self.isOnline and self.playerRole or nil
+            if col and row and self.grid:canPlaceUnit(col, row, zoneOwner) then
+                self.draggedUnit.col = col
+                self.draggedUnit.row = row
+                self.grid:placeUnit(col, row, self.draggedUnit)
+                -- Sync: tell opponent to mirror the move
+                self:sendMsg({type = "remove_unit", col = origCol, row = origRow})
+                self:sendMsg({type = "place_unit",
+                              unitType = self.draggedUnit.unitType,
+                              col = col, row = row,
+                              owner = self.draggedUnit.owner})
+                print(string.format("Repositioned unit to [%d, %d]", col, row))
+            else
+                self.draggedUnit.col = origCol
+                self.draggedUnit.row = origRow
+                self.grid:placeUnit(origCol, origRow, self.draggedUnit)
+                print(string.format("Returned unit to [%d, %d]", origCol, origRow))
+            end
+            self.draggedUnit.dragX = nil
+            self.draggedUnit.dragY = nil
+            self.draggedUnit = nil
+            self.draggedUnitOriginalCol = nil
+            self.draggedUnitOriginalRow = nil
+            return
+        end
+
+        -- ── Card placement drag ───────────────────────────────────────────────
+        if self.draggedCard then
+            local col, row = self.grid:worldToGrid(x, y)
+            if col and row then
+                local owner    = self.grid:getOwner(row)
+                local unitType = self.draggedCard.unitType
+                local cell     = self.grid:getCell(col, row)
+                local cost     = UnitRegistry.unitCosts[unitType] or 3
+                -- In online mode restrict placement to local player's zone
+                if self.isOnline and owner ~= self.playerRole then
+                    self.draggedCard:snapBack()
+                elseif self.playerCoins < cost then
+                    print("Not enough coins")
+                    self.draggedCard:snapBack()
+                elseif cell and cell.occupied and cell.unit then
+                    local targetUnit = cell.unit
+                    if targetUnit.unitType == unitType
+                       and targetUnit.owner == owner
+                       and targetUnit.level < 3 then
+                        if targetUnit:upgrade() then
+                            self.playerCoins = self.playerCoins - cost
+                            print(string.format("Upgraded Player %d %s to level %d (direct drop)",
+                                  owner, unitType, targetUnit.level))
+                            for i, card in ipairs(self.cards) do
+                                if card == self.draggedCard then
+                                    table.remove(self.cards, i); break
+                                end
+                            end
+                            self:generateCards()
+                            self:sendMsg({type = "upgrade_unit",
+                                          col = col, row = row,
+                                          upgradeIndex = nil})
+                        else
+                            print(string.format("Player %d %s is already max level", owner, unitType))
+                            self.draggedCard:snapBack()
+                        end
+                    else
+                        self.draggedCard:snapBack()
+                    end
+                elseif self.grid:canPlaceUnit(col, row, self.isOnline and self.playerRole or nil) then
+                    local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
+                    if existingUnit then
+                        if existingUnit:upgrade() then
+                            self.playerCoins = self.playerCoins - cost
+                            print(string.format("Upgraded Player %d %s to level %d",
+                                  owner, unitType, existingUnit.level))
+                            for i, card in ipairs(self.cards) do
+                                if card == self.draggedCard then
+                                    table.remove(self.cards, i); break
+                                end
+                            end
+                            self:generateCards()
+                            self:sendMsg({type = "upgrade_unit",
+                                          col = existingUnit.col, row = existingUnit.row,
+                                          upgradeIndex = nil})
+                        else
+                            print(string.format("Player %d %s is already max level", owner, unitType))
+                            self.draggedCard:snapBack()
+                        end
+                    else
+                        local unitSprites = self.sprites[unitType]
+                        local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
+                        if self.grid:placeUnit(col, row, unit) then
+                            self.playerCoins = self.playerCoins - cost
+                            for i, card in ipairs(self.cards) do
+                                if card == self.draggedCard then
+                                    table.remove(self.cards, i); break
+                                end
+                            end
+                            self:generateCards()
+                            self:sendMsg({type = "place_unit",
+                                          unitType = unitType,
+                                          col = col, row = row,
+                                          owner = owner})
+                            print(string.format("Placed Player %d %s at [%d, %d]",
+                                  owner, unitType, col, row))
+                        end
+                    end
+                else
+                    self.draggedCard:snapBack()
+                end
+            else
+                self.draggedCard:snapBack()
+            end
+            self.draggedCard:stopDrag()
+            self.draggedCard = nil
+            return
+        end
+
+        -- ── Empty tap → hide tooltip ──────────────────────────────────────────
+        if self.tooltip:isVisible() then
+            self.tooltip:hide()
+        end
+    end
+
     function self:mousereleased(x, y, button, istouch)
         -- Skip if this is a touch-generated mouse event (we handle it in touchreleased)
         if istouch and self.activeTouchId then
@@ -425,233 +764,10 @@ function GameScreen.new()
         end
 
         if button == 1 then
-            -- First, check if we clicked directly on an upgrade button in the tooltip
-            if self.tooltip:isVisible() then
-                local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
-                if upgradeIndex then
-                    local unit = self.tooltip.unit
-                    -- Check if player can afford the upgrade
-                    local cost = UnitRegistry.unitCosts[unit.unitType] or 3
-                    if self.playerCoins < cost then
-                        print("Not enough coins for upgrade")
-                        -- Clear pressed state
-                        self.pressedUnit = nil
-                        self.pressedUnitCol = nil
-                        self.pressedUnitRow = nil
-                        return
-                    end
-
-                    -- Player clicked an upgrade button - apply the upgrade
-                    if unit:upgrade(upgradeIndex) then
-                        -- Deduct coins
-                        self.playerCoins = self.playerCoins - cost
-                        print(string.format("Upgraded %s with upgrade %d to level %d", unit.unitType, upgradeIndex, unit.level))
-
-                        -- Remove the matching card from hand
-                        for i, card in ipairs(self.cards) do
-                            if card.unitType == unit.unitType then
-                                table.remove(self.cards, i)
-                                break
-                            end
-                        end
-
-                        -- Generate new cards
-                        self:generateCards()
-
-                        -- Update tooltip to reflect new state
-                        local hasMatchingCard = false
-                        for _, card in ipairs(self.cards) do
-                            if card.unitType == unit.unitType then
-                                hasMatchingCard = true
-                                break
-                            end
-                        end
-                        self.tooltip:show(unit, hasMatchingCard)
-                    end
-
-                    -- Clear pressed state
-                    self.pressedUnit = nil
-                    self.pressedUnitCol = nil
-                    self.pressedUnitRow = nil
-                    return
-                end
-            end
-
-            -- Check if a unit was pressed but not dragged (tap for tooltip)
-            if self.pressedUnit and not self.draggedUnit then
-                local unit = self.pressedUnit
-                -- Clear pressed state
-                self.pressedUnit = nil
-                self.pressedUnitCol = nil
-                self.pressedUnitRow = nil
-
-                -- Check if player has a matching card in hand
-                local hasMatchingCard = false
-                for _, card in ipairs(self.cards) do
-                    if card.unitType == unit.unitType then
-                        hasMatchingCard = true
-                        break
-                    end
-                end
-
-                -- Normal tooltip toggle
-                self.tooltip:toggle(unit, hasMatchingCard)
-                return
-            end
-
-            -- Check if a card was pressed but not dragged (tap for tooltip)
-            if self.pressedCard and not self.draggedCard then
-                local card = self.pressedCard
-                -- Clear pressed state
-                self.pressedCard = nil
-                self.pressedCardIndex = nil
-
-                -- Show tooltip for card
-                self.tooltip:showCard(card)
-                return
-            end
-
-            -- Handle unit repositioning
-            if self.draggedUnit then
-                local col, row = self.grid:worldToGrid(x, y)
-
-                -- Try to place unit at new position
-                if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
-                    -- Place unit at new position
-                    self.draggedUnit.col = col
-                    self.draggedUnit.row = row
-                    self.grid:placeUnit(col, row, self.draggedUnit)
-                    print(string.format("Repositioned unit to [%d, %d]", col, row))
-                else
-                    -- Invalid position, return to original spot
-                    self.draggedUnit.col = self.draggedUnitOriginalCol
-                    self.draggedUnit.row = self.draggedUnitOriginalRow
-                    self.grid:placeUnit(self.draggedUnitOriginalCol, self.draggedUnitOriginalRow, self.draggedUnit)
-                    print(string.format("Returned unit to original position [%d, %d]", self.draggedUnitOriginalCol, self.draggedUnitOriginalRow))
-                end
-
-                -- Clear dragging state
-                self.draggedUnit.dragX = nil
-                self.draggedUnit.dragY = nil
-                self.draggedUnit = nil
-                self.draggedUnitOriginalCol = nil
-                self.draggedUnitOriginalRow = nil
-                return
-            end
-
-            -- Handle card placement
-            if self.draggedCard then
-                -- Try to place unit on grid
-                local col, row = self.grid:worldToGrid(x, y)
-
-                if col and row then
-                    -- Determine owner based on which zone the card is dropped in
-                    local owner = self.grid:getOwner(row)
-                    local unitType = self.draggedCard.unitType
-                    local cell = self.grid:getCell(col, row)
-                    local cost = UnitRegistry.unitCosts[unitType] or 3
-
-                    -- Check if player can afford this unit
-                    if self.playerCoins < cost then
-                        print("Not enough coins")
-                        self.draggedCard:snapBack()
-                    -- Check if dropping directly on a unit for upgrade
-                    elseif cell and cell.occupied and cell.unit then
-                        local targetUnit = cell.unit
-                        -- Allow upgrade if same type, same owner zone, and not max level
-                        if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 3 then
-                            if targetUnit:upgrade() then
-                                -- Upgrade successful - deduct coins
-                                self.playerCoins = self.playerCoins - cost
-                                print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
-
-                                -- Remove the card from hand
-                                for i, card in ipairs(self.cards) do
-                                    if card == self.draggedCard then
-                                        table.remove(self.cards, i)
-                                        break
-                                    end
-                                end
-
-                                -- Generate new cards
-                                self:generateCards()
-                            else
-                                -- Already max level, snap card back
-                                print(string.format("Player %d %s is already max level", owner, unitType))
-                                self.draggedCard:snapBack()
-                            end
-                        else
-                            -- Type mismatch or wrong owner - snap back
-                            self.draggedCard:snapBack()
-                        end
-                    elseif self.grid:canPlaceUnit(col, row, self.currentPlayer) then
-                        -- Empty cell - check if this unit type already exists for this owner (upgrade system)
-                        local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
-
-                        if existingUnit then
-                            -- Unit type exists - try to upgrade it
-                            if existingUnit:upgrade() then
-                                -- Upgrade successful - deduct coins
-                                self.playerCoins = self.playerCoins - cost
-                                print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
-
-                                -- Remove the card from hand
-                                for i, card in ipairs(self.cards) do
-                                    if card == self.draggedCard then
-                                        table.remove(self.cards, i)
-                                        break
-                                    end
-                                end
-
-                                -- Generate new cards
-                                self:generateCards()
-                            else
-                                -- Already max level, snap card back
-                                print(string.format("Player %d %s is already max level", owner, unitType))
-                                self.draggedCard:snapBack()
-                            end
-                        else
-                            -- No existing unit of this type - place new unit
-                            local unitSprites = self.sprites[unitType]
-                            local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
-                            if self.grid:placeUnit(col, row, unit) then
-                                -- Deduct coins
-                                self.playerCoins = self.playerCoins - cost
-
-                                -- Remove the card from hand
-                                for i, card in ipairs(self.cards) do
-                                    if card == self.draggedCard then
-                                        table.remove(self.cards, i)
-                                        break
-                                    end
-                                end
-
-                                -- Generate new cards
-                                self:generateCards()
-
-                                print(string.format("Placed Player %d %s at [%d, %d]", owner, unitType, col, row))
-                            end
-                        end
-                    else
-                        -- Snap card back to original position
-                        self.draggedCard:snapBack()
-                    end
-                else
-                    -- Outside grid - snap card back
-                    self.draggedCard:snapBack()
-                end
-
-                self.draggedCard:stopDrag()
-                self.draggedCard = nil
-                return
-            end
-
-            -- If tapping anywhere else (not on a unit), hide tooltip
-            if self.tooltip:isVisible() then
-                self.tooltip:hide()
-            end
+            self:handleRelease(x, y)
         end
     end
+
 
     function self:touchpressed(id, x, y, dx, dy, pressure)
         -- Track the active touch to prevent double-handling
@@ -705,243 +821,10 @@ function GameScreen.new()
     end
 
     function self:touchreleased(id, x, y, dx, dy, pressure)
-        -- Only handle if this is our active touch
-        if self.activeTouchId ~= id then
-            return
-        end
-
-        -- Clear active touch
+        if self.activeTouchId ~= id then return end
         self.activeTouchId = nil
-
-        -- Handle the touch release
-        -- Update SUIT mouse state
         self.suit:updateMouse(x, y, false)
-
-        -- First, check if we tapped directly on an upgrade button in the tooltip
-        if self.tooltip:isVisible() then
-            local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
-            if upgradeIndex then
-                local unit = self.tooltip.unit
-                -- Check if player can afford the upgrade
-                local cost = UnitRegistry.unitCosts[unit.unitType] or 3
-                if self.playerCoins < cost then
-                    print("Not enough coins for upgrade")
-                    -- Clear pressed state
-                    self.pressedUnit = nil
-                    self.pressedUnitCol = nil
-                    self.pressedUnitRow = nil
-                    return
-                end
-
-                -- Player tapped an upgrade button - apply the upgrade
-                if unit:upgrade(upgradeIndex) then
-                    -- Deduct coins
-                    self.playerCoins = self.playerCoins - cost
-                    print(string.format("Upgraded %s with upgrade %d to level %d", unit.unitType, upgradeIndex, unit.level))
-
-                    -- Remove the matching card from hand
-                    for i, card in ipairs(self.cards) do
-                        if card.unitType == unit.unitType then
-                            table.remove(self.cards, i)
-                            break
-                        end
-                    end
-
-                    -- Generate new cards
-                    self:generateCards()
-
-                    -- Update tooltip to reflect new state
-                    local hasMatchingCard = false
-                    for _, card in ipairs(self.cards) do
-                        if card.unitType == unit.unitType then
-                            hasMatchingCard = true
-                            break
-                        end
-                    end
-                    self.tooltip:show(unit, hasMatchingCard)
-                end
-
-                -- Clear pressed state
-                self.pressedUnit = nil
-                self.pressedUnitCol = nil
-                self.pressedUnitRow = nil
-                return
-            end
-        end
-
-        -- Check if a unit was pressed but not dragged (tap for tooltip)
-        if self.pressedUnit and not self.draggedUnit then
-            local unit = self.pressedUnit
-            -- Clear pressed state
-            self.pressedUnit = nil
-            self.pressedUnitCol = nil
-            self.pressedUnitRow = nil
-
-            -- Check if player has a matching card in hand
-            local hasMatchingCard = false
-            for _, card in ipairs(self.cards) do
-                if card.unitType == unit.unitType then
-                    hasMatchingCard = true
-                    break
-                end
-            end
-
-            -- Toggle tooltip for this unit
-            self.tooltip:toggle(unit, hasMatchingCard)
-            return
-        end
-
-        -- Check if a card was pressed but not dragged (tap for tooltip)
-        if self.pressedCard and not self.draggedCard then
-            local card = self.pressedCard
-            -- Clear pressed state
-            self.pressedCard = nil
-            self.pressedCardIndex = nil
-
-            -- Show tooltip for card
-            self.tooltip:showCard(card)
-            return
-        end
-
-        -- Handle unit repositioning
-        if self.draggedUnit then
-            local col, row = self.grid:worldToGrid(x, y)
-
-            -- Try to place unit at new position
-            if col and row and self.grid:canPlaceUnit(col, row, self.currentPlayer) then
-                -- Place unit at new position
-                self.draggedUnit.col = col
-                self.draggedUnit.row = row
-                self.grid:placeUnit(col, row, self.draggedUnit)
-                print(string.format("Repositioned unit to [%d, %d]", col, row))
-            else
-                -- Invalid position, return to original spot
-                self.draggedUnit.col = self.draggedUnitOriginalCol
-                self.draggedUnit.row = self.draggedUnitOriginalRow
-                self.grid:placeUnit(self.draggedUnitOriginalCol, self.draggedUnitOriginalRow, self.draggedUnit)
-                print(string.format("Returned unit to original position [%d, %d]", self.draggedUnitOriginalCol, self.draggedUnitOriginalRow))
-            end
-
-            -- Clear dragging state
-            self.draggedUnit.dragX = nil
-            self.draggedUnit.dragY = nil
-            self.draggedUnit = nil
-            self.draggedUnitOriginalCol = nil
-            self.draggedUnitOriginalRow = nil
-            return
-        end
-
-        -- Handle card placement
-        if self.draggedCard then
-            -- Try to place unit on grid
-            local col, row = self.grid:worldToGrid(x, y)
-
-            if col and row then
-                -- Determine owner based on which zone the card is dropped in
-                local owner = self.grid:getOwner(row)
-                local unitType = self.draggedCard.unitType
-                local cell = self.grid:getCell(col, row)
-                local cost = UnitRegistry.unitCosts[unitType] or 3
-
-                -- Check if player can afford this unit
-                if self.playerCoins < cost then
-                    print("Not enough coins")
-                    self.draggedCard:snapBack()
-                -- Check if dropping directly on a unit for upgrade
-                elseif cell and cell.occupied and cell.unit then
-                    local targetUnit = cell.unit
-                    -- Allow upgrade if same type, same owner zone, and not max level
-                    if targetUnit.unitType == unitType and targetUnit.owner == owner and targetUnit.level < 2 then
-                        if targetUnit:upgrade() then
-                            -- Upgrade successful - deduct coins
-                            self.playerCoins = self.playerCoins - cost
-                            print(string.format("Upgraded Player %d %s to level %d (direct drop)", owner, unitType, targetUnit.level))
-
-                            -- Remove the card from hand
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i)
-                                    break
-                                end
-                            end
-
-                            -- Generate new cards
-                            self:generateCards()
-                        else
-                            -- Already max level, snap card back
-                            print(string.format("Player %d %s is already max level", owner, unitType))
-                            self.draggedCard:snapBack()
-                        end
-                    else
-                        -- Type mismatch or wrong owner - snap back
-                        self.draggedCard:snapBack()
-                    end
-                elseif self.grid:canPlaceUnit(col, row, self.currentPlayer) then
-                    -- Empty cell - check if this unit type already exists for this owner (upgrade system)
-                    local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
-
-                    if existingUnit then
-                        -- Unit type exists - try to upgrade it
-                        if existingUnit:upgrade() then
-                            -- Upgrade successful - deduct coins
-                            self.playerCoins = self.playerCoins - cost
-                            print(string.format("Upgraded Player %d %s to level %d", owner, unitType, existingUnit.level))
-
-                            -- Remove the card from hand
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i)
-                                    break
-                                end
-                            end
-
-                            -- Generate new cards
-                            self:generateCards()
-                        else
-                            -- Already max level, snap card back
-                            print(string.format("Player %d %s is already max level", owner, unitType))
-                            self.draggedCard:snapBack()
-                        end
-                    else
-                        -- No existing unit of this type - place new unit
-                        local unitSprites = self.sprites[unitType]
-                        local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
-                        if self.grid:placeUnit(col, row, unit) then
-                            -- Deduct coins
-                            self.playerCoins = self.playerCoins - cost
-
-                            -- Remove the card from hand
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i)
-                                    break
-                                end
-                            end
-
-                            -- Generate new cards
-                            self:generateCards()
-
-                            print(string.format("Placed Player %d %s at [%d, %d]", owner, unitType, col, row))
-                        end
-                    end
-                else
-                    -- Snap card back to original position
-                    self.draggedCard:snapBack()
-                end
-            else
-                -- Outside grid - snap card back
-                self.draggedCard:snapBack()
-            end
-
-            self.draggedCard:stopDrag()
-            self.draggedCard = nil
-            return
-        end
-
-        -- If tapping anywhere else (not on a unit), hide tooltip
-        if self.tooltip:isVisible() then
-            self.tooltip:hide()
-        end
+        self:handleRelease(x, y)
     end
 
     function self:keypressed(key)
@@ -951,6 +834,11 @@ function GameScreen.new()
             -- Reset
             self:init()
         end
+    end
+
+    function self:close()
+        -- Reset global perspective when leaving the game screen
+        Constants.PERSPECTIVE = 1
     end
 
     -- Check if all attack animations have completed

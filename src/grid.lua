@@ -46,21 +46,25 @@ function Grid:getOwner(row)
 end
 
 function Grid:worldToGrid(x, y)
-    -- Convert screen coordinates to grid coordinates
+    -- Convert screen coordinates to canonical grid coordinates.
+    -- When perspective == 2 the board is visually flipped, so we invert the row.
     local col = math.floor((x - self.offsetX) / self.cellSize) + 1
-    local row = math.floor((y - self.offsetY) / self.cellSize) + 1
+    local visualRow = math.floor((y - self.offsetY) / self.cellSize) + 1
 
-    if col >= 1 and col <= self.cols and row >= 1 and row <= self.rows then
-        return col, row
+    if col >= 1 and col <= self.cols and visualRow >= 1 and visualRow <= self.rows then
+        local canonicalRow = Constants.toVisualRow(visualRow)  -- toVisualRow is its own inverse
+        return col, canonicalRow
     end
 
     return nil, nil
 end
 
 function Grid:gridToWorld(col, row)
-    -- Convert grid coordinates to world coordinates (top-left of cell)
+    -- Convert canonical grid coordinates to screen coordinates (top-left of cell).
+    -- Applies perspective flip so the correct player always sees themselves at the bottom.
+    local visualRow = Constants.toVisualRow(row)
     local x = self.offsetX + (col - 1) * self.cellSize
-    local y = self.offsetY + (row - 1) * self.cellSize
+    local y = self.offsetY + (visualRow - 1) * self.cellSize
     return x, y
 end
 
@@ -222,11 +226,11 @@ function Grid:draw(draggedUnit)
     -- Draw cells with chess pattern
     for row = 1, self.rows do
         for col = 1, self.cols do
-            local cell = self.cells[row][col]
             local x, y = self:gridToWorld(col, row)
 
-            -- Chess pattern: alternate colors based on row + col
-            if (row + col) % 2 == 0 then
+            -- Chess pattern: use visual row so the pattern stays stable when flipped
+            local visualRow = Constants.toVisualRow(row)
+            if (visualRow + col) % 2 == 0 then
                 lg.setColor(Constants.COLORS.CHESS_LIGHT)
             else
                 lg.setColor(Constants.COLORS.CHESS_DARK)
@@ -235,7 +239,9 @@ function Grid:draw(draggedUnit)
         end
     end
 
-    -- Draw center line between players (scaled)
+    -- Draw center line between players (scaled).
+    -- The divider sits between PLAYER2_ROWS and PLAYER2_ROWS+1 in canonical coords.
+    -- After perspective flip this is still the geometric centre of the grid.
     lg.setColor(1, 1, 1, 0.3)
     lg.setLineWidth(2 * Constants.SCALE)
     local centerY = self.offsetY + (Constants.PLAYER2_ROWS * self.cellSize)
