@@ -285,7 +285,10 @@ function LobbyScreen.new()
 
     function self:close()
         love.keyboard.setKeyRepeat(false)
-        self:disconnectClean()
+        -- If we matched and handed the socket to GameScreen, don't disconnect it.
+        if self.status ~= "matched" then
+            self:disconnectClean()
+        end
     end
 
     return self
