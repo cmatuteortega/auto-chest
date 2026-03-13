@@ -283,8 +283,9 @@ function GameScreen.new()
     function self:draw()
         local lg = love.graphics
 
-        -- Draw grid (pass dragged unit so it can skip drawing it)
-        self.grid:draw(self.draggedUnit)
+        -- During online setup, hide the opponent's units for the element of surprise.
+        local hideOwner = (self.isOnline and self.state == "setup") and (3 - self.playerRole) or nil
+        self.grid:draw(self.draggedUnit, hideOwner)
 
         -- Draw UI
         self:drawUI()
@@ -323,8 +324,9 @@ function GameScreen.new()
         if self.state == "setup" then
             stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
         elseif (self.state == "battle_ending" or self.state == "finished") and self.winner then
-            stateText = "PLAYER " .. self.winner .. " WINS!"
-            lg.setColor(1, 1, 0, 1)
+            local didWin = (self.winner == self.playerRole)
+            stateText = didWin and "YOU WIN!" or "YOU LOSE"
+            lg.setColor(didWin and {0.3, 1, 0.3, 1} or {1, 0.3, 0.3, 1})
         end
         local stateTextY = Constants.GAME_HEIGHT * 0.025  -- 2.5% from top
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')

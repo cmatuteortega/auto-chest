@@ -212,7 +212,7 @@ function Grid:update(dt, mouseX, mouseY)
     self:refreshDimensions()
 end
 
-function Grid:draw(draggedUnit)
+function Grid:draw(draggedUnit, hideOwner)
     local lg = love.graphics
 
     -- Reset color state to ensure no tinting
@@ -248,15 +248,18 @@ function Grid:draw(draggedUnit)
     lg.line(self.offsetX, centerY, self.offsetX + Constants.GRID_WIDTH, centerY)
     lg.setLineWidth(1)
 
-    -- Draw units (skip the dragged unit if provided)
+    -- Draw units (skip the dragged unit and any hidden owner's units)
     for row = 1, self.rows do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
             if cell.unit and cell.unit ~= draggedUnit then
-                cell.unit:draw()
+                if not (hideOwner and cell.unit.owner == hideOwner) then
+                    cell.unit:draw()
+                end
             end
         end
     end
+
 end
 
 return Grid
