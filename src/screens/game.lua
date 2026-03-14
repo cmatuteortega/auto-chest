@@ -54,6 +54,9 @@ function GameScreen.new()
         -- Game state
         self.state = "setup" -- setup, intermission, battle, battle_ending, finished
         self.timer = 30 -- seconds for setup phase
+        -- Fixed timestep simulation (prevents dt desync between clients)
+        self.battleAccumulator = 0
+        self.battleStepCount   = 0
         self.currentPlayer = 1  -- Player 1 is always the bottom player in canonical coords
 
         -- Round tracking
@@ -225,6 +228,8 @@ function GameScreen.new()
     function self:startBattle()
         self.timer = 0
         self.state = "battle"
+        self.battleAccumulator = 0
+        self.battleStepCount   = 0
 
         -- Apply all buffered opponent moves now that battle is starting
         for _, msg in ipairs(self.pendingOpponentMsgs) do
@@ -376,33 +381,38 @@ function GameScreen.new()
                 end
             end
         elseif self.state == "battle" then
-            -- Update all units during battle
-            local allUnits = self.grid:getAllUnits()
-            for _, unit in ipairs(allUnits) do
-                unit:update(dt, self.grid)
-            end
+            -- Fixed timestep simulation: accumulate real dt and drain in discrete steps.
+            -- Both clients run the exact same number of steps per battle, eliminating
+            -- floating-point divergence caused by variable frame rates.
+            local FIXED_DT = 1 / 60
+            self.battleAccumulator = self.battleAccumulator + dt
 
-            -- Check victory condition
-            local p1Alive = 0
-            local p2Alive = 0
-            for _, unit in ipairs(allUnits) do
-                if not unit.isDead then
-                    if unit.owner == 1 then
-                        p1Alive = p1Alive + 1
-                    else
-                        p2Alive = p2Alive + 1
+            while self.battleAccumulator >= FIXED_DT do
+                self.battleAccumulator = self.battleAccumulator - FIXED_DT
+                self.battleStepCount   = self.battleStepCount + 1
+
+                local allUnits = self.grid:getAllUnits()
+                for _, unit in ipairs(allUnits) do
+                    unit:update(FIXED_DT, self.grid)
+                end
+
+                -- Check victory condition after each simulation step
+                local p1Alive = 0
+                local p2Alive = 0
+                for _, unit in ipairs(allUnits) do
+                    if not unit.isDead then
+                        if unit.owner == 1 then
+                            p1Alive = p1Alive + 1
+                        else
+                            p2Alive = p2Alive + 1
+                        end
                     end
                 end
-            end
 
-            -- Battle ends when one side has no units left
-            -- Transition to battle_ending to allow animations to complete
-            if p1Alive == 0 or p2Alive == 0 then
-                self.state = "battle_ending"
-                if p1Alive > 0 then
-                    self.winner = 1
-                else
-                    self.winner = 2
+                if p1Alive == 0 or p2Alive == 0 then
+                    self.state = "battle_ending"
+                    self.winner = p1Alive > 0 and 1 or 2
+                    break
                 end
             end
         elseif self.state == "battle_ending" then

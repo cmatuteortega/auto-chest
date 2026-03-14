@@ -46,8 +46,16 @@ function Pathfinding.findPath(grid, startCol, startRow, goalCol, goalRow, unitOw
 
         for i, node in ipairs(openSet) do
             local key = node.row .. "," .. node.col
-            if fScore[key] < lowestFScore then
-                lowestFScore = fScore[key]
+            local score = fScore[key]
+            -- Primary: lowest fScore. Tie-break: lower row, then lower col.
+            -- Explicit tie-breaking makes path choices independent of insertion order.
+            local isBetter = score < lowestFScore
+            if score == lowestFScore and current then
+                isBetter = (node.row < current.row) or
+                           (node.row == current.row and node.col < current.col)
+            end
+            if isBetter then
+                lowestFScore = score
                 current = node
                 currentIndex = i
             end
