@@ -85,7 +85,7 @@ function Grid:getCell(col, row)
     return nil
 end
 
-function Grid:canPlaceUnit(col, row, playerOwner)
+function Grid:canPlaceUnit(col, row)
     local cell = self:getCell(col, row)
     if not cell then
         return false
@@ -207,7 +207,7 @@ function Grid:getUnitAtCell(col, row)
     return nil
 end
 
-function Grid:update(dt, mouseX, mouseY)
+function Grid:update()
     -- Refresh dimensions in case window was resized
     self:refreshDimensions()
 end
@@ -248,11 +248,23 @@ function Grid:draw(draggedUnit, hideOwner)
     lg.line(self.offsetX, centerY, self.offsetX + Constants.GRID_WIDTH, centerY)
     lg.setLineWidth(1)
 
-    -- Draw units (skip the dragged unit and any hidden owner's units)
+    -- Draw dead units first so alive units render on top
     for row = 1, self.rows do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
-            if cell.unit and cell.unit ~= draggedUnit then
+            if cell.unit and cell.unit ~= draggedUnit and cell.unit.isDead then
+                if not (hideOwner and cell.unit.owner == hideOwner) then
+                    cell.unit:draw()
+                end
+            end
+        end
+    end
+
+    -- Draw alive units on top
+    for row = 1, self.rows do
+        for col = 1, self.cols do
+            local cell = self.cells[row][col]
+            if cell.unit and cell.unit ~= draggedUnit and not cell.unit.isDead then
                 if not (hideOwner and cell.unit.owner == hideOwner) then
                     cell.unit:draw()
                 end

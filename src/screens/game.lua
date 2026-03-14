@@ -52,12 +52,30 @@ function GameScreen.new()
         self.mouseY = 0
 
         -- Game state
-        self.state = "setup" -- setup, battle, battle_ending, finished
+        self.state = "setup" -- setup, intermission, battle, battle_ending, finished
         self.timer = 30 -- seconds for setup phase
         self.currentPlayer = 1  -- Player 1 is always the bottom player in canonical coords
 
+        -- Round tracking
+        self.roundNumber         = 1
+        self.battleUnitsSnapshot  = {}  -- all units alive at battle start, for reliable reset
+        self.pendingOpponentMsgs  = {}  -- buffered opponent placement msgs, applied at battle start
+        self.pendingWinner        = nil -- winner saved during intermission before life deduction
+
+        -- Desync detection
+        self.localBoardHash    = nil
+        self.opponentBoardHash = nil
+
+        -- Round-end sync (online): both clients must signal done before resetting
+        self.localRoundEndReady    = false
+        self.opponentRoundEndReady = false
+
+        -- Lives
+        self.p1Lives = 3
+        self.p2Lives = 3
+
         -- Economy
-        self.playerCoins = 30
+        self.playerCoins = 6
         self.rerollCost = 1
 
         -- Card drafting
@@ -110,23 +128,64 @@ function GameScreen.new()
         end)
     end
 
-    function self:handleNetworkMessage(msg)
-        local t = msg.type
+    -- Compute a deterministic string hash of all units on the board (type, position, owner, level).
+    -- Used to verify both clients are in sync at battle start.
+    function self:computeBoardHash()
+        local entries = {}
+        for row = 1, self.grid.rows do
+            for col = 1, self.grid.cols do
+                local cell = self.grid.cells[row][col]
+                if cell.unit then
+                    local u = cell.unit
+                    table.insert(entries, string.format("%s,%d,%d,%d,%d",
+                        u.unitType, u.col, u.row, u.owner, u.level or 0))
+                end
+            end
+        end
+        table.sort(entries)
+        return table.concat(entries, "|")
+    end
 
+    function self:checkBoardSync()
+        if not (self.localBoardHash and self.opponentBoardHash) then return end
+        if self.localBoardHash == self.opponentBoardHash then
+            print("[SYNC] Board OK for round " .. self.roundNumber)
+        else
+            print("[DESYNC] Round " .. self.roundNumber .. " board mismatch!")
+            print("  Local:  " .. self.localBoardHash)
+            print("  Remote: " .. self.opponentBoardHash)
+        end
+        self.localBoardHash    = nil
+        self.opponentBoardHash = nil
+    end
+
+    -- Apply a single opponent placement/removal/upgrade message to the grid.
+    function self:applyOpponentMsg(msg)
+        local t = msg.type
         if t == "place_unit" then
-            -- msg contains: unitType, col, row (in the SENDER's canonical coords)
-            -- Since both devices share the same canonical coordinate system, apply directly.
             local unitSprites = self.sprites[msg.unitType]
             local unit = UnitRegistry.createUnit(msg.unitType, msg.row, msg.col, msg.owner, unitSprites)
             self.grid:placeUnit(msg.col, msg.row, unit)
-
         elseif t == "remove_unit" then
             self.grid:removeUnit(msg.col, msg.row)
-
         elseif t == "upgrade_unit" then
             local unit = self.grid:getUnitAtCell(msg.col, msg.row)
-            if unit then
-                unit:upgrade(msg.upgradeIndex)
+            if unit then unit:upgrade(msg.upgradeIndex) end
+        end
+    end
+
+    function self:handleNetworkMessage(msg)
+        local t = msg.type
+
+        if t == "place_unit" or t == "remove_unit" or t == "upgrade_unit" then
+            -- During setup/intermission/pre_battle, buffer opponent moves so their
+            -- positions stay frozen at last-round home spots until battle starts.
+            local inSetup = self.state == "setup" or self.state == "intermission"
+                         or self.state == "pre_battle"
+            if inSetup then
+                table.insert(self.pendingOpponentMsgs, msg)
+            else
+                self:applyOpponentMsg(msg)
             end
 
         elseif t == "ready" then
@@ -134,9 +193,15 @@ function GameScreen.new()
             self:checkBattleStart()
 
         elseif t == "battle_start" then
-            -- Host sent the shared RNG seed – apply it and start the battle
             math.randomseed(msg.seed)
-            self:startBattle()
+            self:beginBattleCountdown()
+
+        elseif t == "round_end_ready" then
+            self.opponentRoundEndReady = true
+
+        elseif t == "board_sync_check" then
+            self.opponentBoardHash = msg.hash
+            self:checkBoardSync()
         end
     end
 
@@ -144,22 +209,85 @@ function GameScreen.new()
         if not (self.localReady and self.opponentReady) then return end
 
         if self.playerRole == 1 then
-            -- Host generates and broadcasts the shared seed
             local seed = os.time()
             math.randomseed(seed)
             self:sendMsg({type = "battle_start", seed = seed})
-            self:startBattle()
+            self:beginBattleCountdown()
         end
-        -- Guest waits for the "battle_start" message (handled in handleNetworkMessage)
+        -- Guest waits for the "battle_start" message (handled above)
+    end
+
+    function self:beginBattleCountdown()
+        self.state         = "pre_battle"
+        self.preBattleTimer = 1
     end
 
     function self:startBattle()
         self.timer = 0
         self.state = "battle"
+
+        -- Apply all buffered opponent moves now that battle is starting
+        for _, msg in ipairs(self.pendingOpponentMsgs) do
+            self:applyOpponentMsg(msg)
+        end
+        self.pendingOpponentMsgs = {}
+
+        -- Validate board sync with opponent (both clients compute the same hash if in sync)
+        if self.isOnline then
+            self.localBoardHash = self:computeBoardHash()
+            self:sendMsg({type = "board_sync_check", hash = self.localBoardHash})
+            self:checkBoardSync()
+        end
+
         local allUnits = self.grid:getAllUnits()
+        self.battleUnitsSnapshot = {}
         for _, unit in ipairs(allUnits) do
+            unit.homeCol = unit.col
+            unit.homeRow = unit.row
+            table.insert(self.battleUnitsSnapshot, unit)
             unit:onBattleStart(self.grid)
         end
+    end
+
+    function self:resetRound()
+        -- Use the snapshot taken at battle start (reliable even if units left the grid mid-battle)
+        local allUnits = self.battleUnitsSnapshot
+
+        -- Clear the grid entirely
+        for row = 1, self.grid.rows do
+            for col = 1, self.grid.cols do
+                local cell = self.grid.cells[row][col]
+                cell.unit     = nil
+                cell.occupied = false
+                cell.reserved = false
+            end
+        end
+
+        -- Re-place all units at their pre-battle home positions
+        for _, unit in ipairs(allUnits) do
+            if unit.homeCol and unit.homeRow then
+                unit.col = unit.homeCol
+                unit.row = unit.homeRow
+                unit:resetCombatState()
+                self.grid:placeUnit(unit.homeCol, unit.homeRow, unit)
+            end
+        end
+
+        self.roundNumber          = self.roundNumber + 1
+        self.winner               = nil
+        self.localReady           = false
+        self.opponentReady        = false
+        self.playerCoins          = self.playerCoins + 6
+        self.pendingOpponentMsgs  = {}
+        self.draggedUnit          = nil
+        self.draggedCard          = nil
+        self.pressedUnit          = nil
+        self.pressedCard          = nil
+        self.tooltip:hide()
+        self:generateCards()
+
+        self.state = "setup"
+        self.timer = 30
     end
 
     function self:generateCards()
@@ -207,30 +335,44 @@ function GameScreen.new()
             self.statusMsg = "Oponente desconectado. ¡Ganaste!"
         end
 
-        -- Update timer
+        -- Intermission countdown (bodies stay on board during this period)
+        if self.state == "intermission" then
+            self.intermissionTimer = self.intermissionTimer - dt
+            if self.intermissionTimer <= 0 then
+                local w = self.pendingWinner
+                self.pendingWinner = nil
+                if w == 1 then
+                    self.p2Lives = self.p2Lives - 1
+                    if self.p2Lives <= 0 then self.state = "finished" else self:resetRound() end
+                elseif w == 2 then
+                    self.p1Lives = self.p1Lives - 1
+                    if self.p1Lives <= 0 then self.state = "finished" else self:resetRound() end
+                else
+                    self.state = "setup"
+                end
+            end
+        end
+
+        -- Pre-battle GO! countdown (setup → battle transition)
+        if self.state == "pre_battle" then
+            self.preBattleTimer = self.preBattleTimer - dt
+            if self.preBattleTimer <= 0 then
+                self:startBattle()
+            end
+        end
+
+        -- Update timer (always counts down for display; only P1 auto-triggers battle in online mode)
         if self.state == "setup" then
-            -- In online mode only the host's timer auto-triggers the battle.
-            -- The guest waits for "battle_start".
-            local timerActive = not self.isOnline or self.playerRole == 1
-            if timerActive then
-                self.timer = self.timer - dt
-                if self.timer <= 0 then
-                    self.timer = 0
-                    if not self.isOnline then
-                        -- Local mode: start immediately
-                        self.state = "battle"
-                        local allUnits = self.grid:getAllUnits()
-                        for _, unit in ipairs(allUnits) do
-                            unit:onBattleStart(self.grid)
-                        end
-                    else
-                        -- Online host: mark self ready and check
-                        if not self.localReady then
-                            self.localReady = true
-                            self:sendMsg({type = "ready"})
-                            self:checkBattleStart()
-                        end
-                    end
+            self.timer = self.timer - dt
+            if self.timer <= 0 then
+                self.timer = 0
+                if not self.isOnline then
+                    self:beginBattleCountdown()
+                elseif self.playerRole == 1 and not self.localReady then
+                    -- Online host: mark self ready and check
+                    self.localReady = true
+                    self:sendMsg({type = "ready"})
+                    self:checkBattleStart()
                 end
             end
         elseif self.state == "battle" then
@@ -270,9 +412,33 @@ function GameScreen.new()
                 unit:update(dt, self.grid)
             end
 
-            -- Transition to finished once all animations are complete
+            -- Once animations finish, sync with opponent then handle lives
             if self:areAllAnimationsComplete() then
-                self.state = "finished"
+                -- Signal done once (send only once)
+                if not self.localRoundEndReady then
+                    self.localRoundEndReady = true
+                    if self.isOnline then
+                        self:sendMsg({type = "round_end_ready"})
+                    end
+                end
+
+                -- Proceed only when both sides are done
+                local bothDone = self.localRoundEndReady and
+                                 (not self.isOnline or self.opponentRoundEndReady)
+                if bothDone then
+                    self.localRoundEndReady    = false
+                    self.opponentRoundEndReady = false
+                    -- Consolation coins for the losing player (+3)
+                    local loser = (self.winner == 1) and 2 or 1
+                    if self.playerRole == loser then
+                        self.playerCoins = self.playerCoins + 3
+                    end
+
+                    -- Leave bodies on board; apply life deduction after intermission
+                    self.pendingWinner     = self.winner
+                    self.state             = "intermission"
+                    self.intermissionTimer = 2.5
+                end
             end
         end
 
@@ -284,7 +450,7 @@ function GameScreen.new()
         local lg = love.graphics
 
         -- During online setup, hide the opponent's units for the element of surprise.
-        local hideOwner = (self.isOnline and self.state == "setup") and (3 - self.playerRole) or nil
+        local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
 
         -- Draw UI
@@ -323,7 +489,14 @@ function GameScreen.new()
         local stateText = self.state:upper()
         if self.state == "setup" then
             stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
-        elseif (self.state == "battle_ending" or self.state == "finished") and self.winner then
+        elseif self.state == "intermission" then
+            stateText = "ROUND " .. self.roundNumber
+        elseif self.state == "pre_battle" then
+            stateText = "GO!"
+            lg.setColor(0.3, 1, 0.3, 1)
+        elseif self.state == "battle_ending" then
+            stateText = ""
+        elseif self.state == "finished" and self.winner then
             local didWin = (self.winner == self.playerRole)
             stateText = didWin and "YOU WIN!" or "YOU LOSE"
             lg.setColor(didWin and {0.3, 1, 0.3, 1} or {1, 0.3, 0.3, 1})
@@ -344,13 +517,35 @@ function GameScreen.new()
         local topColor    = self.playerRole == 2 and {1, 0.7, 0.5, 1} or {0.5, 0.7, 1, 1}
         local bottomColor = self.playerRole == 2 and {0.5, 0.7, 1, 1} or {1, 0.7, 0.5, 1}
 
+        -- Lives for each visual position
+        local topLives    = (self.playerRole == 1) and self.p2Lives or self.p1Lives
+        local bottomLives = (self.playerRole == 1) and self.p1Lives or self.p2Lives
+
+        -- Helper: draw life pips starting at (x, y), left-to-right, using given color
+        local pipSize = 8 * Constants.SCALE
+        local pipGap  = 4 * Constants.SCALE
+        local function drawLives(x, y, lives, color)
+            for i = 1, 3 do
+                if i <= lives then
+                    lg.setColor(color)
+                else
+                    lg.setColor(0.25, 0.25, 0.25, 1)
+                end
+                lg.rectangle('fill', x + (i - 1) * (pipSize + pipGap),
+                             y, pipSize, pipSize)
+            end
+        end
+
         lg.setColor(topColor)
         lg.print(topLabel, topMargin, topMargin)
+        drawLives(topMargin, topMargin + fontHeight + 3 * Constants.SCALE, topLives, topColor)
 
         lg.setColor(bottomColor)
         local bLabelWidth = Fonts.large:getWidth(bottomLabel)
-        lg.print(bottomLabel, Constants.GAME_WIDTH - bLabelWidth - topMargin,
-                 Constants.GAME_HEIGHT - fontHeight - bottomMargin)
+        local bLabelX = Constants.GAME_WIDTH - bLabelWidth - topMargin
+        lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
+        drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
+                  bottomLives, bottomColor)
 
         -- Coin display in bottom left
         lg.setColor(1, 1, 1, 1)  -- White color
@@ -385,13 +580,8 @@ function GameScreen.new()
                     self:sendMsg({type = "ready"})
                     self:checkBattleStart()
                 else
-                    -- Local mode: start immediately
                     self.timer = 0
-                    self.state = "battle"
-                    local allUnits = self.grid:getAllUnits()
-                    for _, unit in ipairs(allUnits) do
-                        unit:onBattleStart(self.grid)
-                    end
+                    self:beginBattleCountdown()
                 end
             end
 
@@ -465,10 +655,9 @@ function GameScreen.new()
             self.draggedUnitOriginalCol = self.pressedUnitCol
             self.draggedUnitOriginalRow = self.pressedUnitRow
 
-            -- Calculate offset so unit doesn't jump to cursor
-            local Constants = require("src.constants")
-            local unitX = Constants.GRID_OFFSET_X + (self.pressedUnitCol - 1) * Constants.CELL_SIZE
-            local unitY = Constants.GRID_OFFSET_Y + (self.pressedUnitRow - 1) * Constants.CELL_SIZE
+            -- Calculate offset so unit doesn't jump to cursor.
+            -- Use gridToWorld so the perspective flip (P2) is accounted for.
+            local unitX, unitY = self.grid:gridToWorld(self.pressedUnitCol, self.pressedUnitRow)
             self.draggedUnitOffsetX = self.pressX - unitX
             self.draggedUnitOffsetY = self.pressY - unitY
 
@@ -565,6 +754,10 @@ function GameScreen.new()
             local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
             if upgradeIndex then
                 local unit = self.tooltip.unit
+                -- Cannot upgrade enemy units in online mode
+                if self.isOnline and unit.owner ~= self.playerRole then
+                    return
+                end
                 local cost = UnitRegistry.unitCosts[unit.unitType] or 3
                 if self.playerCoins < cost then
                     print("Not enough coins for upgrade")
@@ -608,10 +801,14 @@ function GameScreen.new()
             self.pressedUnit = nil
             self.pressedUnitCol = nil
             self.pressedUnitRow = nil
+            -- Only show upgrade button for units the local player owns
+            local isOwnUnit = not self.isOnline or unit.owner == self.playerRole
             local hasMatchingCard = false
-            for _, card in ipairs(self.cards) do
-                if card.unitType == unit.unitType then
-                    hasMatchingCard = true; break
+            if isOwnUnit then
+                for _, card in ipairs(self.cards) do
+                    if card.unitType == unit.unitType then
+                        hasMatchingCard = true; break
+                    end
                 end
             end
             self.tooltip:toggle(unit, hasMatchingCard)

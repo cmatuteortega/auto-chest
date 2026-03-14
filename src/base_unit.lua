@@ -418,6 +418,26 @@ function BaseUnit:hasUpgrade(upgradeIndex)
     return false
 end
 
+function BaseUnit:resetCombatState()
+    self.health             = self.maxHealth
+    self.isDead             = false
+    self.state              = "idle"
+    self.target             = nil
+    self.path               = nil
+    self.moveTimer          = 0
+    self.attackCooldown     = 0
+    self.tauntedBy          = nil
+    self.tauntTimer         = 0
+    self.isMoving           = false
+    self.startCol           = self.col
+    self.startRow           = self.row
+    self.targetCol          = nil
+    self.targetRow          = nil
+    self.attackAnimProgress = 1
+    self.attackTargetCol    = nil
+    self.attackTargetRow    = nil
+end
+
 function BaseUnit:update(dt, grid)
     -- Update animations even when dead
     if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then

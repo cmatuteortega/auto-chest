@@ -80,6 +80,11 @@ function BaseUnitRanged:new(row, col, owner, sprites, stats)
     self.baseProjectileSpeed = stats.projectileSpeed or 0.2  -- Store base for upgrades
 end
 
+function BaseUnitRanged:resetCombatState()
+    BaseUnitRanged.super.resetCombatState(self)
+    self.arrows = {}
+end
+
 -- Override: Ranged units stop when within attack range (don't need to be adjacent)
 -- Note: Can target enemies even with obstacles between them (projectiles fly over)
 function BaseUnitRanged:findGoalNearTarget(grid, target)
