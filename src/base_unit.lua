@@ -599,7 +599,17 @@ function BaseUnit:findNearestEnemy(grid)
     for _, unit in ipairs(allUnits) do
         if unit.owner ~= self.owner and not unit.isDead then
             local distance = math.sqrt((unit.col - self.col)^2 + (unit.row - self.row)^2)
-            if distance < shortestDistance then
+            -- Primary: closest enemy. Tie-break: lower col → lower row → lower owner.
+            -- Explicit tie-breaking keeps target selection deterministic even when
+            -- multiple equidistant enemies exist.
+            local isBetter = distance < shortestDistance
+            if distance == shortestDistance and nearestEnemy then
+                isBetter = (unit.col < nearestEnemy.col) or
+                           (unit.col == nearestEnemy.col and unit.row < nearestEnemy.row) or
+                           (unit.col == nearestEnemy.col and unit.row == nearestEnemy.row
+                            and unit.owner < nearestEnemy.owner)
+            end
+            if isBetter then
                 shortestDistance = distance
                 nearestEnemy = unit
             end
