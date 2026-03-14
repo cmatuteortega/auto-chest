@@ -80,6 +80,11 @@ function BaseUnitRanged:new(row, col, owner, sprites, stats)
     self.baseProjectileSpeed = stats.projectileSpeed or 0.2  -- Store base for upgrades
 end
 
+function BaseUnitRanged:resetCombatState()
+    BaseUnitRanged.super.resetCombatState(self)
+    self.arrows = {}
+end
+
 -- Override: Ranged units stop when within attack range (don't need to be adjacent)
 -- Note: Can target enemies even with obstacles between them (projectiles fly over)
 function BaseUnitRanged:findGoalNearTarget(grid, target)
@@ -223,11 +228,13 @@ function BaseUnitRanged:drawProjectile(projectile)
     -- Use easing for smooth projectile flight
     local easedProgress = tween.easing.linear(projectile.progress, 0, 1, 1)
 
-    -- Calculate projectile position
+    -- Calculate projectile position (apply perspective flip for visual rows)
+    local startVisualRow  = Constants.toVisualRow(projectile.startRow)
+    local targetVisualRow = Constants.toVisualRow(projectile.targetRow)
     local startX = Constants.GRID_OFFSET_X + (projectile.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local startY = Constants.GRID_OFFSET_Y + (projectile.startRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local startY = Constants.GRID_OFFSET_Y + (startVisualRow - 1)  * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
     local endX = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local endY = Constants.GRID_OFFSET_Y + (projectile.targetRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local endY = Constants.GRID_OFFSET_Y + (targetVisualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
 
     local currentX = startX + (endX - startX) * easedProgress
     local currentY = startY + (endY - startY) * easedProgress

@@ -150,11 +150,15 @@ end
 function BaseUnit:getSprite()
     if self.isDead then
         return self.sprites.dead
-    elseif self.owner == 1 then
-        -- Player 1 units show back sprite (facing up/away)
+    end
+    -- Perspective-aware sprite selection:
+    -- A unit whose owner matches the local player's perspective faces *away*
+    -- (back sprite), and enemy units face *toward* (front sprite).
+    -- This ensures the visual is correct both for P1 and the mirrored P2 view.
+    local perspective = Constants.PERSPECTIVE or 1
+    if self.owner == perspective then
         return self.sprites.back
     else
-        -- Player 2 units show front sprite (facing down/toward player)
         return self.sprites.front
     end
 end
@@ -182,14 +186,17 @@ function BaseUnit:draw()
             drawRow = self.startRow + rowDiff * easedProgress
         end
 
+        -- Apply perspective: convert canonical row to visual (screen) row
+        local visualRow = Constants.toVisualRow(drawRow)
         x = Constants.GRID_OFFSET_X + (drawCol - 1) * Constants.CELL_SIZE
-        y = Constants.GRID_OFFSET_Y + (drawRow - 1) * Constants.CELL_SIZE
+        y = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
     end
 
     -- Apply attack animation (lunge with outBack for punch effect)
     if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then
+        local visualTargetRow = Constants.toVisualRow(self.attackTargetRow)
         local targetX = Constants.GRID_OFFSET_X + (self.attackTargetCol - 1) * Constants.CELL_SIZE
-        local targetY = Constants.GRID_OFFSET_Y + (self.attackTargetRow - 1) * Constants.CELL_SIZE
+        local targetY = Constants.GRID_OFFSET_Y + (visualTargetRow - 1) * Constants.CELL_SIZE
 
         -- Calculate lunge direction
         local dx = targetX - x
@@ -409,6 +416,26 @@ function BaseUnit:hasUpgrade(upgradeIndex)
         end
     end
     return false
+end
+
+function BaseUnit:resetCombatState()
+    self.health             = self.maxHealth
+    self.isDead             = false
+    self.state              = "idle"
+    self.target             = nil
+    self.path               = nil
+    self.moveTimer          = 0
+    self.attackCooldown     = 0
+    self.tauntedBy          = nil
+    self.tauntTimer         = 0
+    self.isMoving           = false
+    self.startCol           = self.col
+    self.startRow           = self.row
+    self.targetCol          = nil
+    self.targetRow          = nil
+    self.attackAnimProgress = 1
+    self.attackTargetCol    = nil
+    self.attackTargetRow    = nil
 end
 
 function BaseUnit:update(dt, grid)

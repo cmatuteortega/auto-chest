@@ -7,8 +7,9 @@ local ScreenManager = require('lib.screen_manager')
 local Constants = require('src.constants')
 
 -- Load screens
-local MenuScreen = require('src.screens.menu')
-local GameScreen = require('src.screens.game')
+local MenuScreen  = require('src.screens.menu')
+local GameScreen  = require('src.screens.game')
+local LobbyScreen = require('src.screens.lobby')
 
 -- Global fonts (loaded once, shared by all screens)
 Fonts = {}
@@ -57,8 +58,9 @@ function love.load()
 
     -- Initialize screen manager with screen table
     local screens = {
-        menu = MenuScreen,
-        game = GameScreen
+        menu  = MenuScreen,
+        game  = GameScreen,
+        lobby = LobbyScreen,
     }
     ScreenManager.init(screens, 'menu')
 
@@ -150,6 +152,10 @@ function love.touchreleased(id, x, y, dx, dy, pressure)
     if x and y then
         ScreenManager.touchreleased(id, x, y, dx, dy, pressure)
     end
+end
+
+function love.textinput(t)
+    ScreenManager.textinput(t)
 end
 
 function love.keypressed(key, scancode, isrepeat)
