@@ -46,6 +46,35 @@ UnitRegistry.passiveDescriptions = {
     marrow = "Gain +0.2 attack speed per kill"
 }
 
+-- Returns display info for a unit type by reading it directly from a dummy
+-- instance. Results are cached so each unit is only instantiated once.
+local _displayInfoCache = {}
+function UnitRegistry.getUnitDisplayInfo(unitType)
+    if _displayInfoCache[unitType] then
+        return _displayInfoCache[unitType]
+    end
+
+    local UnitClass = UnitRegistry.unitClasses[unitType]
+    local dummy = UnitClass(1, 1, 1, {})
+
+    local upgrades = {}
+    for _, u in ipairs(dummy.upgradeTree or {}) do
+        table.insert(upgrades, { name = u.name, description = u.description })
+    end
+
+    local info = {
+        hp        = dummy.health,
+        atk       = dummy.damage,
+        spd       = dummy.attackSpeed,
+        rng       = dummy.attackRange,
+        unitClass = dummy.attackRange > 0 and "Ranged" or "Melee",
+        upgrades  = upgrades,
+    }
+
+    _displayInfoCache[unitType] = info
+    return info
+end
+
 -- Map of unit type names to their costs
 UnitRegistry.unitCosts = {
     boney = 3,
