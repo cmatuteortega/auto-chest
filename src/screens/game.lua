@@ -40,6 +40,10 @@ function GameScreen.new()
         -- Load sprites for all unit types
         self.sprites = UnitRegistry.loadAllSprites()
 
+        -- Load battle background sprite
+        self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
+        self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
+
         -- Create grid
         self.grid = Grid()
 
@@ -393,6 +397,15 @@ function GameScreen.new()
         local unitTypes
         if self.usingDeck then
             unitTypes = DeckManager.drawCards(3)
+            -- In sandbox, loop the deck when the pile runs out
+            if self.isSandbox then
+                while #unitTypes < 3 do
+                    DeckManager.initDrawPile()
+                    local extra = DeckManager.drawCards(3 - #unitTypes)
+                    if #extra == 0 then break end
+                    for _, u in ipairs(extra) do table.insert(unitTypes, u) end
+                end
+            end
         else
             unitTypes = {}
             for _ = 1, 3 do
@@ -541,6 +554,15 @@ function GameScreen.new()
     function self:draw()
         local lg = love.graphics
 
+        -- Draw battle background centered on the grid at unit sprite scale
+        local spriteScale = Constants.CELL_SIZE / 16
+        local bgW = self.bgSprite:getWidth()
+        local bgH = self.bgSprite:getHeight()
+        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
+        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2 + self.bgOffsetY
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(self.bgSprite, bgX, bgY, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
+
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
@@ -684,7 +706,7 @@ function GameScreen.new()
             if rerollButton.hit then
                 if self.isSandbox or self.playerCoins >= self.rerollCost then
                     if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
-                    if self.usingDeck then
+                    if self.usingDeck and not self.isSandbox then
                         local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
                         self.drawnCardTypes = newTypes
                         self:_rebuildCardsFromTypes(newTypes)

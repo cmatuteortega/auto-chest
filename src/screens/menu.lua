@@ -3,6 +3,7 @@
 
 local Screen       = require('lib.screen')
 local Constants    = require('src.constants')
+local Grid         = require('src.grid')
 local UnitRegistry = require('src.unit_registry')
 local DeckManager  = require('src.deck_manager')
 
@@ -62,6 +63,11 @@ function MenuScreen.new()
             self.sprites[utype]           = loaded.front
             self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
         end
+
+        -- Battle panel background
+        self.menuGrid  = Grid()
+        self.bgSprite  = love.graphics.newImage('src/assets/background_battle.png')
+        self.bgSprite:setFilter('nearest', 'nearest')
 
         -- Bottom tab bar icons (order matches panel indices)
         self.uiIcons = {}
@@ -205,15 +211,23 @@ function MenuScreen.new()
         local lg = love.graphics
         local cx = ox + W / 2
 
+        -- Battle background: grid + bg sprite drawn in screen space via panel translation
+        lg.push()
+        lg.translate(ox, 0)
+        local spriteScale = Constants.CELL_SIZE / 16
+        local bgW = self.bgSprite:getWidth()
+        local bgH = self.bgSprite:getHeight()
+        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
+        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(self.bgSprite, bgX, bgY + 42, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
+        self.menuGrid:draw(nil, nil)
+        lg.pop()
+
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, H * 0.22, W, 'center')
-
-        -- Subtitle
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.6, 0.6, 0.65, 1)
-        lg.printf("1v1 Autobattler", ox, H * 0.22 + Fonts.large:getHeight() + 10 * sc, W, 'center')
+        lg.printf("AutoChest", ox, 52 * sc, W, 'center')
 
         -- Server label
         local fieldW = 280 * sc
