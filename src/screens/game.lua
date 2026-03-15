@@ -6,6 +6,7 @@ local Card = require('src.card')
 local suit = require('lib.suit')
 local Tooltip = require('src.tooltip')
 local json = require('lib.json')
+local DeckManager = require('src.deck_manager')
 
 local GameScreen = {}
 
@@ -85,6 +86,10 @@ function GameScreen.new()
         self.cards = {}
         self.draggedCard = nil
 
+        -- Deck draw pile (populated from DeckManager; false = fallback to random)
+        self.usingDeck      = DeckManager.initDrawPile()
+        self.drawnCardTypes = {}
+
         -- Unit dragging (for repositioning during setup)
         self.draggedUnit = nil
         self.draggedUnitOriginalCol = nil
@@ -107,7 +112,7 @@ function GameScreen.new()
         -- Touch tracking (to prevent double-handling on mobile)
         self.activeTouchId = nil
 
-        self:generateCards()
+        self:dealSetupCards()
     end
 
     -- ── Network helpers ───────────────────────────────────────────────────────
@@ -221,7 +226,14 @@ function GameScreen.new()
     end
 
     function self:beginBattleCountdown()
-        self.state         = "pre_battle"
+        -- Return any unplayed drawn cards to the deck pile before battle
+        if self.usingDeck and #self.drawnCardTypes > 0 then
+            DeckManager.returnCards(self.drawnCardTypes)
+            self.drawnCardTypes = {}
+        end
+        self.cards = {}
+
+        self.state          = "pre_battle"
         self.preBattleTimer = 1
     end
 
@@ -289,7 +301,7 @@ function GameScreen.new()
         self.pressedUnit          = nil
         self.pressedCard          = nil
         self.tooltip:hide()
-        self:generateCards()
+        self:dealSetupCards()
 
         self.state = "setup"
         self.timer = 30
@@ -324,6 +336,55 @@ function GameScreen.new()
         local cardsEndX = startX + totalWidth
         self.rerollButtonX = cardsEndX + cardSpacing
         self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
+    end
+
+    -- Build Card objects from an array of unitType strings.
+    -- Pure UI construction — does not interact with DeckManager.
+    function self:_rebuildCardsFromTypes(unitTypes)
+        self.cards = {}
+        local cardWidth   = 80  * Constants.SCALE
+        local cardHeight  = 100 * Constants.SCALE
+        local cardSpacing = 30  * Constants.SCALE
+        local totalWidth  = (cardWidth * 3) + (cardSpacing * 2)
+        local startX      = (Constants.GAME_WIDTH - totalWidth) / 2
+        local bottomMarginPercent = 0.10
+        local cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+
+        for i, unitType in ipairs(unitTypes) do
+            local x      = startX + (i - 1) * (cardWidth + cardSpacing)
+            local sprite = self.sprites[unitType].front
+            local card   = Card(x, cardY, sprite, i, unitType)
+            table.insert(self.cards, card)
+        end
+
+        -- Reroll button position
+        self.rerollButtonSize = 40 * Constants.SCALE
+        local cardsEndX = startX + totalWidth
+        self.rerollButtonX = cardsEndX + cardSpacing
+        self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
+    end
+
+    -- Draw cards from the deck pile (or fall back to random) and display them.
+    -- Returns any leftover unplayed drawn cards from the previous call to the pile first.
+    function self:dealSetupCards()
+        -- Return unplayed cards from last deal back to pile
+        if self.usingDeck and #self.drawnCardTypes > 0 then
+            DeckManager.returnCards(self.drawnCardTypes)
+            self.drawnCardTypes = {}
+        end
+
+        local unitTypes
+        if self.usingDeck then
+            unitTypes = DeckManager.drawCards(3)
+        else
+            unitTypes = {}
+            for _ = 1, 3 do
+                table.insert(unitTypes, UnitRegistry.getRandomUnitType())
+            end
+        end
+
+        self.drawnCardTypes = unitTypes
+        self:_rebuildCardsFromTypes(unitTypes)
     end
 
     function self:update(dt)
@@ -602,7 +663,13 @@ function GameScreen.new()
             if rerollButton.hit then
                 if self.playerCoins >= self.rerollCost then
                     self.playerCoins = self.playerCoins - self.rerollCost
-                    self:generateCards()
+                    if self.usingDeck then
+                        local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
+                        self.drawnCardTypes = newTypes
+                        self:_rebuildCardsFromTypes(newTypes)
+                    else
+                        self:dealSetupCards()
+                    end
                 end
             end
         elseif self.state == "finished" then
@@ -785,7 +852,11 @@ function GameScreen.new()
                             table.remove(self.cards, i); break
                         end
                     end
-                    self:generateCards()
+                    for j, u in ipairs(self.drawnCardTypes) do
+                        if u == unit.unitType then
+                            table.remove(self.drawnCardTypes, j); break
+                        end
+                    end
                     -- Send upgrade over the network
                     self:sendMsg({type = "upgrade_unit",
                                   col = unit.col, row = unit.row,
@@ -894,7 +965,11 @@ function GameScreen.new()
                                     table.remove(self.cards, i); break
                                 end
                             end
-                            self:generateCards()
+                            for j, u in ipairs(self.drawnCardTypes) do
+                                if u == unitType then
+                                    table.remove(self.drawnCardTypes, j); break
+                                end
+                            end
                             self:sendMsg({type = "upgrade_unit",
                                           col = col, row = row,
                                           upgradeIndex = nil})
@@ -917,7 +992,11 @@ function GameScreen.new()
                                     table.remove(self.cards, i); break
                                 end
                             end
-                            self:generateCards()
+                            for j, u in ipairs(self.drawnCardTypes) do
+                                if u == unitType then
+                                    table.remove(self.drawnCardTypes, j); break
+                                end
+                            end
                             self:sendMsg({type = "upgrade_unit",
                                           col = existingUnit.col, row = existingUnit.row,
                                           upgradeIndex = nil})
@@ -935,7 +1014,11 @@ function GameScreen.new()
                                     table.remove(self.cards, i); break
                                 end
                             end
-                            self:generateCards()
+                            for j, u in ipairs(self.drawnCardTypes) do
+                                if u == unitType then
+                                    table.remove(self.drawnCardTypes, j); break
+                                end
+                            end
                             self:sendMsg({type = "place_unit",
                                           unitType = unitType,
                                           col = col, row = row,

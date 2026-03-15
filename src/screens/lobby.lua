@@ -20,7 +20,7 @@ function LobbyScreen.new()
 
     -- ── init ────────────────────────────────────────────────────────────────
 
-    function self:init()
+    function self:init(prefillIp)
         self.client     = nil
         self.status     = "idle"   -- idle | connecting | waiting | matched | error
         self.statusMsg  = "Ingresa la IP del servidor y conecta."
@@ -28,7 +28,7 @@ function LobbyScreen.new()
         self.playerRole = nil
 
         -- IP text-input state
-        self.ipText      = DEFAULT_IP
+        self.ipText      = prefillIp or DEFAULT_IP
         self.inputActive = false
 
         -- Cursor blink
