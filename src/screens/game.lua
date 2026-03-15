@@ -264,6 +264,21 @@ function GameScreen.new()
             table.insert(self.battleUnitsSnapshot, unit)
             unit:onBattleStart(self.grid)
         end
+
+        -- ACTION move system: delay non-action units until all ACTION moves complete
+        local maxActionDuration = 0
+        for _, unit in ipairs(allUnits) do
+            if unit.isActionUnit and unit.actionDuration > maxActionDuration then
+                maxActionDuration = unit.actionDuration
+            end
+        end
+        if maxActionDuration > 0 then
+            for _, unit in ipairs(allUnits) do
+                if not unit.isActionUnit then
+                    unit.actionDelayTimer = maxActionDuration
+                end
+            end
+        end
     end
 
     function self:resetRound()
@@ -724,7 +739,11 @@ function GameScreen.new()
         end
 
         -- Check if we should start dragging a pressed unit (only during setup AND with movement)
-        if self.pressedUnit and not self.draggedUnit and self.state == "setup" and self.hasMoved then
+        -- Enemy units cannot be repositioned; only tap them for tooltip info.
+        local isOwnPressedUnit = not self.pressedUnit
+            or not self.isOnline
+            or self.pressedUnit.owner == self.playerRole
+        if self.pressedUnit and not self.draggedUnit and self.state == "setup" and self.hasMoved and isOwnPressedUnit then
             -- Start dragging the unit
             self.tooltip:hide()
 

@@ -3,6 +3,8 @@ local Boney = require('src.units.boney')
 local Marrow = require('src.units.marrow')
 local Samurai = require('src.units.samurai')
 local Knight = require('src.units.knight')
+local Marc = require('src.units.marc')
+local Bull = require('src.units.bull')
 
 local UnitRegistry = {}
 
@@ -11,7 +13,9 @@ UnitRegistry.unitClasses = {
     boney = Boney,
     marrow = Marrow,
     samurai = Samurai,
-    knight = Knight
+    knight = Knight,
+    marc = Marc,
+    bull = Bull
 }
 
 -- Map of unit type names to their sprite paths
@@ -35,6 +39,16 @@ UnitRegistry.spritePaths = {
         front = "src/assets/knight/front.png",
         back = "src/assets/knight/back.png",
         dead = "src/assets/knight/dead.png"
+    },
+    marc = {
+        front = "src/assets/marc/front.png",
+        back = "src/assets/marc/back.png",
+        dead = "src/assets/marc/dead.png"
+    },
+    bull = {
+        front = "src/assets/bull/front.png",
+        back  = "src/assets/bull/back.png",
+        dead  = "src/assets/bull/dead.png"
     }
 }
 
@@ -43,7 +57,9 @@ UnitRegistry.passiveDescriptions = {
     knight = "Taunt all enemies within 3 cells for 3 seconds at battle start",
     boney = "Deal 2x damage when below 50% HP",
     samurai = "Deal 1.5x damage when no allies are within 2 cells",
-    marrow = "Gain +0.2 attack speed per kill"
+    marrow = "Gain +0.2 attack speed per kill",
+    marc = "Target furthest enemy in range (Sniper Focus)",
+    bull = "Charges forward 4 tiles at battle start, stunning the first enemy hit"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -80,7 +96,9 @@ UnitRegistry.unitCosts = {
     boney = 3,
     marrow = 3,
     samurai = 3,
-    knight = 3
+    knight = 3,
+    marc = 2,
+    bull = 3
 }
 
 -- Load sprites for a specific unit type

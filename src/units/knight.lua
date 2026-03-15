@@ -16,6 +16,10 @@ function Knight:new(row, col, owner, sprites)
 
     Knight.super.new(self, row, col, owner, sprites, stats)
 
+    -- ACTION move identification (taunt resolves at battle start)
+    self.isActionUnit   = true
+    self.actionDuration = 0  -- instant effect, no animation delay needed
+
     -- Upgrade tracking flags
     self.hasHealed = false  -- Track if Mend heal has been used
     self.wasAboveHalfHealth = true  -- Track HP threshold crossing

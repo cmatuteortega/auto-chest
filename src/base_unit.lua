@@ -117,6 +117,13 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.tauntedBy = nil  -- Reference to unit that taunted this unit
     self.tauntTimer = 0   -- Time remaining for taunt effect
 
+    -- ACTION move system
+    self.isActionUnit     = false  -- true for units with ACTION abilities
+    self.actionDuration   = 0      -- seconds this unit's ACTION move takes
+    self.actionDelayTimer = 0      -- delay before this unit starts acting (set by startBattle)
+    -- Stun system
+    self.stunTimer        = 0      -- seconds remaining stunned (cannot move or attack)
+
     -- AI state
     self.target = nil
     self.state = "idle"  -- idle, moving, attacking, dead
@@ -428,6 +435,8 @@ function BaseUnit:resetCombatState()
     self.attackCooldown     = 0
     self.tauntedBy          = nil
     self.tauntTimer         = 0
+    self.stunTimer          = 0
+    self.actionDelayTimer   = 0
     self.isMoving           = false
     self.startCol           = self.col
     self.startRow           = self.row
@@ -460,6 +469,18 @@ function BaseUnit:update(dt, grid)
     -- Dead units don't act
     if self.isDead then
         self.state = "dead"
+        return
+    end
+
+    -- Wait for ACTION moves to resolve before acting
+    if self.actionDelayTimer > 0 then
+        self.actionDelayTimer = self.actionDelayTimer - dt
+        return
+    end
+
+    -- Cannot move or attack while stunned
+    if self.stunTimer > 0 then
+        self.stunTimer = self.stunTimer - dt
         return
     end
 

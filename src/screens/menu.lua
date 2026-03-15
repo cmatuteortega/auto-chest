@@ -50,8 +50,9 @@ function MenuScreen.new()
         self._deckMinusRects  = {}
         self._deckActiveRect  = nil
 
-        -- Load front sprites for collection display
-        self.unitOrder = { "knight", "boney", "samurai", "marrow" }
+        -- Load front sprites for collection display (sorted for stable ordering)
+        self.unitOrder = UnitRegistry.getAllUnitTypes()
+        table.sort(self.unitOrder)
         self.sprites   = {}
         for _, utype in ipairs(self.unitOrder) do
             local img = love.graphics.newImage(UnitRegistry.spritePaths[utype].front)
@@ -166,18 +167,22 @@ function MenuScreen.new()
         local cardW  = 100 * sc
         local cardH  = 130 * sc
         local gapX   = 12  * sc
+        local gapY   = 14  * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
         local startY = 130 * sc
 
-        -- 4 unit cards in a single row
+        -- cards laid out in rows of 4
         self._collectionCards = {}
         for i, utype in ipairs(self.unitOrder) do
-            local cx = startX + (i - 1) * (cardW + gapX)
-            self:drawCollectionCard(cx, startY, cardW, cardH, utype, sc)
+            local col = (i - 1) % cols
+            local row = math.floor((i - 1) / cols)
+            local cx  = startX + col * (cardW + gapX)
+            local cy  = startY + row * (cardH + gapY)
+            self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
             self._collectionCards[i] = {
                 x = cx + self.panelOffset,
-                y = startY,
+                y = cy,
                 w = cardW,
                 h = cardH,
                 utype = utype
@@ -308,7 +313,7 @@ function MenuScreen.new()
         end
 
         -- ── Unit rows ─────────────────────────────────────────────────────────
-        local unitOrder   = { "boney", "marrow", "samurai", "knight" }
+        local unitOrder   = self.unitOrder
         local rowH        = 72 * sc
         local rowsStartY  = 176 * sc
         local rowW        = W - 40 * sc
@@ -815,7 +820,7 @@ function MenuScreen.new()
                     return
                 end
             end
-            local unitOrder = { "boney", "marrow", "samurai", "knight" }
+            local unitOrder = self.unitOrder
             for i, rect in ipairs(self._deckMinusRects) do
                 if x >= rect.x and x <= rect.x + rect.w and
                    y >= rect.y and y <= rect.y + rect.h then
