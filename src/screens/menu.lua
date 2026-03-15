@@ -4,6 +4,7 @@
 local Screen       = require('lib.screen')
 local Constants    = require('src.constants')
 local UnitRegistry = require('src.unit_registry')
+local DeckManager  = require('src.deck_manager')
 
 local MenuScreen = {}
 
@@ -40,6 +41,14 @@ function MenuScreen.new()
         -- Unit detail overlay
         self.showDetail = false
         self.detailUnit = nil   -- unitType string
+
+        -- Deck builder state
+        DeckManager.load()
+        self.selectedDeckSlot = 1
+        self._deckSlotRects   = {}
+        self._deckPlusRects   = {}
+        self._deckMinusRects  = {}
+        self._deckActiveRect  = nil
 
         -- Load front sprites for collection display
         self.unitOrder = { "knight", "boney", "samurai", "marrow" }
@@ -253,12 +262,184 @@ function MenuScreen.new()
 
     function self:drawDecksPanel(ox, W, H, sc)
         local lg = love.graphics
+
+        -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
         lg.printf("Decks", ox, 52 * sc, W, 'center')
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.4, 0.4, 0.45, 1)
-        lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
+
+        -- ── Deck slot tabs ────────────────────────────────────────────────────
+        local tabAreaW = W - 40 * sc
+        local tabW     = tabAreaW / 5
+        local tabH     = 44 * sc
+        local tabY     = 108 * sc
+        local tabStartX = ox + 20 * sc
+
+        self._deckSlotRects = {}
+        for i = 1, 5 do
+            local tx = tabStartX + (i - 1) * tabW
+            if i == self.selectedDeckSlot then
+                lg.setColor(0.18, 0.20, 0.30, 1)
+                roundedRect(tx, tabY, tabW - 4 * sc, tabH, 5, sc)
+                lg.setColor(0.45, 0.48, 0.70, 1)
+                roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 2 * sc)
+            else
+                lg.setColor(0.12, 0.12, 0.18, 1)
+                roundedRect(tx, tabY, tabW - 4 * sc, tabH, 5, sc)
+                lg.setColor(0.28, 0.28, 0.40, 1)
+                roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 1 * sc)
+            end
+            -- Slot label
+            lg.setFont(Fonts.small)
+            lg.setColor(0.85, 0.85, 0.90, 1)
+            lg.printf("D" .. i, tx, tabY + (tabH - Fonts.small:getHeight()) / 2, tabW - 4 * sc, 'center')
+            -- Active deck gold dot
+            if DeckManager._data.activeDeckIndex == i then
+                lg.setColor(0.9, 0.85, 0.2, 1)
+                love.graphics.circle('fill', tx + tabW - 10 * sc, tabY + 8 * sc, 5 * sc)
+            end
+            -- Store hit rect in screen space
+            self._deckSlotRects[i] = {
+                x = tx + self.panelOffset,
+                y = tabY,
+                w = tabW - 4 * sc,
+                h = tabH
+            }
+        end
+
+        -- ── Unit rows ─────────────────────────────────────────────────────────
+        local unitOrder   = { "boney", "marrow", "samurai", "knight" }
+        local rowH        = 72 * sc
+        local rowsStartY  = 176 * sc
+        local rowW        = W - 40 * sc
+        local rowX        = ox + 20 * sc
+        local btnSize     = 36 * sc
+        local countW      = 44 * sc
+        local btnGroupW   = btnSize + countW + btnSize
+        local btnGroupX   = rowX + rowW - btnGroupW - 8 * sc
+
+        local deck = DeckManager.getDeck(self.selectedDeckSlot)
+
+        self._deckPlusRects  = {}
+        self._deckMinusRects = {}
+
+        for i, utype in ipairs(unitOrder) do
+            local ry = rowsStartY + (i - 1) * rowH
+
+            -- Row background
+            lg.setColor(0.14, 0.14, 0.20, 1)
+            roundedRect(rowX, ry, rowW, rowH - 4 * sc, 5, sc)
+            lg.setColor(0.24, 0.24, 0.34, 1)
+            roundedRectLine(rowX, ry, rowW, rowH - 4 * sc, 5, sc, 1 * sc)
+
+            -- Sprite
+            local img = self.sprites[utype]
+            if img then
+                local iw, ih = img:getDimensions()
+                local sprSc  = math.max(1, math.floor(2.5 * sc))
+                local sx     = math.floor(rowX + 10 * sc)
+                local sy     = math.floor(ry + (rowH - 4 * sc - ih * sprSc) / 2)
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(img, sx, sy, 0, sprSc, sprSc)
+            end
+
+            -- Unit name
+            local name = utype:sub(1,1):upper() .. utype:sub(2)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            local nameX = rowX + 52 * sc
+            lg.print(name, nameX, ry + (rowH - 4 * sc - Fonts.small:getHeight()) / 2)
+
+            -- Count
+            local count = deck.counts[utype] or 0
+            lg.setFont(Fonts.medium)
+            lg.setColor(1, 1, 1, 1)
+            local countX = btnGroupX + btnSize
+            lg.printf(tostring(count), countX, ry + (rowH - 4 * sc - Fonts.medium:getHeight()) / 2, countW, 'center')
+
+            -- Minus button
+            local minusBtnX = btnGroupX
+            local minusBtnY = ry + (rowH - 4 * sc - btnSize) / 2
+            lg.setColor(0.20, 0.20, 0.28, 1)
+            roundedRect(minusBtnX, minusBtnY, btnSize, btnSize, 4, sc)
+            lg.setColor(0.38, 0.38, 0.52, 1)
+            roundedRectLine(minusBtnX, minusBtnY, btnSize, btnSize, 4, sc, 1 * sc)
+            lg.setFont(Fonts.medium)
+            lg.setColor(count > 0 and 1 or 0.35, count > 0 and 1 or 0.35, count > 0 and 1 or 0.40, 1)
+            lg.printf("-", minusBtnX, minusBtnY + (btnSize - Fonts.medium:getHeight()) / 2, btnSize, 'center')
+
+            -- Plus button
+            local total = DeckManager.getTotalCount(self.selectedDeckSlot)
+            local plusBtnX = btnGroupX + btnSize + countW
+            lg.setColor(0.20, 0.20, 0.28, 1)
+            roundedRect(plusBtnX, minusBtnY, btnSize, btnSize, 4, sc)
+            lg.setColor(0.38, 0.38, 0.52, 1)
+            roundedRectLine(plusBtnX, minusBtnY, btnSize, btnSize, 4, sc, 1 * sc)
+            lg.setFont(Fonts.medium)
+            lg.setColor(total < 20 and 1 or 0.35, total < 20 and 1 or 0.35, total < 20 and 0.4 or 0.40, 1)
+            lg.printf("+", plusBtnX, minusBtnY + (btnSize - Fonts.medium:getHeight()) / 2, btnSize, 'center')
+
+            -- Hit rects (screen space)
+            self._deckMinusRects[i] = {
+                x = minusBtnX + self.panelOffset,
+                y = minusBtnY,
+                w = btnSize,
+                h = btnSize
+            }
+            self._deckPlusRects[i] = {
+                x = plusBtnX + self.panelOffset,
+                y = minusBtnY,
+                w = btnSize,
+                h = btnSize
+            }
+        end
+
+        -- ── Total counter ─────────────────────────────────────────────────────
+        local total = DeckManager.getTotalCount(self.selectedDeckSlot)
+        local counterY = rowsStartY + 4 * rowH + 8 * sc
+        lg.setFont(Fonts.small)
+        if total >= 20 then
+            lg.setColor(1, 0.4, 0.4, 1)
+        else
+            lg.setColor(0.7, 0.7, 0.75, 1)
+        end
+        lg.printf(total .. " / 20", ox, counterY, W, 'center')
+
+        -- ── Set Active button ─────────────────────────────────────────────────
+        local activeY  = counterY + Fonts.small:getHeight() + 14 * sc
+        local activeBW = 200 * sc
+        local activeBH = 44  * sc
+        local activeBX = ox + (W - activeBW) / 2
+        local isActive = DeckManager._data.activeDeckIndex == self.selectedDeckSlot
+
+        if total == 0 then
+            lg.setColor(0.20, 0.20, 0.25, 1)
+            roundedRect(activeBX, activeY, activeBW, activeBH, 6, sc)
+            lg.setColor(0.30, 0.30, 0.38, 1)
+            roundedRectLine(activeBX, activeY, activeBW, activeBH, 6, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.40, 0.40, 0.46, 1)
+            lg.printf("Set Active", activeBX, activeY + (activeBH - Fonts.small:getHeight()) / 2, activeBW, 'center')
+            self._deckActiveRect = nil
+        elseif isActive then
+            lg.setColor(0.12, 0.42, 0.20, 1)
+            roundedRect(activeBX, activeY, activeBW, activeBH, 6, sc)
+            lg.setColor(0.25, 0.72, 0.38, 1)
+            roundedRectLine(activeBX, activeY, activeBW, activeBH, 6, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.7, 1, 0.75, 1)
+            lg.printf("Active  ✓", activeBX, activeY + (activeBH - Fonts.small:getHeight()) / 2, activeBW, 'center')
+            self._deckActiveRect = { x = activeBX + self.panelOffset, y = activeY, w = activeBW, h = activeBH }
+        else
+            lg.setColor(0.12, 0.25, 0.52, 1)
+            roundedRect(activeBX, activeY, activeBW, activeBH, 6, sc)
+            lg.setColor(0.25, 0.45, 0.85, 1)
+            roundedRectLine(activeBX, activeY, activeBW, activeBH, 6, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(1, 1, 1, 1)
+            lg.printf("Set Active", activeBX, activeY + (activeBH - Fonts.small:getHeight()) / 2, activeBW, 'center')
+            self._deckActiveRect = { x = activeBX + self.panelOffset, y = activeY, w = activeBW, h = activeBH }
+        end
     end
 
     function self:drawRankingPanel(ox, W, H, sc)
@@ -622,6 +803,38 @@ function MenuScreen.new()
                     self.showDetail = true
                     return
                 end
+            end
+        end
+
+        -- Tap: deck builder
+        if self.currentPanel == 2 then
+            for i, rect in ipairs(self._deckSlotRects) do
+                if x >= rect.x and x <= rect.x + rect.w and
+                   y >= rect.y and y <= rect.y + rect.h then
+                    self.selectedDeckSlot = i
+                    return
+                end
+            end
+            local unitOrder = { "boney", "marrow", "samurai", "knight" }
+            for i, rect in ipairs(self._deckMinusRects) do
+                if x >= rect.x and x <= rect.x + rect.w and
+                   y >= rect.y and y <= rect.y + rect.h then
+                    DeckManager.adjustCount(self.selectedDeckSlot, unitOrder[i], -1)
+                    return
+                end
+            end
+            for i, rect in ipairs(self._deckPlusRects) do
+                if x >= rect.x and x <= rect.x + rect.w and
+                   y >= rect.y and y <= rect.y + rect.h then
+                    DeckManager.adjustCount(self.selectedDeckSlot, unitOrder[i], 1)
+                    return
+                end
+            end
+            local ar = self._deckActiveRect
+            if ar and x >= ar.x and x <= ar.x + ar.w and
+                      y >= ar.y and y <= ar.y + ar.h then
+                DeckManager.setActive(self.selectedDeckSlot)
+                return
             end
         end
 
