@@ -18,11 +18,12 @@ function GameScreen.new()
     --   isOnline   (boolean) – true when playing over the network
     --   playerRole (number)  – 1 (host/P1) or 2 (guest/P2)
     --   socket     (table)   – sock.lua Client already connected to the relay server
-    function self:init(isOnline, playerRole, socket)
+    function self:init(isOnline, playerRole, socket, isSandbox)
         -- Online mode setup
         self.isOnline   = isOnline   or false
         self.playerRole = playerRole or 1   -- 1 = local is P1, 2 = local is P2
         self.socket     = socket
+        self.isSandbox  = isSandbox  or false
 
         -- Set rendering perspective so the local player always appears at the bottom
         Constants.PERSPECTIVE = self.playerRole
@@ -425,10 +426,14 @@ function GameScreen.new()
                 self.pendingWinner = nil
                 if w == 1 then
                     self.p2Lives = self.p2Lives - 1
-                    if self.p2Lives <= 0 then self.state = "finished" else self:resetRound() end
+                    if self.p2Lives <= 0 then
+                        if self.isSandbox then self.p2Lives = 3; self:resetRound() else self.state = "finished" end
+                    else self:resetRound() end
                 elseif w == 2 then
                     self.p1Lives = self.p1Lives - 1
-                    if self.p1Lives <= 0 then self.state = "finished" else self:resetRound() end
+                    if self.p1Lives <= 0 then
+                        if self.isSandbox then self.p1Lives = 3; self:resetRound() else self.state = "finished" end
+                    else self:resetRound() end
                 else
                     self.state = "setup"
                 end
@@ -636,7 +641,7 @@ function GameScreen.new()
 
         -- Coin display in bottom left
         lg.setColor(1, 1, 1, 1)  -- White color
-        local coinText = "¤ " .. self.playerCoins
+        local coinText = self.isSandbox and "¤ ∞" or ("¤ " .. self.playerCoins)
         lg.print(coinText, topMargin, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
 
         -- Reset font for buttons
@@ -677,8 +682,8 @@ function GameScreen.new()
                 self.rerollButtonX, self.rerollButtonY,
                 self.rerollButtonSize, self.rerollButtonSize)
             if rerollButton.hit then
-                if self.playerCoins >= self.rerollCost then
-                    self.playerCoins = self.playerCoins - self.rerollCost
+                if self.isSandbox or self.playerCoins >= self.rerollCost then
+                    if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
                     if self.usingDeck then
                         local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
                         self.drawnCardTypes = newTypes
@@ -686,6 +691,18 @@ function GameScreen.new()
                     else
                         self:dealSetupCards()
                     end
+                end
+            end
+            -- Sandbox: MENU button at top-right corner
+            if self.isSandbox then
+                local menuBtnW = Fonts.medium:getWidth("MENU") + 20 * Constants.SCALE
+                local menuBtnH = buttonHeight
+                local menuBtnX = Constants.GAME_WIDTH - menuBtnW - 10 * Constants.SCALE
+                local menuBtn = self.suit:Button("MENU", {id="menu_btn"}, menuBtnX, 6 * Constants.SCALE, menuBtnW, menuBtnH)
+                if menuBtn.hit then
+                    Constants.PERSPECTIVE = 1
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('menu')
                 end
             end
         elseif self.state == "finished" then
@@ -856,7 +873,7 @@ function GameScreen.new()
                     return
                 end
                 local cost = UnitRegistry.unitCosts[unit.unitType] or 3
-                if self.playerCoins < cost then
+                if not self.isSandbox and self.playerCoins < cost then
                     print("Not enough coins for upgrade")
                     self.pressedUnit = nil
                     self.pressedUnitCol = nil
@@ -864,7 +881,7 @@ function GameScreen.new()
                     return
                 end
                 if unit:upgrade(upgradeIndex) then
-                    self.playerCoins = self.playerCoins - cost
+                    if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                     print(string.format("Upgraded %s with upgrade %d to level %d",
                           unit.unitType, upgradeIndex, unit.level))
                     for i, card in ipairs(self.cards) do
@@ -968,7 +985,7 @@ function GameScreen.new()
                 -- In online mode restrict placement to local player's zone
                 if self.isOnline and owner ~= self.playerRole then
                     self.draggedCard:snapBack()
-                elseif self.playerCoins < cost then
+                elseif not self.isSandbox and self.playerCoins < cost then
                     print("Not enough coins")
                     self.draggedCard:snapBack()
                 elseif cell and cell.occupied and cell.unit then
@@ -977,7 +994,7 @@ function GameScreen.new()
                        and targetUnit.owner == owner
                        and targetUnit.level < 3 then
                         if targetUnit:upgrade() then
-                            self.playerCoins = self.playerCoins - cost
+                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             print(string.format("Upgraded Player %d %s to level %d (direct drop)",
                                   owner, unitType, targetUnit.level))
                             for i, card in ipairs(self.cards) do
@@ -1004,7 +1021,7 @@ function GameScreen.new()
                     local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
                     if existingUnit then
                         if existingUnit:upgrade() then
-                            self.playerCoins = self.playerCoins - cost
+                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             print(string.format("Upgraded Player %d %s to level %d",
                                   owner, unitType, existingUnit.level))
                             for i, card in ipairs(self.cards) do
@@ -1028,7 +1045,7 @@ function GameScreen.new()
                         local unitSprites = self.sprites[unitType]
                         local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
                         if self.grid:placeUnit(col, row, unit) then
-                            self.playerCoins = self.playerCoins - cost
+                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             for i, card in ipairs(self.cards) do
                                 if card == self.draggedCard then
                                     table.remove(self.cards, i); break

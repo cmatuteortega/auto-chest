@@ -76,6 +76,7 @@ function MenuScreen.new()
         self._collectionCards = {}
         self._ipFieldRect     = nil
         self._playBtnRect     = nil
+        self._sandboxBtnRect  = nil
         self._detailBackBtn   = nil
         self._tabRects        = {}
 
@@ -264,6 +265,22 @@ function MenuScreen.new()
         self._playBtnRect = {
             x = btnX + self.panelOffset,
             y = btnY,
+            w = btnW,
+            h = btnH
+        }
+
+        -- SANDBOX button
+        local sbtnY = btnY + btnH + 14 * sc
+        lg.setColor(0.45, 0.28, 0.08, 1)
+        roundedRect(btnX, sbtnY, btnW, btnH, 8, sc)
+        lg.setColor(0.70, 0.48, 0.15, 1)
+        roundedRectLine(btnX, sbtnY, btnW, btnH, 8, sc, 2 * sc)
+        lg.setFont(Fonts.medium)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf("SANDBOX", btnX, sbtnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+        self._sandboxBtnRect = {
+            x = btnX + self.panelOffset,
+            y = sbtnY,
             w = btnW,
             h = btnH
         }
@@ -859,6 +876,13 @@ function MenuScreen.new()
                 local ScreenManager = require('lib.screen_manager')
                 local ip = (self.ipText ~= "" and self.ipText) or "127.0.0.1"
                 ScreenManager.switch('lobby', ip)
+                return
+            end
+            local sbtn = self._sandboxBtnRect
+            if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
+                        y >= sbtn.y and y <= sbtn.y + sbtn.h then
+                local ScreenManager = require('lib.screen_manager')
+                ScreenManager.switch('game', false, 1, false, true)
                 return
             end
         end
