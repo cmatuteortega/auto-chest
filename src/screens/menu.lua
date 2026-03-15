@@ -97,7 +97,11 @@ function MenuScreen.new()
         for i = 1, self.NUM_PANELS do
             local target = (i == self.currentPanel) and 1 or 0
             local d = target - self.tabRaiseAnim[i]
-            self.tabRaiseAnim[i] = self.tabRaiseAnim[i] + d * 12 * dt
+            if math.abs(d) < 0.01 then
+                self.tabRaiseAnim[i] = target
+            else
+                self.tabRaiseAnim[i] = self.tabRaiseAnim[i] + d * 12 * dt
+            end
         end
     end
 
@@ -362,7 +366,7 @@ function MenuScreen.new()
             if img then
                 local iw        = img:getWidth()
                 local basePixSc = math.max(2, math.floor(48 * sc / iw))
-                local pixSc     = math.max(basePixSc, math.floor(basePixSc * (1 + raise)))
+                local pixSc     = math.max(basePixSc, math.floor(basePixSc * (1 + math.min(raise, 0.99))))
                 local ix = math.floor(tabCx - iw * pixSc / 2)
                 -- Icon pops above the card when active (intentionally overflows card top)
                 local iy = math.floor(barY + 6 * sc - 56 * sc * raise)
