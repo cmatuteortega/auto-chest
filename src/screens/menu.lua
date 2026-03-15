@@ -15,11 +15,11 @@ function MenuScreen.new()
     function self:init()
         local W = Constants.GAME_WIDTH
 
-        -- Panel state (1=Collection, 2=Play Online, 3=Shop); start on Play
-        self.NUM_PANELS   = 3
-        self.currentPanel = 2
-        self.panelOffset  = -(W)   -- visual X offset of the strip
-        self.targetOffset = -(W)
+        -- Panel state (1=Collection, 2=Decks, 3=Battle, 4=Shop, 5=Ranking); start on Battle
+        self.NUM_PANELS   = 5
+        self.currentPanel = 3
+        self.panelOffset  = -(2 * W)   -- visual X offset of the strip
+        self.targetOffset = -(2 * W)
         self.LERP_SPEED   = 14
 
         -- Swipe detection
@@ -50,11 +50,22 @@ function MenuScreen.new()
             self.sprites[utype] = img
         end
 
+        -- Bottom tab bar icons (order matches panel indices)
+        self.uiIcons = {}
+        for i, name in ipairs({ 'collection', 'decks', 'battle', 'shop', 'ranking' }) do
+            local img = love.graphics.newImage('src/assets/ui/' .. name .. '.png')
+            img:setFilter('nearest', 'nearest')
+            self.uiIcons[i] = img
+        end
+        -- Tab raise animation values: 0 = flat, 1 = fully popped
+        self.tabRaiseAnim = { 0, 0, 1, 0, 0 }  -- panel 3 (Battle) starts active
+
         -- Hit-rect caches (rebuilt each draw, stored in screen coords)
         self._collectionCards = {}
         self._ipFieldRect     = nil
         self._playBtnRect     = nil
         self._detailBackBtn   = nil
+        self._tabRects        = {}
 
         love.keyboard.setKeyRepeat(true)
     end
@@ -80,6 +91,13 @@ function MenuScreen.new()
         else
             local step = diff * self.LERP_SPEED * dt
             self.panelOffset = self.panelOffset + step
+        end
+
+        -- Animate tab raise (active tab pops up, others flatten)
+        for i = 1, self.NUM_PANELS do
+            local target = (i == self.currentPanel) and 1 or 0
+            local d = target - self.tabRaiseAnim[i]
+            self.tabRaiseAnim[i] = self.tabRaiseAnim[i] + d * 12 * dt
         end
     end
 
@@ -229,6 +247,26 @@ function MenuScreen.new()
         }
     end
 
+    function self:drawDecksPanel(ox, W, H, sc)
+        local lg = love.graphics
+        lg.setFont(Fonts.large)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf("Decks", ox, 52 * sc, W, 'center')
+        lg.setFont(Fonts.medium)
+        lg.setColor(0.4, 0.4, 0.45, 1)
+        lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
+    end
+
+    function self:drawRankingPanel(ox, W, H, sc)
+        local lg = love.graphics
+        lg.setFont(Fonts.large)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf("Ranking", ox, 52 * sc, W, 'center')
+        lg.setFont(Fonts.medium)
+        lg.setColor(0.4, 0.4, 0.45, 1)
+        lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
+    end
+
     function self:drawShopPanel(ox, W, H, sc)
         local lg = love.graphics
 
@@ -262,23 +300,89 @@ function MenuScreen.new()
         end
     end
 
-    function self:drawNavDots(W, H, sc)
-        local lg   = love.graphics
-        local r    = 5  * sc
-        local gap  = 16 * sc
-        local n    = self.NUM_PANELS
-        local totW = n * (2 * r) + (n - 1) * gap
-        local startX = (W - totW) / 2
-        local dotY   = H - 28 * sc
+    function self:drawBottomBar(W, H, sc)
+        local lg    = love.graphics
+        local BAR_H = 100 * sc
+        local barY  = H - BAR_H
+        local tabW  = W / self.NUM_PANELS
+        local labels = { "Collection", "Decks", "Battle", "Shop", "Ranking" }
 
-        for i = 1, n do
-            local dx = startX + (i - 1) * (2 * r + gap)
-            if i == self.currentPanel then
-                lg.setColor(1, 1, 1, 1)
-            else
-                lg.setColor(0.35, 0.35, 0.42, 1)
+        -- Bar background
+        lg.setColor(0.10, 0.10, 0.15, 1)
+        lg.rectangle('fill', 0, barY, W, BAR_H)
+        -- Top border line (2px, pixel-art crisp)
+        lg.setColor(0.32, 0.32, 0.45, 1)
+        lg.setLineWidth(2)
+        lg.line(0, barY, W, barY)
+
+        self._tabRects = {}
+
+        for i = 1, self.NUM_PANELS do
+            local raise    = self.tabRaiseAnim[i]
+            local isActive = (i == self.currentPanel)
+            local tabCx    = (i - 0.5) * tabW
+
+            -- Raised pixel-art card (flush, no gaps between tabs)
+            if raise > 0.01 then
+                local popUp = 28 * sc * raise
+                local cardX = math.floor((i - 1) * tabW)
+                local nextX = math.floor(i * tabW)
+                local cardW = nextX - cardX
+                local cardY = math.floor(barY - popUp)
+                local cardH = math.floor(BAR_H + popUp)
+                local brd   = math.max(2, math.floor(3 * sc))
+
+                -- Fill
+                lg.setColor(0.18, 0.20, 0.30, 1)
+                lg.rectangle('fill', cardX, cardY, cardW, cardH)
+
+                -- Outer border (bright, pixel-art frame)
+                lg.setColor(0.45, 0.48, 0.70, 1)
+                lg.setLineWidth(brd)
+                lg.rectangle('line', cardX + brd/2, cardY + brd/2,
+                             cardW - brd, cardH - brd)
+
+                -- Inner top-left highlight (bevel light)
+                lg.setColor(0.60, 0.62, 0.85, 1)
+                lg.setLineWidth(math.max(1, math.floor(sc)))
+                local b1 = brd + math.max(1, math.floor(sc))
+                lg.line(cardX + b1, cardY + cardH - b1,
+                        cardX + b1, cardY + b1,
+                        cardX + cardW - b1, cardY + b1)
+
+                -- Inner bottom-right shadow (bevel dark)
+                lg.setColor(0.08, 0.08, 0.14, 1)
+                lg.line(cardX + b1, cardY + cardH - b1,
+                        cardX + cardW - b1, cardY + cardH - b1,
+                        cardX + cardW - b1, cardY + b1)
             end
-            lg.circle('fill', dx + r, dotY, r)
+
+            -- Icon: integer pixel scale; 2× larger when active
+            local img = self.uiIcons[i]
+            if img then
+                local iw        = img:getWidth()
+                local basePixSc = math.max(2, math.floor(48 * sc / iw))
+                local pixSc     = math.max(basePixSc, math.floor(basePixSc * (1 + raise)))
+                local ix = math.floor(tabCx - iw * pixSc / 2)
+                -- Icon pops above the card when active (intentionally overflows card top)
+                local iy = math.floor(barY + 6 * sc - 56 * sc * raise)
+                lg.setColor(isActive and {1, 1, 1, 1} or {0.38, 0.38, 0.46, 1})
+                lg.draw(img, ix, iy, 0, pixSc, pixSc)
+            end
+
+            -- Label stays at original position
+            lg.setFont(Fonts.tiny)
+            lg.setColor(1, 1, 1, 0.35 + 0.65 * raise)
+            local labelY = barY + 62 * sc - 12 * sc * raise
+            lg.printf(labels[i], tabCx - tabW / 2, labelY, tabW, 'center')
+
+            -- Hit rect
+            self._tabRects[i] = {
+                x = (i - 1) * tabW,
+                y = barY - 30 * sc,
+                w = tabW,
+                h = BAR_H + 30 * sc,
+            }
         end
     end
 
@@ -390,20 +494,23 @@ function MenuScreen.new()
 
         lg.clear(Constants.COLORS.BACKGROUND)
 
-        -- Clip the panel strip to the viewport
-        lg.setScissor(0, 0, W, H)
+        -- Clip panel strip above the bottom bar
+        local barH = 90 * sc
+        lg.setScissor(0, 0, W, H - barH)
         lg.push()
         lg.translate(math.floor(self.panelOffset), 0)
 
-        self:drawCollectionPanel(0,       W, H, sc)
-        self:drawPlayPanel(      W,       W, H, sc)
-        self:drawShopPanel(      2 * W,   W, H, sc)
+        self:drawCollectionPanel(0,       W, H - barH, sc)
+        self:drawDecksPanel(     W,       W, H - barH, sc)
+        self:drawPlayPanel(      2 * W,   W, H - barH, sc)
+        self:drawShopPanel(      3 * W,   W, H - barH, sc)
+        self:drawRankingPanel(   4 * W,   W, H - barH, sc)
 
         lg.pop()
         lg.setScissor()
 
-        -- Nav dots (screen space)
-        self:drawNavDots(W, H, sc)
+        -- Bottom tab bar (screen space)
+        self:drawBottomBar(W, H, sc)
 
         -- Detail overlay (screen space, topmost)
         if self.showDetail then
@@ -424,7 +531,7 @@ function MenuScreen.new()
         if self.showDetail then return end
 
         -- IP field tap (only on Play panel)
-        if self.currentPanel == 2 and self._ipFieldRect then
+        if self.currentPanel == 3 and self._ipFieldRect then
             local f = self._ipFieldRect
             if x >= f.x and x <= f.x + f.w and y >= f.y and y <= f.y + f.h then
                 self.inputActive = true
@@ -491,6 +598,17 @@ function MenuScreen.new()
             return
         end
 
+        -- Tap: bottom tab icons
+        for i, rect in ipairs(self._tabRects) do
+            if x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h then
+                if i ~= self.currentPanel then
+                    self.currentPanel = i
+                    self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
+                end
+                return
+            end
+        end
+
         -- Tap: collection cards
         if self.currentPanel == 1 then
             for _, card in ipairs(self._collectionCards) do
@@ -504,7 +622,7 @@ function MenuScreen.new()
         end
 
         -- Tap: Play Online button
-        if self.currentPanel == 2 then
+        if self.currentPanel == 3 then
             local btn = self._playBtnRect
             if btn and x >= btn.x and x <= btn.x + btn.w and
                        y >= btn.y and y <= btn.y + btn.h then
