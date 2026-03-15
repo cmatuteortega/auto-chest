@@ -7,6 +7,7 @@ local Marc = require('src.units.marc')
 local Bull = require('src.units.bull')
 local Mage   = require('src.units.mage')
 local Amalgam = require('src.units.amalgam')
+local Humerus = require('src.units.humerus')
 
 local UnitRegistry = {}
 
@@ -19,7 +20,8 @@ UnitRegistry.unitClasses = {
     marc = Marc,
     bull   = Bull,
     mage   = Mage,
-    amalgam = Amalgam
+    amalgam = Amalgam,
+    humerus = Humerus
 }
 
 -- Map of unit type names to their sprite paths
@@ -63,6 +65,11 @@ UnitRegistry.spritePaths = {
         front = "src/assets/amalgam/front.png",
         back  = "src/assets/amalgam/back.png",
         dead  = "src/assets/amalgam/dead.png"
+    },
+    humerus = {
+        front = "src/assets/humerus/front.png",
+        back  = "src/assets/humerus/back.png",
+        dead  = "src/assets/humerus/dead.png"
     }
 }
 
@@ -75,7 +82,8 @@ UnitRegistry.passiveDescriptions = {
     marc = "Target furthest enemy in range (Sniper Focus)",
     bull = "Charges forward 4 tiles at battle start, stunning the first enemy hit",
     mage   = "Every 6 hits dealt or received, launches a fireball dealing AoE damage",
-    amalgam = "Cannot die to a single hit; surviving a lethal blow grants 1s invulnerability (10s cooldown)"
+    amalgam  = "Cannot die to a single hit; surviving a lethal blow grants 1s invulnerability (10s cooldown)",
+    humerus  = "Royal Command: allies attacking the same target gain +20% ATK"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -116,7 +124,8 @@ UnitRegistry.unitCosts = {
     marc = 2,
     bull    = 3,
     mage    = 3,
-    amalgam = 3
+    amalgam = 3,
+    humerus = 3
 }
 
 -- Count fully-transparent rows at the bottom of a sprite file.

@@ -115,7 +115,7 @@ function Marc:getDamage(grid)
         end
     end
 
-    return dmg
+    return math.floor(dmg * (self.royalCommandBonus or 1))
 end
 
 -- ============================================================

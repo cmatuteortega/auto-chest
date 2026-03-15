@@ -341,7 +341,7 @@ end
 
 -- Hook: Get damage amount (can be overridden for conditional damage)
 function BaseUnit:getDamage(grid)
-    return self.damage
+    return math.floor(self.damage * (self.royalCommandBonus or 1))
 end
 
 -- Hook: Called when this unit kills an enemy
