@@ -5,7 +5,7 @@ local Marrow = BaseUnitRanged:extend()
 function Marrow:new(row, col, owner, sprites)
     -- Marrow stats: ranged archer
     local stats = {
-        health = 8,
+        health = 7,
         maxHealth = 7,
         damage = 1,
         attackSpeed = 0.7,      -- 1 attack per second

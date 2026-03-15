@@ -125,16 +125,16 @@ end
 
 -- Map of unit type names to their costs
 UnitRegistry.unitCosts = {
-    boney = 3,
+    boney = 2,
     marrow = 3,
     samurai = 3,
     knight = 3,
-    marc = 2,
-    bull    = 3,
+    marc = 3,
+    bull    = 4,
     mage    = 3,
-    amalgam = 3,
-    humerus   = 3,
-    clavicula = 3
+    amalgam = 4,
+    humerus   = 5,
+    clavicula = 4
 }
 
 -- Count fully-transparent rows at the bottom of a sprite file.

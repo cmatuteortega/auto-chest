@@ -6,8 +6,8 @@ local Marc = BaseUnitRanged:extend()
 
 function Marc:new(row, col, owner, sprites)
     local stats = {
-        health          = 7,
-        maxHealth       = 7,
+        health          = 10,
+        maxHealth       = 10,
         damage          = 1,
         attackSpeed     = 0.6,
         moveSpeed       = 1,

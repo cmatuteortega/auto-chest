@@ -5,14 +5,14 @@ local Clavicula = BaseUnitRanged:extend()
 
 -- AoE explosion radius for Cursed Ground (upgrade 3), in cell units
 local EXPLOSION_RADIUS = 2
-local EXPLOSION_DAMAGE = 20
+local EXPLOSION_DAMAGE = 3
 
 function Clavicula:new(row, col, owner, sprites)
     local stats = {
-        health          = 55,
-        maxHealth       = 55,
-        damage          = 10,
-        attackSpeed     = 1 / 1.2,   -- 1 attack per 1.2s ≈ 0.833 attacks/sec
+        health          = 10,
+        maxHealth       = 10,
+        damage          = 1,
+        attackSpeed     = 0.7,        -- 1 attack per ~1.43s
         moveSpeed       = 1,
         attackRange     = 3,
         projectileSpeed = 0.22,

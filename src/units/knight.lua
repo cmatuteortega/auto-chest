@@ -5,8 +5,8 @@ local Knight = BaseUnit:extend()
 function Knight:new(row, col, owner, sprites)
     -- Knight stats: melee fighter
     local stats = {
-        health = 10,
-        maxHealth = 10,
+        health = 12,
+        maxHealth = 12,
         damage = 1,
         attackSpeed = 1,  -- 1 attack per second
         moveSpeed = 1,    -- 1 cell per second

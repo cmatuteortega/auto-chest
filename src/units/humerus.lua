@@ -4,8 +4,8 @@ local Humerus = BaseUnit:extend()
 
 function Humerus:new(row, col, owner, sprites)
     local stats = {
-        health      = 18,
-        maxHealth   = 18,
+        health      = 22,
+        maxHealth   = 22,
         damage      = 4,
         attackSpeed = 0.35,
         moveSpeed   = 1,
