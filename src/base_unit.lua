@@ -246,10 +246,25 @@ function BaseUnit:draw()
     -- Ensure scale is at least 1 to prevent invisible sprites
     scale = math.max(1, scale)
 
-    -- Center horizontally, anchor at bottom of cell (allows taller sprites to overflow upward)
+    -- Determine how many transparent rows sit at the bottom of this sprite.
+    -- All sprites are normalised so their visual bottom lands 3 sprite-pixels above
+    -- the tile floor (matching boney's reference padding).
+    local spriteKey
+    if self.isDead then
+        spriteKey = "dead"
+    elseif self.owner == (Constants.PERSPECTIVE or 1) then
+        spriteKey = "back"
+    else
+        spriteKey = "front"
+    end
+    local trimBottom = self.sprites[spriteKey .. "TrimBottom"] or 0
+    local BOTTOM_MARGIN = 3  -- sprite pixels; keep visual baseline consistent across units
+
+    -- Center horizontally, anchor visual bottom 3 sprite-pixels above tile floor
+    -- (allows taller sprites to overflow upward naturally)
     -- Use floor to ensure pixel-perfect positioning
     local offsetX = math.floor((Constants.CELL_SIZE - spriteWidth * scale) / 2)
-    local offsetY = math.floor(Constants.CELL_SIZE - (spriteHeight * scale))
+    local offsetY = math.floor(Constants.CELL_SIZE - (spriteHeight - trimBottom + BOTTOM_MARGIN) * scale)
 
     lg.draw(sprite, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
 

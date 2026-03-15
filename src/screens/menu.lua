@@ -50,14 +50,16 @@ function MenuScreen.new()
         self._deckMinusRects  = {}
         self._deckActiveRect  = nil
 
-        -- Load front sprites for collection display (sorted for stable ordering)
-        self.unitOrder = UnitRegistry.getAllUnitTypes()
+        -- Load front sprites for collection display (sorted for stable ordering).
+        -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
+        self.unitOrder        = UnitRegistry.getAllUnitTypes()
         table.sort(self.unitOrder)
-        self.sprites   = {}
+        self.sprites          = {}
+        self.spriteTrimBottoms = {}
         for _, utype in ipairs(self.unitOrder) do
-            local img = love.graphics.newImage(UnitRegistry.spritePaths[utype].front)
-            img:setFilter('nearest', 'nearest')
-            self.sprites[utype] = img
+            local loaded = UnitRegistry.loadSprites(utype)
+            self.sprites[utype]           = loaded.front
+            self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
         end
 
         -- Bottom tab bar icons (order matches panel indices)
@@ -141,12 +143,14 @@ function MenuScreen.new()
         local name = utype:sub(1,1):upper() .. utype:sub(2)
         lg.printf(name, cx, cy + 8 * sc, cardW, 'center')
 
-        -- Front sprite (integer scale, centred)
-        local img    = self.sprites[utype]
-        local iw, ih = img:getDimensions()
-        local sprSc  = math.max(1, math.floor(4 * sc))
-        local sx     = math.floor(cx + (cardW - iw * sprSc) / 2)
-        local sy     = math.floor(cy + (cardH - ih * sprSc) / 2 + 6 * sc)
+        -- Front sprite (integer scale, bottom-anchored to card baseline)
+        local img        = self.sprites[utype]
+        local iw, ih     = img:getDimensions()
+        local trimBottom = self.spriteTrimBottoms[utype] or 0
+        local sprSc      = math.max(1, math.floor(4 * sc))
+        local BOTTOM_MARGIN = 3
+        local sx = math.floor(cx + (cardW - iw * sprSc) / 2)
+        local sy = math.floor(cy + cardH - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
         lg.setColor(1, 1, 1, 1)
         lg.draw(img, sx, sy, 0, sprSc, sprSc)
 
@@ -337,13 +341,16 @@ function MenuScreen.new()
             lg.setColor(0.24, 0.24, 0.34, 1)
             roundedRectLine(rowX, ry, rowW, rowH - 4 * sc, 5, sc, 1 * sc)
 
-            -- Sprite
+            -- Sprite (bottom-anchored within row area)
             local img = self.sprites[utype]
             if img then
-                local iw, ih = img:getDimensions()
-                local sprSc  = math.max(1, math.floor(2.5 * sc))
-                local sx     = math.floor(rowX + 10 * sc)
-                local sy     = math.floor(ry + (rowH - 4 * sc - ih * sprSc) / 2)
+                local iw, ih     = img:getDimensions()
+                local trimBottom = self.spriteTrimBottoms[utype] or 0
+                local sprSc      = math.max(1, math.floor(2.5 * sc))
+                local BOTTOM_MARGIN = 3
+                local sx         = math.floor(rowX + 10 * sc)
+                local rowBottom  = ry + rowH - 4 * sc
+                local sy         = math.floor(rowBottom - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
             end
@@ -596,18 +603,19 @@ function MenuScreen.new()
         lg.setColor(0.38, 0.38, 0.55, 1)
         roundedRectLine(panX, panY, panW, panH, 10, sc, 2 * sc)
 
-        -- Large sprite
-        local img    = self.sprites[utype]
-        local iw, ih = img:getDimensions()
-        local sprSc  = math.max(1, math.floor(7 * sc))
-        local imgX   = math.floor(panX + (panW - iw * sprSc) / 2)
-        local imgY   = math.floor(panY + 18 * sc)
+        -- Large sprite (text cursor positioned after visual height, ignoring blank rows)
+        local img        = self.sprites[utype]
+        local iw, ih     = img:getDimensions()
+        local trimBottom = self.spriteTrimBottoms[utype] or 0
+        local sprSc      = math.max(1, math.floor(7 * sc))
+        local imgX       = math.floor(panX + (panW - iw * sprSc) / 2)
+        local imgY       = math.floor(panY + 18 * sc)
         lg.setColor(1, 1, 1, 1)
         lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
 
         local textX = panX + 18 * sc
         local textW = panW - 36 * sc
-        local curY  = imgY + ih * sprSc + 12 * sc
+        local curY  = imgY + (ih - trimBottom) * sprSc + 12 * sc
 
         -- Unit name
         local name = utype:sub(1,1):upper() .. utype:sub(2)

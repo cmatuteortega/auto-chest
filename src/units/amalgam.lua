@@ -88,6 +88,23 @@ function Amalgam:takeDamage(amount)
     end
 end
 
+-- Standard melee attack: lunge animation + damage
+function Amalgam:attack(target, grid)
+    if target and not target.isDead then
+        self.attackAnimProgress = 0
+        self.attackTargetCol    = target.col
+        self.attackTargetRow    = target.row
+
+        target:takeDamage(self:getDamage(grid))
+
+        if target.isDead then
+            local cell = grid:getCell(target.col, target.row)
+            if cell then cell.occupied = false end
+            self:onKill(target)
+        end
+    end
+end
+
 -- AoE burst when invulnerability triggers (upgrade 2)
 function Amalgam:doCorpseExplosion(grid)
     local radius   = 2
@@ -134,31 +151,29 @@ function Amalgam:update(dt, grid)
 end
 
 function Amalgam:drawAttackVisuals()
+    if not (self.invulnTimer > 0) then return end
+
+    local visualRow = Constants.toVisualRow(self.row)
+    local px = Constants.GRID_OFFSET_X + (self.col - 1) * Constants.CELL_SIZE
+    local py = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
+
+    local t     = love.timer.getTime()
+    local pulse = math.abs(math.sin(t * 8)) * 0.25 + 0.45
+    local pad   = 2 * Constants.SCALE
+    local inner = Constants.CELL_SIZE - 2 * Constants.SCALE
+
+    -- LuaLS cannot infer love.graphics method signatures here (no ranged super chain
+    -- to anchor the type). The calls are correct; suppress the false-positive check.
+    ---@diagnostic disable: redundant-parameter
     local lg = love.graphics
-    -- Invulnerability aura
-    if self.invulnTimer > 0 then
-        local visualRow = Constants.toVisualRow(self.row)
-        local px = Constants.GRID_OFFSET_X + (self.col - 1) * Constants.CELL_SIZE
-        local py = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
-
-        -- Pulsing outer glow
-        local t     = love.timer.getTime()
-        local pulse = math.abs(math.sin(t * 8)) * 0.25 + 0.45
-
-        -- Outer halo
-        local pad = 2 * Constants.SCALE
-        local inner = Constants.CELL_SIZE - 2 * Constants.SCALE
-        lg.setColor(0.6, 0.85, 1, pulse * 0.4)
-        lg.rectangle('fill', px - pad, py - pad, Constants.CELL_SIZE + 2 * pad, Constants.CELL_SIZE + 2 * pad)
-
-        -- Sharp border
-        lg.setColor(0.75, 0.95, 1, pulse)
-        lg.setLineWidth(2 * Constants.SCALE)
-        lg.rectangle('line', px + Constants.SCALE, py + Constants.SCALE, inner, inner)
-
-        lg.setLineWidth(1)
-        lg.setColor(1, 1, 1, 1)
-    end
+    lg.setColor(0.6, 0.85, 1, pulse * 0.4)
+    lg.rectangle('fill', px - pad, py - pad, Constants.CELL_SIZE + 2 * pad, Constants.CELL_SIZE + 2 * pad)
+    lg.setColor(0.75, 0.95, 1, pulse)
+    lg.setLineWidth(2 * Constants.SCALE)
+    lg.rectangle('line', px + Constants.SCALE, py + Constants.SCALE, inner, inner)
+    lg.setLineWidth(1)
+    lg.setColor(1, 1, 1, 1)
+    ---@diagnostic enable: redundant-parameter
 end
 
 return Amalgam

@@ -367,8 +367,9 @@ function GameScreen.new()
 
         for i, unitType in ipairs(unitTypes) do
             local x      = startX + (i - 1) * (cardWidth + cardSpacing)
-            local sprite = self.sprites[unitType].front
-            local card   = Card(x, cardY, sprite, i, unitType)
+            local sprite     = self.sprites[unitType].front
+            local trimBottom = self.sprites[unitType].frontTrimBottom or 0
+            local card       = Card(x, cardY, sprite, i, unitType, trimBottom)
             table.insert(self.cards, card)
         end
 

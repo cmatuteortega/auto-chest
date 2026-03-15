@@ -119,6 +119,23 @@ UnitRegistry.unitCosts = {
     amalgam = 3
 }
 
+-- Count fully-transparent rows at the bottom of a sprite file.
+-- Used to normalise the visual baseline across sprites with different amounts of padding.
+local function trimBottomRows(path)
+    local data = love.image.newImageData(path)
+    local w, h = data:getDimensions()
+    local trim = 0
+    for y = h - 1, 0, -1 do
+        local rowEmpty = true
+        for x = 0, w - 1 do
+            local a = select(4, data:getPixel(x, y))
+            if a > 0.01 then rowEmpty = false; break end
+        end
+        if rowEmpty then trim = trim + 1 else break end
+    end
+    return trim
+end
+
 -- Load sprites for a specific unit type
 function UnitRegistry.loadSprites(unitType)
     local paths = UnitRegistry.spritePaths[unitType]
@@ -138,8 +155,12 @@ function UnitRegistry.loadSprites(unitType)
 
     return {
         front = front,
-        back = back,
-        dead = dead
+        back  = back,
+        dead  = dead,
+        -- Transparent row counts used by BaseUnit:draw() for baseline alignment
+        frontTrimBottom = trimBottomRows(paths.front),
+        backTrimBottom  = trimBottomRows(paths.back),
+        deadTrimBottom  = trimBottomRows(paths.dead),
     }
 end
 
