@@ -4,12 +4,13 @@ local UnitRegistry = require('src.unit_registry')
 
 local Card = Class:extend()
 
-function Card:new(x, y, cardSprite, index, unitType)
+function Card:new(x, y, cardSprite, index, unitType, trimBottom)
     self.x = x
     self.y = y
     self.startX = x  -- Original position for snap-back
     self.startY = y
     self.cardSprite = cardSprite
+    self.trimBottom = trimBottom or 0  -- Transparent rows at sprite bottom (for baseline alignment)
     self.index = index
     self.unitType = unitType or "unknown"  -- Type of unit this card will spawn
 
@@ -84,8 +85,10 @@ function Card:draw()
     local spriteWidth = self.cardSprite:getWidth()
     local spriteHeight = self.cardSprite:getHeight()
     local spriteX = math.floor(self.x + (self.width - spriteWidth * spriteScale) / 2)
-    -- Position sprite so its bottom aligns with the bottom of the card
-    local spriteY = math.floor(self.y + self.height - spriteHeight * spriteScale)
+    -- Anchor visual bottom (ignoring transparent padding) 3 sprite-pixels above card bottom,
+    -- matching the same baseline used in BaseUnit:draw() for grid cells.
+    local BOTTOM_MARGIN = 3
+    local spriteY = math.floor(self.y + self.height - (spriteHeight - self.trimBottom + BOTTOM_MARGIN) * spriteScale)
     lg.draw(self.cardSprite, spriteX, spriteY, 0, spriteScale, spriteScale)
 
     -- Cost display below card (only when not dragging)

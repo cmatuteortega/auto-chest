@@ -3,6 +3,12 @@ local Boney = require('src.units.boney')
 local Marrow = require('src.units.marrow')
 local Samurai = require('src.units.samurai')
 local Knight = require('src.units.knight')
+local Marc = require('src.units.marc')
+local Bull = require('src.units.bull')
+local Mage   = require('src.units.mage')
+local Amalgam = require('src.units.amalgam')
+local Humerus   = require('src.units.humerus')
+local Clavicula = require('src.units.clavicula')
 
 local UnitRegistry = {}
 
@@ -11,7 +17,13 @@ UnitRegistry.unitClasses = {
     boney = Boney,
     marrow = Marrow,
     samurai = Samurai,
-    knight = Knight
+    knight = Knight,
+    marc = Marc,
+    bull   = Bull,
+    mage   = Mage,
+    amalgam = Amalgam,
+    humerus   = Humerus,
+    clavicula = Clavicula
 }
 
 -- Map of unit type names to their sprite paths
@@ -35,6 +47,36 @@ UnitRegistry.spritePaths = {
         front = "src/assets/knight/front.png",
         back = "src/assets/knight/back.png",
         dead = "src/assets/knight/dead.png"
+    },
+    marc = {
+        front = "src/assets/marc/front.png",
+        back = "src/assets/marc/back.png",
+        dead = "src/assets/marc/dead.png"
+    },
+    bull = {
+        front = "src/assets/bull/front.png",
+        back  = "src/assets/bull/back.png",
+        dead  = "src/assets/bull/dead.png"
+    },
+    mage = {
+        front = "src/assets/mage/front.png",
+        back  = "src/assets/mage/back.png",
+        dead  = "src/assets/mage/dead.png"
+    },
+    amalgam = {
+        front = "src/assets/amalgam/front.png",
+        back  = "src/assets/amalgam/back.png",
+        dead  = "src/assets/amalgam/dead.png"
+    },
+    humerus = {
+        front = "src/assets/humerus/front.png",
+        back  = "src/assets/humerus/back.png",
+        dead  = "src/assets/humerus/dead.png"
+    },
+    clavicula = {
+        front = "src/assets/clavicula/front.png",
+        back  = "src/assets/clavicula/back.png",
+        dead  = "src/assets/clavicula/dead.png"
     }
 }
 
@@ -43,7 +85,13 @@ UnitRegistry.passiveDescriptions = {
     knight = "Taunt all enemies within 3 cells for 3 seconds at battle start",
     boney = "Deal 2x damage when below 50% HP",
     samurai = "Deal 1.5x damage when no allies are within 2 cells",
-    marrow = "Gain +0.2 attack speed per kill"
+    marrow = "Gain +0.2 attack speed per kill",
+    marc = "Target furthest enemy in range (Sniper Focus)",
+    bull = "Charges forward 4 tiles at battle start, stunning the first enemy hit",
+    mage   = "Every 6 hits dealt or received, launches a fireball dealing AoE damage",
+    amalgam  = "Cannot die to a single hit; surviving a lethal blow grants 1s invulnerability (10s cooldown)",
+    humerus   = "Royal Command: allies attacking the same target gain +20% ATK",
+    clavicula = "Every 6 hits (given or taken), spawns a copy of itself at half HP"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -77,11 +125,34 @@ end
 
 -- Map of unit type names to their costs
 UnitRegistry.unitCosts = {
-    boney = 3,
+    boney = 2,
     marrow = 3,
     samurai = 3,
-    knight = 3
+    knight = 3,
+    marc = 3,
+    bull    = 4,
+    mage    = 3,
+    amalgam = 4,
+    humerus   = 5,
+    clavicula = 4
 }
+
+-- Count fully-transparent rows at the bottom of a sprite file.
+-- Used to normalise the visual baseline across sprites with different amounts of padding.
+local function trimBottomRows(path)
+    local data = love.image.newImageData(path)
+    local w, h = data:getDimensions()
+    local trim = 0
+    for y = h - 1, 0, -1 do
+        local rowEmpty = true
+        for x = 0, w - 1 do
+            local a = select(4, data:getPixel(x, y))
+            if a > 0.01 then rowEmpty = false; break end
+        end
+        if rowEmpty then trim = trim + 1 else break end
+    end
+    return trim
+end
 
 -- Load sprites for a specific unit type
 function UnitRegistry.loadSprites(unitType)
@@ -102,8 +173,12 @@ function UnitRegistry.loadSprites(unitType)
 
     return {
         front = front,
-        back = back,
-        dead = dead
+        back  = back,
+        dead  = dead,
+        -- Transparent row counts used by BaseUnit:draw() for baseline alignment
+        frontTrimBottom = trimBottomRows(paths.front),
+        backTrimBottom  = trimBottomRows(paths.back),
+        deadTrimBottom  = trimBottomRows(paths.dead),
     }
 end
 

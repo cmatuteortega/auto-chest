@@ -1,0 +1,387 @@
+-- Database wrapper for player persistence
+-- Uses lsqlite3 for SQLite operations
+
+-- Set up LuaRocks path
+package.path = package.path .. ';/Users/cmatute1/.luarocks/share/lua/5.1/?.lua;/Users/cmatute1/.luarocks/share/lua/5.1/?/init.lua'
+package.cpath = package.cpath .. ';/Users/cmatute1/.luarocks/lib/lua/5.1/?.so'
+
+local sqlite3 = require("lsqlite3complete")
+local bcrypt = require("bcrypt")
+local json = require("lib.json")  -- Load json once at module level
+
+local Database = {}
+Database.__index = Database
+
+-- Initialize database connection
+function Database.new(dbPath)
+    local self = setmetatable({}, Database)
+
+    -- Open/create database
+    self.db = sqlite3.open(dbPath or "server/players.db")
+
+    if not self.db then
+        error("Failed to open database")
+    end
+
+    -- Create tables if they don't exist
+    self:createTables()
+
+    return self
+end
+
+-- Create database schema
+function Database:createTables()
+    local schema = [[
+        CREATE TABLE IF NOT EXISTS players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            trophies INTEGER DEFAULT 0,
+            coins INTEGER DEFAULT 6,
+            active_deck_index INTEGER,
+            deck1_json TEXT DEFAULT '{"name":"Deck 1","counts":{}}',
+            deck2_json TEXT DEFAULT '{"name":"Deck 2","counts":{}}',
+            deck3_json TEXT DEFAULT '{"name":"Deck 3","counts":{}}',
+            deck4_json TEXT DEFAULT '{"name":"Deck 4","counts":{}}',
+            deck5_json TEXT DEFAULT '{"name":"Deck 5","counts":{}}',
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            last_login INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            player_id INTEGER NOT NULL,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY (player_id) REFERENCES players(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_username ON players(username);
+        CREATE INDEX IF NOT EXISTS idx_session_player ON sessions(player_id);
+    ]]
+
+    local result = self.db:exec(schema)
+    if result ~= sqlite3.OK then
+        error("Failed to create tables: " .. self.db:errmsg())
+    end
+end
+
+-- Register a new player
+function Database:registerPlayer(username, password)
+    -- Check if username already exists
+    local stmt = self.db:prepare("SELECT id FROM players WHERE username = ?")
+    stmt:bind_values(username)
+
+    if stmt:step() == sqlite3.ROW then
+        stmt:finalize()
+        return nil, "Username already taken"
+    end
+    stmt:finalize()
+
+    -- Hash password
+    local hash = bcrypt.digest(password, 10) -- 10 rounds
+
+    -- Insert new player with 5 empty deck slots
+    local emptyDeck = '{"name":"Deck %d","counts":{}}'
+    stmt = self.db:prepare([[
+        INSERT INTO players (username, password_hash, trophies, coins, active_deck_index,
+                           deck1_json, deck2_json, deck3_json, deck4_json, deck5_json)
+        VALUES (?, ?, 0, 6, NULL, ?, ?, ?, ?, ?)
+    ]])
+    stmt:bind_values(username, hash,
+        string.format(emptyDeck, 1),
+        string.format(emptyDeck, 2),
+        string.format(emptyDeck, 3),
+        string.format(emptyDeck, 4),
+        string.format(emptyDeck, 5))
+
+    local result = stmt:step()
+    stmt:finalize()
+
+    if result ~= sqlite3.DONE then
+        return nil, "Failed to create player"
+    end
+
+    -- Get the new player ID
+    local playerId = self.db:last_insert_rowid()
+
+    return {
+        id = playerId,
+        username = username,
+        trophies = 0,
+        coins = 6,
+        activeDeckIndex = nil,
+        decks = {
+            json.decode(string.format(emptyDeck, 1)),
+            json.decode(string.format(emptyDeck, 2)),
+            json.decode(string.format(emptyDeck, 3)),
+            json.decode(string.format(emptyDeck, 4)),
+            json.decode(string.format(emptyDeck, 5))
+        }
+    }
+end
+
+-- Authenticate a player
+function Database:loginPlayer(username, password)
+    local stmt = self.db:prepare([[
+        SELECT id, username, password_hash, trophies, coins, active_deck_index,
+               deck1_json, deck2_json, deck3_json, deck4_json, deck5_json
+        FROM players WHERE username = ?
+    ]])
+    stmt:bind_values(username)
+
+    if stmt:step() ~= sqlite3.ROW then
+        stmt:finalize()
+        return nil, "Invalid credentials"
+    end
+
+    local playerId = stmt:get_value(0)
+    local storedUsername = stmt:get_value(1)
+    local passwordHash = stmt:get_value(2)
+    local trophies = stmt:get_value(3)
+    local coins = stmt:get_value(4)
+    local activeDeckIndex = stmt:get_value(5)
+    local deck1Json = stmt:get_value(6)
+    local deck2Json = stmt:get_value(7)
+    local deck3Json = stmt:get_value(8)
+    local deck4Json = stmt:get_value(9)
+    local deck5Json = stmt:get_value(10)
+    stmt:finalize()
+
+    -- Verify password
+    if not bcrypt.verify(password, passwordHash) then
+        return nil, "Invalid credentials"
+    end
+
+    -- Update last login
+    stmt = self.db:prepare("UPDATE players SET last_login = strftime('%s', 'now') WHERE id = ?")
+    stmt:bind_values(playerId)
+    stmt:step()
+    stmt:finalize()
+
+    -- Parse deck JSONs
+    local decks = {
+        json.decode(deck1Json) or {name = "Deck 1", counts = {}},
+        json.decode(deck2Json) or {name = "Deck 2", counts = {}},
+        json.decode(deck3Json) or {name = "Deck 3", counts = {}},
+        json.decode(deck4Json) or {name = "Deck 4", counts = {}},
+        json.decode(deck5Json) or {name = "Deck 5", counts = {}}
+    }
+
+    return {
+        id = playerId,
+        username = storedUsername,
+        trophies = trophies,
+        coins = coins,
+        activeDeckIndex = activeDeckIndex,
+        decks = decks
+    }
+end
+
+-- Create session token
+function Database:createSession(playerId)
+    -- Generate random token
+    local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    local token = ""
+    for i = 1, 32 do
+        local rand = math.random(1, #chars)
+        token = token .. chars:sub(rand, rand)
+    end
+
+    -- Store session
+    local stmt = self.db:prepare("INSERT INTO sessions (token, player_id) VALUES (?, ?)")
+    stmt:bind_values(token, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    return token
+end
+
+-- Validate session token
+function Database:validateSession(token)
+    local stmt = self.db:prepare([[
+        SELECT s.player_id, p.username, p.trophies, p.coins, p.active_deck_index,
+               p.deck1_json, p.deck2_json, p.deck3_json, p.deck4_json, p.deck5_json
+        FROM sessions s
+        JOIN players p ON s.player_id = p.id
+        WHERE s.token = ?
+    ]])
+    stmt:bind_values(token)
+
+    if stmt:step() ~= sqlite3.ROW then
+        stmt:finalize()
+        return nil
+    end
+
+    local playerId = stmt:get_value(0)
+    local username = stmt:get_value(1)
+    local trophies = stmt:get_value(2)
+    local coins = stmt:get_value(3)
+    local activeDeckIndex = stmt:get_value(4)
+    local deck1Json = stmt:get_value(5)
+    local deck2Json = stmt:get_value(6)
+    local deck3Json = stmt:get_value(7)
+    local deck4Json = stmt:get_value(8)
+    local deck5Json = stmt:get_value(9)
+    stmt:finalize()
+
+    local decks = {
+        json.decode(deck1Json) or {name = "Deck 1", counts = {}},
+        json.decode(deck2Json) or {name = "Deck 2", counts = {}},
+        json.decode(deck3Json) or {name = "Deck 3", counts = {}},
+        json.decode(deck4Json) or {name = "Deck 4", counts = {}},
+        json.decode(deck5Json) or {name = "Deck 5", counts = {}}
+    }
+
+    return {
+        id = playerId,
+        username = username,
+        trophies = trophies,
+        coins = coins,
+        activeDeckIndex = activeDeckIndex,
+        decks = decks
+    }
+end
+
+-- Get player by ID
+function Database:getPlayer(playerId)
+    local stmt = self.db:prepare([[
+        SELECT id, username, trophies, coins, active_deck_index,
+               deck1_json, deck2_json, deck3_json, deck4_json, deck5_json
+        FROM players WHERE id = ?
+    ]])
+    stmt:bind_values(playerId)
+
+    if stmt:step() ~= sqlite3.ROW then
+        stmt:finalize()
+        return nil
+    end
+
+    local id = stmt:get_value(0)
+    local username = stmt:get_value(1)
+    local trophies = stmt:get_value(2)
+    local coins = stmt:get_value(3)
+    local activeDeckIndex = stmt:get_value(4)
+    local deck1Json = stmt:get_value(5)
+    local deck2Json = stmt:get_value(6)
+    local deck3Json = stmt:get_value(7)
+    local deck4Json = stmt:get_value(8)
+    local deck5Json = stmt:get_value(9)
+    stmt:finalize()
+
+    local decks = {
+        json.decode(deck1Json) or {name = "Deck 1", counts = {}},
+        json.decode(deck2Json) or {name = "Deck 2", counts = {}},
+        json.decode(deck3Json) or {name = "Deck 3", counts = {}},
+        json.decode(deck4Json) or {name = "Deck 4", counts = {}},
+        json.decode(deck5Json) or {name = "Deck 5", counts = {}}
+    }
+
+    return {
+        id = id,
+        username = username,
+        trophies = trophies,
+        coins = coins,
+        activeDeckIndex = activeDeckIndex,
+        decks = decks
+    }
+end
+
+-- Update player trophies
+function Database:updateTrophies(playerId, delta)
+    local stmt = self.db:prepare([[
+        UPDATE players
+        SET trophies = MAX(0, trophies + ?)
+        WHERE id = ?
+    ]])
+    stmt:bind_values(delta, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    -- Return new trophy count
+    stmt = self.db:prepare("SELECT trophies FROM players WHERE id = ?")
+    stmt:bind_values(playerId)
+
+    if stmt:step() == sqlite3.ROW then
+        local newTrophies = stmt:get_value(0)
+        stmt:finalize()
+        return newTrophies
+    end
+
+    stmt:finalize()
+    return 0
+end
+
+-- Update a specific deck slot (1-5)
+function Database:updateDeckSlot(playerId, deckIndex, deckData)
+    if deckIndex < 1 or deckIndex > 5 then
+        return false, "Invalid deck index"
+    end
+
+    local deckJson = json.encode(deckData)
+    local columnName = "deck" .. deckIndex .. "_json"
+
+    local stmt = self.db:prepare("UPDATE players SET " .. columnName .. " = ? WHERE id = ?")
+    stmt:bind_values(deckJson, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    return true
+end
+
+-- Update active deck index
+function Database:updateActiveDeck(playerId, deckIndex)
+    local stmt = self.db:prepare("UPDATE players SET active_deck_index = ? WHERE id = ?")
+    stmt:bind_values(deckIndex, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    return true
+end
+
+-- Update all deck data at once (for bulk sync)
+function Database:updateAllDecks(playerId, activeDeckIndex, decks)
+    if #decks ~= 5 then
+        return false, "Must provide exactly 5 decks"
+    end
+
+    local stmt = self.db:prepare([[
+        UPDATE players
+        SET active_deck_index = ?,
+            deck1_json = ?, deck2_json = ?, deck3_json = ?, deck4_json = ?, deck5_json = ?
+        WHERE id = ?
+    ]])
+
+    stmt:bind_values(
+        activeDeckIndex,
+        json.encode(decks[1]),
+        json.encode(decks[2]),
+        json.encode(decks[3]),
+        json.encode(decks[4]),
+        json.encode(decks[5]),
+        playerId
+    )
+
+    stmt:step()
+    stmt:finalize()
+
+    return true
+end
+
+-- Update player coins
+function Database:updateCoins(playerId, coins)
+    local stmt = self.db:prepare("UPDATE players SET coins = ? WHERE id = ?")
+    stmt:bind_values(coins, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    return true
+end
+
+-- Close database connection
+function Database:close()
+    if self.db then
+        self.db:close()
+    end
+end
+
+return Database

@@ -3,6 +3,7 @@
 
 local Screen       = require('lib.screen')
 local Constants    = require('src.constants')
+local Grid         = require('src.grid')
 local UnitRegistry = require('src.unit_registry')
 local DeckManager  = require('src.deck_manager')
 
@@ -32,11 +33,7 @@ function MenuScreen.new()
         self.SWIPE_THRESH = 10   -- px before committing to horizontal drag
         self.SNAP_THRESH  = 60   -- px release delta to switch panel
 
-        -- IP input (Play Online panel)
-        self.ipText       = "127.0.0.1"
-        self.inputActive  = false
-        self.cursorTimer  = 0
-        self.cursorVisible = true
+        -- (IP input removed - now using authentication)
 
         -- Unit detail overlay
         self.showDetail = false
@@ -46,18 +43,27 @@ function MenuScreen.new()
         DeckManager.load()
         self.selectedDeckSlot = 1
         self._deckSlotRects   = {}
-        self._deckPlusRects   = {}
-        self._deckMinusRects  = {}
+        self._deckCardRects   = {}
+        self._deckSaveRect    = nil
         self._deckActiveRect  = nil
+        self._saveFeedback    = 0
 
-        -- Load front sprites for collection display
-        self.unitOrder = { "knight", "boney", "samurai", "marrow" }
-        self.sprites   = {}
+        -- Load front sprites for collection display (sorted for stable ordering).
+        -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
+        self.unitOrder        = UnitRegistry.getAllUnitTypes()
+        table.sort(self.unitOrder)
+        self.sprites          = {}
+        self.spriteTrimBottoms = {}
         for _, utype in ipairs(self.unitOrder) do
-            local img = love.graphics.newImage(UnitRegistry.spritePaths[utype].front)
-            img:setFilter('nearest', 'nearest')
-            self.sprites[utype] = img
+            local loaded = UnitRegistry.loadSprites(utype)
+            self.sprites[utype]           = loaded.front
+            self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
         end
+
+        -- Battle panel background
+        self.menuGrid  = Grid()
+        self.bgSprite  = love.graphics.newImage('src/assets/background_battle.png')
+        self.bgSprite:setFilter('nearest', 'nearest')
 
         -- Bottom tab bar icons (order matches panel indices)
         self.uiIcons = {}
@@ -73,6 +79,7 @@ function MenuScreen.new()
         self._collectionCards = {}
         self._ipFieldRect     = nil
         self._playBtnRect     = nil
+        self._sandboxBtnRect  = nil
         self._detailBackBtn   = nil
         self._tabRects        = {}
 
@@ -86,11 +93,14 @@ function MenuScreen.new()
     -- ── update ──────────────────────────────────────────────────────────────
 
     function self:update(dt)
-        -- Cursor blink
-        self.cursorTimer = self.cursorTimer + dt
-        if self.cursorTimer >= 0.5 then
-            self.cursorTimer   = 0
-            self.cursorVisible = not self.cursorVisible
+        -- Keep socket connection alive
+        if _G.GameSocket then
+            _G.GameSocket:update()
+        end
+
+        -- Save feedback timer
+        if self._saveFeedback > 0 then
+            self._saveFeedback = self._saveFeedback - dt
         end
 
         -- Lerp panel strip toward target
@@ -140,12 +150,14 @@ function MenuScreen.new()
         local name = utype:sub(1,1):upper() .. utype:sub(2)
         lg.printf(name, cx, cy + 8 * sc, cardW, 'center')
 
-        -- Front sprite (integer scale, centred)
-        local img    = self.sprites[utype]
-        local iw, ih = img:getDimensions()
-        local sprSc  = math.max(1, math.floor(4 * sc))
-        local sx     = math.floor(cx + (cardW - iw * sprSc) / 2)
-        local sy     = math.floor(cy + (cardH - ih * sprSc) / 2 + 6 * sc)
+        -- Front sprite (integer scale, bottom-anchored to card baseline)
+        local img        = self.sprites[utype]
+        local iw, ih     = img:getDimensions()
+        local trimBottom = self.spriteTrimBottoms[utype] or 0
+        local sprSc      = math.max(1, math.floor(4 * sc))
+        local BOTTOM_MARGIN = 3
+        local sx = math.floor(cx + (cardW - iw * sprSc) / 2)
+        local sy = math.floor(cy + cardH - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
         lg.setColor(1, 1, 1, 1)
         lg.draw(img, sx, sy, 0, sprSc, sprSc)
 
@@ -166,18 +178,22 @@ function MenuScreen.new()
         local cardW  = 100 * sc
         local cardH  = 130 * sc
         local gapX   = 12  * sc
+        local gapY   = 14  * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
         local startY = 130 * sc
 
-        -- 4 unit cards in a single row
+        -- cards laid out in rows of 4
         self._collectionCards = {}
         for i, utype in ipairs(self.unitOrder) do
-            local cx = startX + (i - 1) * (cardW + gapX)
-            self:drawCollectionCard(cx, startY, cardW, cardH, utype, sc)
+            local col = (i - 1) % cols
+            local row = math.floor((i - 1) / cols)
+            local cx  = startX + col * (cardW + gapX)
+            local cy  = startY + row * (cardH + gapY)
+            self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
             self._collectionCards[i] = {
                 x = cx + self.panelOffset,
-                y = startY,
+                y = cy,
                 w = cardW,
                 h = cardH,
                 utype = utype
@@ -189,60 +205,43 @@ function MenuScreen.new()
         local lg = love.graphics
         local cx = ox + W / 2
 
+        -- Battle background: grid + bg sprite drawn in screen space via panel translation
+        lg.push()
+        lg.translate(ox, 0)
+        local spriteScale = Constants.CELL_SIZE / 16
+        local bgW = self.bgSprite:getWidth()
+        local bgH = self.bgSprite:getHeight()
+        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
+        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(self.bgSprite, bgX, bgY + 42, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
+        self.menuGrid:draw(nil, nil)
+        lg.pop()
+
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, H * 0.22, W, 'center')
+        lg.printf("AutoChest", ox, 52 * sc, W, 'center')
 
-        -- Subtitle
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.6, 0.6, 0.65, 1)
-        lg.printf("1v1 Autobattler", ox, H * 0.22 + Fonts.large:getHeight() + 10 * sc, W, 'center')
+        -- Player info (if logged in)
+        if _G.PlayerData then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.printf(_G.PlayerData.username, ox, 100 * sc, W, 'center')
 
-        -- Server label
-        local fieldW = 280 * sc
-        local fieldH = 42  * sc
-        local fieldX = cx - fieldW / 2
-        local fieldY = H * 0.48
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.9, 0.85, 0.3, 1)
+            lg.printf(_G.PlayerData.trophies .. " trophies", ox, 120 * sc, W, 'center')
 
-        lg.setFont(Fonts.small)
-        lg.setColor(0.65, 0.65, 0.7, 1)
-        lg.printf("Server", fieldX, fieldY - Fonts.small:getHeight() - 6 * sc, fieldW, 'left')
-
-        -- IP input field
-        local active = self.inputActive
-        lg.setColor(active and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
-        roundedRect(fieldX, fieldY, fieldW, fieldH, 5, sc)
-        lg.setColor(active and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
-        roundedRectLine(fieldX, fieldY, fieldW, fieldH, 5, sc, 2 * sc)
-
-        local textPad = 10 * sc
-        local textY   = fieldY + (fieldH - Fonts.small:getHeight()) / 2
-        lg.setFont(Fonts.small)
-        lg.setColor(1, 1, 1, 1)
-        lg.print(self.ipText, fieldX + textPad, textY)
-
-        -- Cursor
-        if active and self.cursorVisible then
-            local tw = Fonts.small:getWidth(self.ipText)
-            lg.setColor(1, 1, 1, 0.85)
-            local cx2 = fieldX + textPad + tw + 1
-            lg.rectangle('fill', cx2, textY + 2 * sc, 2 * sc, Fonts.small:getHeight() - 4 * sc)
+            lg.setColor(0.9, 0.75, 0.2, 1)
+            lg.printf(_G.PlayerData.coins .. " coins", ox, 135 * sc, W, 'center')
         end
-
-        -- Store field rect in screen coords
-        self._ipFieldRect = {
-            x = fieldX + self.panelOffset,
-            y = fieldY,
-            w = fieldW,
-            h = fieldH
-        }
 
         -- PLAY ONLINE button
         local btnW = 240 * sc
         local btnH = 56  * sc
         local btnX = cx - btnW / 2
-        local btnY = fieldY + fieldH + 28 * sc
+        local btnY = H * 0.50  -- Centered position
 
         lg.setColor(0.15, 0.32, 0.65, 1)
         roundedRect(btnX, btnY, btnW, btnH, 8, sc)
@@ -258,6 +257,22 @@ function MenuScreen.new()
             w = btnW,
             h = btnH
         }
+
+        -- SANDBOX button
+        local sbtnY = btnY + btnH + 14 * sc
+        lg.setColor(0.45, 0.28, 0.08, 1)
+        roundedRect(btnX, sbtnY, btnW, btnH, 8, sc)
+        lg.setColor(0.70, 0.48, 0.15, 1)
+        roundedRectLine(btnX, sbtnY, btnW, btnH, 8, sc, 2 * sc)
+        lg.setFont(Fonts.medium)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf("SANDBOX", btnX, sbtnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+        self._sandboxBtnRect = {
+            x = btnX + self.panelOffset,
+            y = sbtnY,
+            w = btnW,
+            h = btnH
+        }
     end
 
     function self:drawDecksPanel(ox, W, H, sc)
@@ -269,10 +284,10 @@ function MenuScreen.new()
         lg.printf("Decks", ox, 52 * sc, W, 'center')
 
         -- ── Deck slot tabs ────────────────────────────────────────────────────
-        local tabAreaW = W - 40 * sc
-        local tabW     = tabAreaW / 5
-        local tabH     = 44 * sc
-        local tabY     = 108 * sc
+        local tabAreaW  = W - 40 * sc
+        local tabW      = tabAreaW / 5
+        local tabH      = 44 * sc
+        local tabY      = 108 * sc
         local tabStartX = ox + 20 * sc
 
         self._deckSlotRects = {}
@@ -289,16 +304,13 @@ function MenuScreen.new()
                 lg.setColor(0.28, 0.28, 0.40, 1)
                 roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 1 * sc)
             end
-            -- Slot label
             lg.setFont(Fonts.small)
             lg.setColor(0.85, 0.85, 0.90, 1)
             lg.printf("D" .. i, tx, tabY + (tabH - Fonts.small:getHeight()) / 2, tabW - 4 * sc, 'center')
-            -- Active deck gold dot
             if DeckManager._data.activeDeckIndex == i then
                 lg.setColor(0.9, 0.85, 0.2, 1)
                 love.graphics.circle('fill', tx + tabW - 10 * sc, tabY + 8 * sc, 5 * sc)
             end
-            -- Store hit rect in screen space
             self._deckSlotRects[i] = {
                 x = tx + self.panelOffset,
                 y = tabY,
@@ -307,138 +319,180 @@ function MenuScreen.new()
             }
         end
 
-        -- ── Unit rows ─────────────────────────────────────────────────────────
-        local unitOrder   = { "boney", "marrow", "samurai", "knight" }
-        local rowH        = 72 * sc
-        local rowsStartY  = 176 * sc
-        local rowW        = W - 40 * sc
-        local rowX        = ox + 20 * sc
-        local btnSize     = 36 * sc
-        local countW      = 44 * sc
-        local btnGroupW   = btnSize + countW + btnSize
-        local btnGroupX   = rowX + rowW - btnGroupW - 8 * sc
+        -- ── Save + Total + Equip row ───────────────────────────────────────────
+        local total    = DeckManager.getTotalCount(self.selectedDeckSlot)
+        local isActive = DeckManager._data.activeDeckIndex == self.selectedDeckSlot
+        local barY     = tabY + tabH + 8 * sc
+        local barH     = 40 * sc
+        local barX     = ox + 20 * sc
+        local barW     = W - 40 * sc
+        local btnW     = 90 * sc
+
+        -- SAVE button
+        local saveX = barX
+        if self._saveFeedback > 0 then
+            lg.setColor(0.10, 0.36, 0.16, 1)
+            roundedRect(saveX, barY, btnW, barH, 5, sc)
+            lg.setColor(0.22, 0.68, 0.34, 1)
+            roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.6, 1, 0.7, 1)
+            lg.printf("Saved!", saveX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+        else
+            lg.setColor(0.16, 0.16, 0.24, 1)
+            roundedRect(saveX, barY, btnW, barH, 5, sc)
+            lg.setColor(0.32, 0.32, 0.48, 1)
+            roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.85, 0.85, 0.90, 1)
+            lg.printf("Save", saveX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+        end
+        self._deckSaveRect = { x = saveX + self.panelOffset, y = barY, w = btnW, h = barH }
+
+        -- Total counter (center)
+        local counterX = barX + btnW + 4 * sc
+        local counterW = barW - 2 * (btnW + 4 * sc)
+        lg.setFont(Fonts.small)
+        lg.setColor(total >= 20 and {1, 0.4, 0.4, 1} or {0.7, 0.7, 0.75, 1})
+        lg.printf(total .. " / 20", counterX, barY + (barH - Fonts.small:getHeight()) / 2, counterW, 'center')
+
+        -- EQUIP button
+        local equipX = barX + barW - btnW
+        if total == 0 then
+            lg.setColor(0.16, 0.16, 0.22, 1)
+            roundedRect(equipX, barY, btnW, barH, 5, sc)
+            lg.setColor(0.26, 0.26, 0.36, 1)
+            roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.38, 0.38, 0.44, 1)
+            lg.printf("Equip", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            self._deckActiveRect = nil
+        elseif isActive then
+            lg.setColor(0.10, 0.38, 0.18, 1)
+            roundedRect(equipX, barY, btnW, barH, 5, sc)
+            lg.setColor(0.22, 0.68, 0.36, 1)
+            roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.7, 1, 0.75, 1)
+            lg.printf("Equip ✓", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
+        else
+            lg.setColor(0.10, 0.22, 0.50, 1)
+            roundedRect(equipX, barY, btnW, barH, 5, sc)
+            lg.setColor(0.22, 0.42, 0.82, 1)
+            roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(1, 1, 1, 1)
+            lg.printf("Equip", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
+        end
+
+        -- ── Unit card grid ────────────────────────────────────────────────────
+        local cols   = 4
+        local cardW  = 108 * sc
+        local cardH  = 138 * sc
+        local gapX   = 8   * sc
+        local gapY   = 10  * sc
+        local totalW = cols * cardW + (cols - 1) * gapX
+        local startX = ox + (W - totalW) / 2
+        local startY = barY + barH + 12 * sc
+        local stripH = 32 * sc
 
         local deck = DeckManager.getDeck(self.selectedDeckSlot)
 
-        self._deckPlusRects  = {}
-        self._deckMinusRects = {}
+        -- Build sorted unit list: count>0 first (desc), then alpha
+        local sortedUnits = {}
+        for _, utype in ipairs(self.unitOrder) do
+            table.insert(sortedUnits, { utype = utype, count = deck.counts[utype] or 0 })
+        end
+        table.sort(sortedUnits, function(a, b)
+            if a.count ~= b.count then return a.count > b.count end
+            return a.utype < b.utype
+        end)
 
-        for i, utype in ipairs(unitOrder) do
-            local ry = rowsStartY + (i - 1) * rowH
+        self._deckCardRects = {}
 
-            -- Row background
+        for i, entry in ipairs(sortedUnits) do
+            local utype = entry.utype
+            local count = entry.count
+            local col   = (i - 1) % cols
+            local row   = math.floor((i - 1) / cols)
+            local cx    = startX + col * (cardW + gapX)
+            local cy    = startY + row * (cardH + gapY)
+
+            -- Card background
             lg.setColor(0.14, 0.14, 0.20, 1)
-            roundedRect(rowX, ry, rowW, rowH - 4 * sc, 5, sc)
-            lg.setColor(0.24, 0.24, 0.34, 1)
-            roundedRectLine(rowX, ry, rowW, rowH - 4 * sc, 5, sc, 1 * sc)
+            roundedRect(cx, cy, cardW, cardH, 6, sc)
+            -- Border: gold if selected, dim if not
+            if count > 0 then
+                lg.setColor(0.75, 0.65, 0.15, 1)
+            else
+                lg.setColor(0.26, 0.26, 0.38, 1)
+            end
+            roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
 
-            -- Sprite
+            -- Unit name
+            lg.setFont(Fonts.small)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            local name = utype:sub(1,1):upper() .. utype:sub(2)
+            lg.printf(name, cx, cy + 6 * sc, cardW, 'center')
+
+            -- Sprite (bottom-anchored above bottom strip)
             local img = self.sprites[utype]
             if img then
-                local iw, ih = img:getDimensions()
-                local sprSc  = math.max(1, math.floor(2.5 * sc))
-                local sx     = math.floor(rowX + 10 * sc)
-                local sy     = math.floor(ry + (rowH - 4 * sc - ih * sprSc) / 2)
+                local iw, ih     = img:getDimensions()
+                local trimBottom = self.spriteTrimBottoms[utype] or 0
+                local sprSc      = math.max(1, math.floor(4 * sc))
+                local BOTTOM_MARGIN = 3
+                local sx = math.floor(cx + (cardW - iw * sprSc) / 2)
+                local spriteBase = cy + cardH - stripH - BOTTOM_MARGIN * sc
+                local sy = math.floor(spriteBase - (ih - trimBottom) * sprSc)
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
             end
 
-            -- Unit name
-            local name = utype:sub(1,1):upper() .. utype:sub(2)
-            lg.setFont(Fonts.small)
-            lg.setColor(0.9, 0.9, 0.9, 1)
-            local nameX = rowX + 52 * sc
-            lg.print(name, nameX, ry + (rowH - 4 * sc - Fonts.small:getHeight()) / 2)
+            -- Bottom strip background
+            local stripY = cy + cardH - stripH
+            lg.setColor(0.10, 0.10, 0.16, 1)
+            love.graphics.rectangle('fill', cx + 2 * sc, stripY, cardW - 4 * sc, stripH - 2 * sc)
 
-            -- Count
-            local count = deck.counts[utype] or 0
+            -- [-] label (left 30%)
+            local minusW = math.floor(cardW * 0.30)
+            lg.setFont(Fonts.medium)
+            if count > 0 then
+                lg.setColor(0.9, 0.9, 0.9, 1)
+            else
+                lg.setColor(0.35, 0.35, 0.40, 1)
+            end
+            lg.printf("-", cx, stripY + (stripH - Fonts.medium:getHeight()) / 2, minusW, 'center')
+
+            -- count (center 40%)
+            local centerW = math.floor(cardW * 0.40)
+            local centerX = cx + minusW
             lg.setFont(Fonts.medium)
             lg.setColor(1, 1, 1, 1)
-            local countX = btnGroupX + btnSize
-            lg.printf(tostring(count), countX, ry + (rowH - 4 * sc - Fonts.medium:getHeight()) / 2, countW, 'center')
+            lg.printf(tostring(count), centerX, stripY + (stripH - Fonts.medium:getHeight()) / 2, centerW, 'center')
 
-            -- Minus button
-            local minusBtnX = btnGroupX
-            local minusBtnY = ry + (rowH - 4 * sc - btnSize) / 2
-            lg.setColor(0.20, 0.20, 0.28, 1)
-            roundedRect(minusBtnX, minusBtnY, btnSize, btnSize, 4, sc)
-            lg.setColor(0.38, 0.38, 0.52, 1)
-            roundedRectLine(minusBtnX, minusBtnY, btnSize, btnSize, 4, sc, 1 * sc)
-            lg.setFont(Fonts.medium)
-            lg.setColor(count > 0 and 1 or 0.35, count > 0 and 1 or 0.35, count > 0 and 1 or 0.40, 1)
-            lg.printf("-", minusBtnX, minusBtnY + (btnSize - Fonts.medium:getHeight()) / 2, btnSize, 'center')
+            -- [+] label (right 30%)
+            local plusW = cardW - minusW - centerW
+            local plusX = cx + minusW + centerW
+            if total < 20 then
+                lg.setColor(0.9, 0.9, 0.9, 1)
+            else
+                lg.setColor(0.35, 0.35, 0.40, 1)
+            end
+            lg.printf("+", plusX, stripY + (stripH - Fonts.medium:getHeight()) / 2, plusW, 'center')
 
-            -- Plus button
-            local total = DeckManager.getTotalCount(self.selectedDeckSlot)
-            local plusBtnX = btnGroupX + btnSize + countW
-            lg.setColor(0.20, 0.20, 0.28, 1)
-            roundedRect(plusBtnX, minusBtnY, btnSize, btnSize, 4, sc)
-            lg.setColor(0.38, 0.38, 0.52, 1)
-            roundedRectLine(plusBtnX, minusBtnY, btnSize, btnSize, 4, sc, 1 * sc)
-            lg.setFont(Fonts.medium)
-            lg.setColor(total < 20 and 1 or 0.35, total < 20 and 1 or 0.35, total < 20 and 0.4 or 0.40, 1)
-            lg.printf("+", plusBtnX, minusBtnY + (btnSize - Fonts.medium:getHeight()) / 2, btnSize, 'center')
-
-            -- Hit rects (screen space)
-            self._deckMinusRects[i] = {
-                x = minusBtnX + self.panelOffset,
-                y = minusBtnY,
-                w = btnSize,
-                h = btnSize
+            -- Hit rect (screen space)
+            self._deckCardRects[i] = {
+                utype  = utype,
+                minusX = cx + self.panelOffset,
+                minusW = minusW,
+                plusX  = cx + minusW + centerW + self.panelOffset,
+                plusW  = plusW,
+                stripY = stripY,
+                stripH = stripH,
             }
-            self._deckPlusRects[i] = {
-                x = plusBtnX + self.panelOffset,
-                y = minusBtnY,
-                w = btnSize,
-                h = btnSize
-            }
-        end
-
-        -- ── Total counter ─────────────────────────────────────────────────────
-        local total = DeckManager.getTotalCount(self.selectedDeckSlot)
-        local counterY = rowsStartY + 4 * rowH + 8 * sc
-        lg.setFont(Fonts.small)
-        if total >= 20 then
-            lg.setColor(1, 0.4, 0.4, 1)
-        else
-            lg.setColor(0.7, 0.7, 0.75, 1)
-        end
-        lg.printf(total .. " / 20", ox, counterY, W, 'center')
-
-        -- ── Set Active button ─────────────────────────────────────────────────
-        local activeY  = counterY + Fonts.small:getHeight() + 14 * sc
-        local activeBW = 200 * sc
-        local activeBH = 44  * sc
-        local activeBX = ox + (W - activeBW) / 2
-        local isActive = DeckManager._data.activeDeckIndex == self.selectedDeckSlot
-
-        if total == 0 then
-            lg.setColor(0.20, 0.20, 0.25, 1)
-            roundedRect(activeBX, activeY, activeBW, activeBH, 6, sc)
-            lg.setColor(0.30, 0.30, 0.38, 1)
-            roundedRectLine(activeBX, activeY, activeBW, activeBH, 6, sc, 2 * sc)
-            lg.setFont(Fonts.small)
-            lg.setColor(0.40, 0.40, 0.46, 1)
-            lg.printf("Set Active", activeBX, activeY + (activeBH - Fonts.small:getHeight()) / 2, activeBW, 'center')
-            self._deckActiveRect = nil
-        elseif isActive then
-            lg.setColor(0.12, 0.42, 0.20, 1)
-            roundedRect(activeBX, activeY, activeBW, activeBH, 6, sc)
-            lg.setColor(0.25, 0.72, 0.38, 1)
-            roundedRectLine(activeBX, activeY, activeBW, activeBH, 6, sc, 2 * sc)
-            lg.setFont(Fonts.small)
-            lg.setColor(0.7, 1, 0.75, 1)
-            lg.printf("Active  ✓", activeBX, activeY + (activeBH - Fonts.small:getHeight()) / 2, activeBW, 'center')
-            self._deckActiveRect = { x = activeBX + self.panelOffset, y = activeY, w = activeBW, h = activeBH }
-        else
-            lg.setColor(0.12, 0.25, 0.52, 1)
-            roundedRect(activeBX, activeY, activeBW, activeBH, 6, sc)
-            lg.setColor(0.25, 0.45, 0.85, 1)
-            roundedRectLine(activeBX, activeY, activeBW, activeBH, 6, sc, 2 * sc)
-            lg.setFont(Fonts.small)
-            lg.setColor(1, 1, 1, 1)
-            lg.printf("Set Active", activeBX, activeY + (activeBH - Fonts.small:getHeight()) / 2, activeBW, 'center')
-            self._deckActiveRect = { x = activeBX + self.panelOffset, y = activeY, w = activeBW, h = activeBH }
         end
     end
 
@@ -591,18 +645,19 @@ function MenuScreen.new()
         lg.setColor(0.38, 0.38, 0.55, 1)
         roundedRectLine(panX, panY, panW, panH, 10, sc, 2 * sc)
 
-        -- Large sprite
-        local img    = self.sprites[utype]
-        local iw, ih = img:getDimensions()
-        local sprSc  = math.max(1, math.floor(7 * sc))
-        local imgX   = math.floor(panX + (panW - iw * sprSc) / 2)
-        local imgY   = math.floor(panY + 18 * sc)
+        -- Large sprite (text cursor positioned after visual height, ignoring blank rows)
+        local img        = self.sprites[utype]
+        local iw, ih     = img:getDimensions()
+        local trimBottom = self.spriteTrimBottoms[utype] or 0
+        local sprSc      = math.max(1, math.floor(7 * sc))
+        local imgX       = math.floor(panX + (panW - iw * sprSc) / 2)
+        local imgY       = math.floor(panY + 18 * sc)
         lg.setColor(1, 1, 1, 1)
         lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
 
         local textX = panX + 18 * sc
         local textW = panW - 36 * sc
-        local curY  = imgY + ih * sprSc + 12 * sc
+        local curY  = imgY + (ih - trimBottom) * sprSc + 12 * sc
 
         -- Unit name
         local name = utype:sub(1,1):upper() .. utype:sub(2)
@@ -714,16 +769,6 @@ function MenuScreen.new()
 
         -- Overlay absorbs all presses
         if self.showDetail then return end
-
-        -- IP field tap (only on Play panel)
-        if self.currentPanel == 3 and self._ipFieldRect then
-            local f = self._ipFieldRect
-            if x >= f.x and x <= f.x + f.w and y >= f.y and y <= f.y + f.h then
-                self.inputActive = true
-                return
-            end
-        end
-        self.inputActive = false
     end
 
     function self:handleMove(x, y)
@@ -808,6 +853,7 @@ function MenuScreen.new()
 
         -- Tap: deck builder
         if self.currentPanel == 2 then
+            -- Deck slot tabs
             for i, rect in ipairs(self._deckSlotRects) do
                 if x >= rect.x and x <= rect.x + rect.w and
                    y >= rect.y and y <= rect.y + rect.h then
@@ -815,26 +861,32 @@ function MenuScreen.new()
                     return
                 end
             end
-            local unitOrder = { "boney", "marrow", "samurai", "knight" }
-            for i, rect in ipairs(self._deckMinusRects) do
-                if x >= rect.x and x <= rect.x + rect.w and
-                   y >= rect.y and y <= rect.y + rect.h then
-                    DeckManager.adjustCount(self.selectedDeckSlot, unitOrder[i], -1)
-                    return
-                end
+            -- Save button
+            local sv = self._deckSaveRect
+            if sv and x >= sv.x and x <= sv.x + sv.w and
+                      y >= sv.y and y <= sv.y + sv.h then
+                DeckManager.save()
+                self._saveFeedback = 1.5
+                return
             end
-            for i, rect in ipairs(self._deckPlusRects) do
-                if x >= rect.x and x <= rect.x + rect.w and
-                   y >= rect.y and y <= rect.y + rect.h then
-                    DeckManager.adjustCount(self.selectedDeckSlot, unitOrder[i], 1)
-                    return
-                end
-            end
+            -- Equip button
             local ar = self._deckActiveRect
             if ar and x >= ar.x and x <= ar.x + ar.w and
                       y >= ar.y and y <= ar.y + ar.h then
                 DeckManager.setActive(self.selectedDeckSlot)
                 return
+            end
+            -- Card minus/plus strips
+            for _, cr in ipairs(self._deckCardRects) do
+                if y >= cr.stripY and y <= cr.stripY + cr.stripH then
+                    if x >= cr.minusX and x <= cr.minusX + cr.minusW then
+                        DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, -1)
+                        return
+                    elseif x >= cr.plusX and x <= cr.plusX + cr.plusW then
+                        DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, 1)
+                        return
+                    end
+                end
             end
         end
 
@@ -843,9 +895,21 @@ function MenuScreen.new()
             local btn = self._playBtnRect
             if btn and x >= btn.x and x <= btn.x + btn.w and
                        y >= btn.y and y <= btn.y + btn.h then
+                if _G.GameSocket then
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('lobby', _G.GameSocket)
+                else
+                    -- Not logged in, go to login screen
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('login')
+                end
+                return
+            end
+            local sbtn = self._sandboxBtnRect
+            if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
+                        y >= sbtn.y and y <= sbtn.y + sbtn.h then
                 local ScreenManager = require('lib.screen_manager')
-                local ip = (self.ipText ~= "" and self.ipText) or "127.0.0.1"
-                ScreenManager.switch('lobby', ip)
+                ScreenManager.switch('game', false, 1, false, true)
                 return
             end
         end
@@ -870,26 +934,13 @@ function MenuScreen.new()
         self:handleRelease(x, y)
     end
 
-    function self:textinput(t)
-        if not self.inputActive then return end
-        self.ipText = self.ipText .. t
-    end
-
     function self:keypressed(key)
         if key == "escape" then
             if self.showDetail then
                 self.showDetail = false
                 self.detailUnit = nil
-            else
-                self.inputActive = false
             end
             return
-        end
-        if not self.inputActive then return end
-        if key == "backspace" then
-            self.ipText = self.ipText:sub(1, -2)
-        elseif key == "return" or key == "kpenter" then
-            self.inputActive = false
         end
     end
 

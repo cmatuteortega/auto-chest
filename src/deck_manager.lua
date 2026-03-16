@@ -1,13 +1,13 @@
 -- DeckManager – Persistent deck storage and runtime draw-pile management
 
-local json = require('lib.json')
+local json         = require('lib.json')
+local UnitRegistry = require('src.unit_registry')
 
 local DeckManager = {}
 
-local SAVE_FILE  = "decks.json"
-local MAX_CARDS  = 20
-local NUM_SLOTS  = 5
-local UNIT_TYPES = { "boney", "marrow", "samurai", "knight" }
+local SAVE_FILE = "decks.json"
+local MAX_CARDS = 20
+local NUM_SLOTS = 5
 
 -- Persistent data (survives screen switches within one session)
 DeckManager._data = nil
@@ -19,7 +19,7 @@ DeckManager._drawPile = {}
 
 local function emptyDeck(i)
     local counts = {}
-    for _, u in ipairs(UNIT_TYPES) do counts[u] = 0 end
+    for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do counts[u] = 0 end
     return { name = "Deck " .. i, counts = counts }
 end
 
@@ -33,6 +33,15 @@ function DeckManager.reset()
 end
 
 function DeckManager.save()
+    -- If logged in, sync to server
+    if _G.PlayerData and _G.GameSocket then
+        _G.GameSocket:send("sync_decks", {
+            active_deck_index = DeckManager._data.activeDeckIndex,
+            decks = DeckManager._data.decks
+        })
+    end
+
+    -- Always save locally as backup
     local ok, encoded = pcall(json.encode, DeckManager._data)
     if ok then
         love.filesystem.write(SAVE_FILE, encoded)
@@ -40,13 +49,35 @@ function DeckManager.save()
 end
 
 function DeckManager.load()
+    -- If logged in, load from server data
+    if _G.PlayerData and _G.PlayerData.decks then
+        DeckManager._data = {
+            activeDeckIndex = _G.PlayerData.activeDeckIndex,
+            decks = _G.PlayerData.decks
+        }
+
+        -- Ensure all unit type keys exist in each deck (forward-compat)
+        for i = 1, NUM_SLOTS do
+            if not DeckManager._data.decks[i] then
+                DeckManager._data.decks[i] = emptyDeck(i)
+            end
+            for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do
+                if not DeckManager._data.decks[i].counts[u] then
+                    DeckManager._data.decks[i].counts[u] = 0
+                end
+            end
+        end
+        return
+    end
+
+    -- Otherwise, load from local file
     local content = love.filesystem.read(SAVE_FILE)
     if content then
         local ok, data = pcall(json.decode, content)
         if ok and data and data.decks and #data.decks == NUM_SLOTS then
             -- Ensure all unit type keys exist in each deck (forward-compat)
             for i = 1, NUM_SLOTS do
-                for _, u in ipairs(UNIT_TYPES) do
+                for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do
                     if not data.decks[i].counts[u] then
                         data.decks[i].counts[u] = 0
                     end
@@ -75,8 +106,8 @@ end
 function DeckManager.getTotalCount(deckIndex)
     local deck = DeckManager._data.decks[deckIndex]
     local total = 0
-    for _, u in ipairs(UNIT_TYPES) do
-        total = total + (deck.counts[u] or 0)
+    for _, count in pairs(deck.counts) do
+        total = total + count
     end
     return total
 end
@@ -122,8 +153,7 @@ function DeckManager.initDrawPile()
     if total == 0 then return false end
 
     -- Expand counts into flat array
-    for _, unitType in ipairs(UNIT_TYPES) do
-        local count = deck.counts[unitType] or 0
+    for unitType, count in pairs(deck.counts) do
         for _ = 1, count do
             table.insert(DeckManager._drawPile, unitType)
         end

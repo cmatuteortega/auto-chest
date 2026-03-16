@@ -117,6 +117,13 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.tauntedBy = nil  -- Reference to unit that taunted this unit
     self.tauntTimer = 0   -- Time remaining for taunt effect
 
+    -- ACTION move system
+    self.isActionUnit     = false  -- true for units with ACTION abilities
+    self.actionDuration   = 0      -- seconds this unit's ACTION move takes
+    self.actionDelayTimer = 0      -- delay before this unit starts acting (set by startBattle)
+    -- Stun system
+    self.stunTimer        = 0      -- seconds remaining stunned (cannot move or attack)
+
     -- AI state
     self.target = nil
     self.state = "idle"  -- idle, moving, attacking, dead
@@ -239,10 +246,25 @@ function BaseUnit:draw()
     -- Ensure scale is at least 1 to prevent invisible sprites
     scale = math.max(1, scale)
 
-    -- Center horizontally, anchor at bottom of cell (allows taller sprites to overflow upward)
+    -- Determine how many transparent rows sit at the bottom of this sprite.
+    -- All sprites are normalised so their visual bottom lands 3 sprite-pixels above
+    -- the tile floor (matching boney's reference padding).
+    local spriteKey
+    if self.isDead then
+        spriteKey = "dead"
+    elseif self.owner == (Constants.PERSPECTIVE or 1) then
+        spriteKey = "back"
+    else
+        spriteKey = "front"
+    end
+    local trimBottom = self.sprites[spriteKey .. "TrimBottom"] or 0
+    local BOTTOM_MARGIN = 3  -- sprite pixels; keep visual baseline consistent across units
+
+    -- Center horizontally, anchor visual bottom 3 sprite-pixels above tile floor
+    -- (allows taller sprites to overflow upward naturally)
     -- Use floor to ensure pixel-perfect positioning
     local offsetX = math.floor((Constants.CELL_SIZE - spriteWidth * scale) / 2)
-    local offsetY = math.floor(Constants.CELL_SIZE - (spriteHeight * scale))
+    local offsetY = math.floor(Constants.CELL_SIZE - (spriteHeight - trimBottom + BOTTOM_MARGIN) * scale)
 
     lg.draw(sprite, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
 
@@ -319,7 +341,7 @@ end
 
 -- Hook: Get damage amount (can be overridden for conditional damage)
 function BaseUnit:getDamage(grid)
-    return self.damage
+    return math.floor(self.damage * (self.royalCommandBonus or 1))
 end
 
 -- Hook: Called when this unit kills an enemy
@@ -428,6 +450,8 @@ function BaseUnit:resetCombatState()
     self.attackCooldown     = 0
     self.tauntedBy          = nil
     self.tauntTimer         = 0
+    self.stunTimer          = 0
+    self.actionDelayTimer   = 0
     self.isMoving           = false
     self.startCol           = self.col
     self.startRow           = self.row
@@ -460,6 +484,18 @@ function BaseUnit:update(dt, grid)
     -- Dead units don't act
     if self.isDead then
         self.state = "dead"
+        return
+    end
+
+    -- Wait for ACTION moves to resolve before acting
+    if self.actionDelayTimer > 0 then
+        self.actionDelayTimer = self.actionDelayTimer - dt
+        return
+    end
+
+    -- Cannot move or attack while stunned
+    if self.stunTimer > 0 then
+        self.stunTimer = self.stunTimer - dt
         return
     end
 

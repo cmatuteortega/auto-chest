@@ -5,8 +5,8 @@ local Knight = BaseUnit:extend()
 function Knight:new(row, col, owner, sprites)
     -- Knight stats: melee fighter
     local stats = {
-        health = 10,
-        maxHealth = 10,
+        health = 12,
+        maxHealth = 12,
         damage = 1,
         attackSpeed = 1,  -- 1 attack per second
         moveSpeed = 1,    -- 1 cell per second
@@ -15,6 +15,10 @@ function Knight:new(row, col, owner, sprites)
     }
 
     Knight.super.new(self, row, col, owner, sprites, stats)
+
+    -- ACTION move identification (taunt resolves at battle start)
+    self.isActionUnit   = true
+    self.actionDuration = 0  -- instant effect, no animation delay needed
 
     -- Upgrade tracking flags
     self.hasHealed = false  -- Track if Mend heal has been used

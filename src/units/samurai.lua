@@ -81,7 +81,7 @@ function Samurai:getDamage(grid)
         baseDamage = baseDamage + self.damageFromAlliedDeaths
     end
 
-    return baseDamage
+    return math.floor(baseDamage * (self.royalCommandBonus or 1))
 end
 
 -- Override update to track ally deaths for Vengeance upgrade

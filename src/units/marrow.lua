@@ -5,7 +5,7 @@ local Marrow = BaseUnitRanged:extend()
 function Marrow:new(row, col, owner, sprites)
     -- Marrow stats: ranged archer
     local stats = {
-        health = 8,
+        health = 7,
         maxHealth = 7,
         damage = 1,
         attackSpeed = 0.7,      -- 1 attack per second
@@ -51,10 +51,11 @@ end
 
 -- Override getDamage to apply damage boost from upgrade 2
 function Marrow:getDamage(grid)
+    local mult = self.royalCommandBonus or 1
     if self:hasUpgrade(2) and self.damageBoostTimer > 0 then
-        return math.floor(self.damage * 1.5)
+        return math.floor(self.damage * 1.5 * mult)
     end
-    return self.damage
+    return math.floor(self.damage * mult)
 end
 
 -- Override update to decrement damage boost timer

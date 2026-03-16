@@ -18,14 +18,25 @@ function GameScreen.new()
     --   isOnline   (boolean) – true when playing over the network
     --   playerRole (number)  – 1 (host/P1) or 2 (guest/P2)
     --   socket     (table)   – sock.lua Client already connected to the relay server
-    function self:init(isOnline, playerRole, socket)
+    function self:init(isOnline, playerRole, socket, isSandbox)
         -- Online mode setup
         self.isOnline   = isOnline   or false
         self.playerRole = playerRole or 1   -- 1 = local is P1, 2 = local is P2
         self.socket     = socket
+        self.isSandbox  = isSandbox  or false
 
         -- Set rendering perspective so the local player always appears at the bottom
         Constants.PERSPECTIVE = self.playerRole
+
+        -- Player & opponent info (for trophy display)
+        self.playerName = _G.PlayerData and _G.PlayerData.username or "Player"
+        self.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
+        self.opponentName = _G.OpponentData and _G.OpponentData.name or "Opponent"
+        self.opponentTrophies = _G.OpponentData and _G.OpponentData.trophies or 0
+
+        -- Trophy changes (calculated when match ends)
+        self.trophyChange = nil
+        self.matchResultSent = false
 
         -- Opponent ready / battle-start tracking (online only)
         self.localReady    = false
@@ -38,6 +49,10 @@ function GameScreen.new()
 
         -- Load sprites for all unit types
         self.sprites = UnitRegistry.loadAllSprites()
+
+        -- Load battle background sprite
+        self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
+        self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
 
         -- Create grid
         self.grid = Grid()
@@ -264,6 +279,21 @@ function GameScreen.new()
             table.insert(self.battleUnitsSnapshot, unit)
             unit:onBattleStart(self.grid)
         end
+
+        -- ACTION move system: delay non-action units until all ACTION moves complete
+        local maxActionDuration = 0
+        for _, unit in ipairs(allUnits) do
+            if unit.isActionUnit and unit.actionDuration > maxActionDuration then
+                maxActionDuration = unit.actionDuration
+            end
+        end
+        if maxActionDuration > 0 then
+            for _, unit in ipairs(allUnits) do
+                if not unit.isActionUnit then
+                    unit.actionDelayTimer = maxActionDuration
+                end
+            end
+        end
     end
 
     function self:resetRound()
@@ -352,8 +382,9 @@ function GameScreen.new()
 
         for i, unitType in ipairs(unitTypes) do
             local x      = startX + (i - 1) * (cardWidth + cardSpacing)
-            local sprite = self.sprites[unitType].front
-            local card   = Card(x, cardY, sprite, i, unitType)
+            local sprite     = self.sprites[unitType].front
+            local trimBottom = self.sprites[unitType].frontTrimBottom or 0
+            local card       = Card(x, cardY, sprite, i, unitType, trimBottom)
             table.insert(self.cards, card)
         end
 
@@ -376,6 +407,15 @@ function GameScreen.new()
         local unitTypes
         if self.usingDeck then
             unitTypes = DeckManager.drawCards(3)
+            -- In sandbox, loop the deck when the pile runs out
+            if self.isSandbox then
+                while #unitTypes < 3 do
+                    DeckManager.initDrawPile()
+                    local extra = DeckManager.drawCards(3 - #unitTypes)
+                    if #extra == 0 then break end
+                    for _, u in ipairs(extra) do table.insert(unitTypes, u) end
+                end
+            end
         else
             unitTypes = {}
             for _ = 1, 3 do
@@ -387,6 +427,34 @@ function GameScreen.new()
         self:_rebuildCardsFromTypes(unitTypes)
     end
 
+    -- Helper: Enter finished state with trophy calculation
+    function self:enterFinishedState(winnerId)
+        self.state = "finished"
+        self.winner = winnerId
+
+        -- Calculate trophy change (only in online mode, not sandbox)
+        if self.isOnline and not self.isSandbox and not self.trophyChange then
+            local didWin = (winnerId == self.playerRole)
+            self.trophyChange = didWin and 20 or -15
+
+            -- Send match result to server (once)
+            if not self.matchResultSent then
+                self.matchResultSent = true
+                if self.socket then
+                    self.socket:send("match_result", {
+                        winner_id = _G.PlayerData.id and (didWin and _G.PlayerData.id or nil) or 0
+                    })
+                end
+
+                -- Update local trophy count
+                self.playerTrophies = math.max(0, self.playerTrophies + self.trophyChange)
+                if _G.PlayerData then
+                    _G.PlayerData.trophies = self.playerTrophies
+                end
+            end
+        end
+    end
+
     function self:update(dt)
         -- Poll network (must happen every frame)
         if self.isOnline and self.socket then
@@ -396,8 +464,7 @@ function GameScreen.new()
         -- Opponent disconnected mid-game
         if self.opponentDisconnected and self.state ~= "finished" then
             self.opponentDisconnected = false
-            self.winner    = self.playerRole   -- local player wins by forfeit
-            self.state     = "finished"
+            self:enterFinishedState(self.playerRole)  -- local player wins by forfeit
             self.statusMsg = "Oponente desconectado. ¡Ganaste!"
         end
 
@@ -409,10 +476,14 @@ function GameScreen.new()
                 self.pendingWinner = nil
                 if w == 1 then
                     self.p2Lives = self.p2Lives - 1
-                    if self.p2Lives <= 0 then self.state = "finished" else self:resetRound() end
+                    if self.p2Lives <= 0 then
+                        if self.isSandbox then self.p2Lives = 3; self:resetRound() else self:enterFinishedState(1) end
+                    else self:resetRound() end
                 elseif w == 2 then
                     self.p1Lives = self.p1Lives - 1
-                    if self.p1Lives <= 0 then self.state = "finished" else self:resetRound() end
+                    if self.p1Lives <= 0 then
+                        if self.isSandbox then self.p1Lives = 3; self:resetRound() else self:enterFinishedState(2) end
+                    else self:resetRound() end
                 else
                     self.state = "setup"
                 end
@@ -520,6 +591,15 @@ function GameScreen.new()
     function self:draw()
         local lg = love.graphics
 
+        -- Draw battle background centered on the grid at unit sprite scale
+        local spriteScale = Constants.CELL_SIZE / 16
+        local bgW = self.bgSprite:getWidth()
+        local bgH = self.bgSprite:getHeight()
+        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
+        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2 + self.bgOffsetY
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(self.bgSprite, bgX, bgY, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
+
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
@@ -575,6 +655,15 @@ function GameScreen.new()
         local stateTextY = Constants.GAME_HEIGHT * 0.025  -- 2.5% from top
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
+        -- Trophy change (if in finished state and online mode)
+        if self.state == "finished" and self.trophyChange and self.isOnline and not self.isSandbox then
+            local trophyText = (self.trophyChange >= 0 and "+" or "") .. self.trophyChange .. " trophies"
+            lg.setFont(Fonts.medium)
+            local trophyColor = self.trophyChange >= 0 and {0.4, 1, 0.4, 1} or {1, 0.5, 0.5, 1}
+            lg.setColor(trophyColor)
+            lg.printf(trophyText, 0, stateTextY + Fonts.large:getHeight() + 10 * Constants.SCALE, Constants.GAME_WIDTH, 'center')
+        end
+
         -- Player labels (proportional positioning)
         -- In online mode the local player is always shown at the bottom right.
         lg.setFont(Fonts.large)
@@ -583,8 +672,10 @@ function GameScreen.new()
         local bottomMargin = topMargin
 
         -- Determine which label goes where based on perspective
-        local topLabel    = self.playerRole == 2 and "P1" or "P2"
-        local bottomLabel = self.playerRole == 2 and "P2" or "P1"
+        local topLabel     = self.opponentName  -- Opponent always at top
+        local bottomLabel  = self.playerName    -- Player always at bottom
+        local topTrophies  = self.opponentTrophies
+        local bottomTrophies = self.playerTrophies
         local topColor    = self.playerRole == 2 and {1, 0.7, 0.5, 1} or {0.5, 0.7, 1, 1}
         local bottomColor = self.playerRole == 2 and {0.5, 0.7, 1, 1} or {1, 0.7, 0.5, 1}
 
@@ -607,20 +698,31 @@ function GameScreen.new()
             end
         end
 
+        -- Top player (opponent)
         lg.setColor(topColor)
         lg.print(topLabel, topMargin, topMargin)
-        drawLives(topMargin, topMargin + fontHeight + 3 * Constants.SCALE, topLives, topColor)
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.9, 0.85, 0.3, 1)
+        lg.print(topTrophies .. " trophies", topMargin, topMargin + Fonts.large:getHeight())
+        drawLives(topMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
 
+        -- Bottom player (you)
+        lg.setFont(Fonts.large)
         lg.setColor(bottomColor)
         local bLabelWidth = Fonts.large:getWidth(bottomLabel)
         local bLabelX = Constants.GAME_WIDTH - bLabelWidth - topMargin
         lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.9, 0.85, 0.3, 1)
+        local trophyText = bottomTrophies .. " trophies"
+        local trophyW = Fonts.tiny:getWidth(trophyText)
+        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - topMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 
         -- Coin display in bottom left
         lg.setColor(1, 1, 1, 1)  -- White color
-        local coinText = "¤ " .. self.playerCoins
+        local coinText = self.isSandbox and "¤ ∞" or ("¤ " .. self.playerCoins)
         lg.print(coinText, topMargin, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
 
         -- Reset font for buttons
@@ -661,15 +763,27 @@ function GameScreen.new()
                 self.rerollButtonX, self.rerollButtonY,
                 self.rerollButtonSize, self.rerollButtonSize)
             if rerollButton.hit then
-                if self.playerCoins >= self.rerollCost then
-                    self.playerCoins = self.playerCoins - self.rerollCost
-                    if self.usingDeck then
+                if self.isSandbox or self.playerCoins >= self.rerollCost then
+                    if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
+                    if self.usingDeck and not self.isSandbox then
                         local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
                         self.drawnCardTypes = newTypes
                         self:_rebuildCardsFromTypes(newTypes)
                     else
                         self:dealSetupCards()
                     end
+                end
+            end
+            -- Sandbox: MENU button at top-right corner
+            if self.isSandbox then
+                local menuBtnW = Fonts.medium:getWidth("MENU") + 20 * Constants.SCALE
+                local menuBtnH = buttonHeight
+                local menuBtnX = Constants.GAME_WIDTH - menuBtnW - 10 * Constants.SCALE
+                local menuBtn = self.suit:Button("MENU", {id="menu_btn"}, menuBtnX, 6 * Constants.SCALE, menuBtnW, menuBtnH)
+                if menuBtn.hit then
+                    Constants.PERSPECTIVE = 1
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('menu')
                 end
             end
         elseif self.state == "finished" then
@@ -724,7 +838,11 @@ function GameScreen.new()
         end
 
         -- Check if we should start dragging a pressed unit (only during setup AND with movement)
-        if self.pressedUnit and not self.draggedUnit and self.state == "setup" and self.hasMoved then
+        -- Enemy units cannot be repositioned; only tap them for tooltip info.
+        local isOwnPressedUnit = not self.pressedUnit
+            or not self.isOnline
+            or self.pressedUnit.owner == self.playerRole
+        if self.pressedUnit and not self.draggedUnit and self.state == "setup" and self.hasMoved and isOwnPressedUnit then
             -- Start dragging the unit
             self.tooltip:hide()
 
@@ -836,7 +954,7 @@ function GameScreen.new()
                     return
                 end
                 local cost = UnitRegistry.unitCosts[unit.unitType] or 3
-                if self.playerCoins < cost then
+                if not self.isSandbox and self.playerCoins < cost then
                     print("Not enough coins for upgrade")
                     self.pressedUnit = nil
                     self.pressedUnitCol = nil
@@ -844,7 +962,7 @@ function GameScreen.new()
                     return
                 end
                 if unit:upgrade(upgradeIndex) then
-                    self.playerCoins = self.playerCoins - cost
+                    if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                     print(string.format("Upgraded %s with upgrade %d to level %d",
                           unit.unitType, upgradeIndex, unit.level))
                     for i, card in ipairs(self.cards) do
@@ -948,7 +1066,7 @@ function GameScreen.new()
                 -- In online mode restrict placement to local player's zone
                 if self.isOnline and owner ~= self.playerRole then
                     self.draggedCard:snapBack()
-                elseif self.playerCoins < cost then
+                elseif not self.isSandbox and self.playerCoins < cost then
                     print("Not enough coins")
                     self.draggedCard:snapBack()
                 elseif cell and cell.occupied and cell.unit then
@@ -957,7 +1075,7 @@ function GameScreen.new()
                        and targetUnit.owner == owner
                        and targetUnit.level < 3 then
                         if targetUnit:upgrade() then
-                            self.playerCoins = self.playerCoins - cost
+                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             print(string.format("Upgraded Player %d %s to level %d (direct drop)",
                                   owner, unitType, targetUnit.level))
                             for i, card in ipairs(self.cards) do
@@ -984,7 +1102,7 @@ function GameScreen.new()
                     local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
                     if existingUnit then
                         if existingUnit:upgrade() then
-                            self.playerCoins = self.playerCoins - cost
+                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             print(string.format("Upgraded Player %d %s to level %d",
                                   owner, unitType, existingUnit.level))
                             for i, card in ipairs(self.cards) do
@@ -1008,7 +1126,7 @@ function GameScreen.new()
                         local unitSprites = self.sprites[unitType]
                         local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
                         if self.grid:placeUnit(col, row, unit) then
-                            self.playerCoins = self.playerCoins - cost
+                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             for i, card in ipairs(self.cards) do
                                 if card == self.draggedCard then
                                     table.remove(self.cards, i); break

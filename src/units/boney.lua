@@ -5,8 +5,8 @@ local Boney = BaseUnit:extend()
 function Boney:new(row, col, owner, sprites)
     -- Boney stats: melee fighter
     local stats = {
-        health = 10,
-        maxHealth = 10,
+        health = 8,
+        maxHealth = 8,
         damage = 1,
         attackSpeed = 1,  -- 1 attack per second
         moveSpeed = 1,    -- 1 cell per second
@@ -51,15 +51,15 @@ end
 
 -- Passive: Double damage when below 50% HP (or 3x with Desperation upgrade)
 function Boney:getDamage(grid)
+    local mult = self.royalCommandBonus or 1
     if self.health < self.maxHealth * 0.5 then
-        -- Check if Desperation upgrade (upgrade 3) is active
         if self:hasUpgrade(3) then
-            return self.damage * 3  -- Desperation: 3x damage
+            return math.floor(self.damage * 3 * mult)
         else
-            return self.damage * 2  -- Base passive: 2x damage
+            return math.floor(self.damage * 2 * mult)
         end
     end
-    return self.damage
+    return math.floor(self.damage * mult)
 end
 
 
