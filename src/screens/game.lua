@@ -29,9 +29,9 @@ function GameScreen.new()
         Constants.PERSPECTIVE = self.playerRole
 
         -- Player & opponent info (for trophy display)
-        self.playerName = _G.PlayerData and _G.PlayerData.username or "Player"
+        self.playerName = _G.PlayerData and _G.PlayerData.username or "You"
         self.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
-        self.opponentName = _G.OpponentData and _G.OpponentData.name or "Opponent"
+        self.opponentName = _G.OpponentData and _G.OpponentData.name or "Foe"
         self.opponentTrophies = _G.OpponentData and _G.OpponentData.trophies or 0
 
         -- Trophy changes (calculated when match ends)
@@ -346,9 +346,10 @@ function GameScreen.new()
         local totalWidth = (cardWidth * 3) + (cardSpacing * 2)
         local startX = (Constants.GAME_WIDTH - totalWidth) / 2
 
-        -- Position cards with 15% bottom margin (matching grid's 15% top margin)
+        -- Position cards with 10% bottom margin
         local bottomMarginPercent = 0.10
-        local cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+        self.cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+        local cardY = self.cardY
 
         for i = 1, 3 do
             local x = startX + (i - 1) * (cardWidth + cardSpacing)
@@ -378,7 +379,8 @@ function GameScreen.new()
         local totalWidth  = (cardWidth * 3) + (cardSpacing * 2)
         local startX      = (Constants.GAME_WIDTH - totalWidth) / 2
         local bottomMarginPercent = 0.10
-        local cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+        self.cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+        local cardY = self.cardY
 
         for i, unitType in ipairs(unitTypes) do
             local x      = startX + (i - 1) * (cardWidth + cardSpacing)
@@ -720,7 +722,8 @@ function GameScreen.new()
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 
-        -- Coin display in bottom left
+        -- Coin display in bottom left (uses same font size as player name)
+        lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)  -- White color
         local coinText = self.isSandbox and "¤ ∞" or ("¤ " .. self.playerCoins)
         lg.print(coinText, topMargin, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
@@ -730,8 +733,9 @@ function GameScreen.new()
 
         -- Button dimensions (scaled proportionally)
         local buttonHeight = 40 * Constants.SCALE
-        local buttonSpacing = 20 * Constants.SCALE
-        local buttonY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT + buttonSpacing
+        -- Position button at middle height between grid bottom and card top
+        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+        local buttonY = ((gridBottom + self.cardY) / 2) - (buttonHeight / 2)
 
         -- Buttons
         if self.state == "setup" then
