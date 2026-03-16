@@ -326,6 +326,37 @@ local function handleMessage(peer, eventName, msgData)
 
         pushLog("Match result: Winner +" .. 20 .. ", Loser -" .. 15)
 
+        -- Clean up rooms so both peers can re-queue immediately
+        rooms[tostring(room.partner)] = nil
+        rooms[tostring(peer)] = nil
+
+    elseif eventName == "reconnect_with_token" then
+        local token = msgData.token
+        if not token or not db then
+            peer:send(encode("login_failed", {reason = "No token"}))
+            return
+        end
+        local player = db:validateSession(token)
+        if player then
+            sessions[tostring(peer)] = {
+                player_id = player.id,
+                username = player.username,
+                token = token
+            }
+            peer:send(encode("login_success", {
+                player_id = player.id,
+                username = player.username,
+                trophies = player.trophies,
+                coins = player.coins,
+                active_deck_index = player.activeDeckIndex,
+                decks = player.decks,
+                token = token
+            }))
+            pushLog("Reconnect: " .. player.username)
+        else
+            peer:send(encode("login_failed", {reason = "Invalid or expired token"}))
+        end
+
     elseif eventName == "relay" then
         -- Forward game messages to partner
         local room = rooms[tostring(peer)]

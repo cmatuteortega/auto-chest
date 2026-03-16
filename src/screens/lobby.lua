@@ -37,17 +37,17 @@ function LobbyScreen.new()
     end
 
     function self:registerNetworkCallbacks()
-        self.client:on("queue_joined", function()
+        self._cb_queueJoined = self.client:on("queue_joined", function()
             self.status = "queueing"
             self.statusMsg = "Finding match..."
             print("Queue joined")
         end)
 
-        self.client:on("queue_left", function()
+        self._cb_queueLeft = self.client:on("queue_left", function()
             print("Queue left")
         end)
 
-        self.client:on("match_found", function(data)
+        self._cb_matchFound = self.client:on("match_found", function(data)
             self.playerRole = data.role
             self.opponentName = data.opponent_name
             self.opponentTrophies = data.opponent_trophies
@@ -60,14 +60,31 @@ function LobbyScreen.new()
             self.matchTimer = 1.2
         end)
 
-        self.client:on("opponent_disconnected", function()
+        self._cb_oppDisconn = self.client:on("opponent_disconnected", function()
             self.status = "error"
             self.statusMsg = "Opponent disconnected"
         end)
 
-        self.client:on("error", function(data)
-            self.status = "error"
-            self.statusMsg = data.reason or "Error occurred"
+        self._cb_error = self.client:on("error", function(data)
+            if data.reason == "Not authenticated" and _G.PlayerData and _G.PlayerData.token then
+                -- Session dropped — silently reconnect using stored token
+                self.status = "reconnecting"
+                self.statusMsg = "Reconnecting..."
+                self.client:send("reconnect_with_token", {token = _G.PlayerData.token})
+            else
+                self.status = "error"
+                self.statusMsg = data.reason or "Error occurred"
+            end
+        end)
+
+        self._cb_loginSuccess = self.client:on("login_success", function(data)
+            if self.status == "reconnecting" then
+                -- Session restored — update trophies and re-join queue
+                _G.PlayerData.trophies = data.trophies
+                self.myTrophies = data.trophies
+                self.status = "queueing"
+                self:joinQueue()
+            end
         end)
     end
 
@@ -287,6 +304,15 @@ function LobbyScreen.new()
     end
 
     function self:close()
+        -- Unregister all socket callbacks so they don't accumulate across sessions
+        if self.client then
+            local cbs = {self._cb_queueJoined, self._cb_queueLeft, self._cb_matchFound,
+                         self._cb_oppDisconn, self._cb_error, self._cb_loginSuccess}
+            for _, cb in ipairs(cbs) do
+                if cb then self.client:removeCallback(cb) end
+            end
+        end
+
         -- Leave queue if still queueing
         if self.status == "queueing" then
             self:leaveQueue()

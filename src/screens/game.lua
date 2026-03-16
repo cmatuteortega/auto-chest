@@ -142,11 +142,11 @@ function GameScreen.new()
         local s = self.socket
 
         -- The relay server forwards the opponent's "relay" events to us
-        s:on("relay", function(data)
+        self._cb_relay = s:on("relay", function(data)
             self:handleNetworkMessage(data)
         end)
 
-        s:on("opponent_disconnected", function()
+        self._cb_oppDisconn = s:on("opponent_disconnected", function()
             self.opponentDisconnected = true
         end)
     end
@@ -801,8 +801,8 @@ function GameScreen.new()
 
             if restartButton.hit then
                 if self.isOnline then
-                    -- Disconnect and return to menu
-                    if self.socket then pcall(function() self.socket:disconnect() end) end
+                    -- Keep socket alive so player can re-queue without re-logging in
+                    _G.GameSocket = self.socket
                     Constants.PERSPECTIVE = 1
                     local ScreenManager = require('lib.screen_manager')
                     ScreenManager.switch('menu')
@@ -1251,6 +1251,11 @@ function GameScreen.new()
     end
 
     function self:close()
+        -- Unregister network callbacks so stale handlers don't fire in future games
+        if self.socket then
+            if self._cb_relay      then self.socket:removeCallback(self._cb_relay)      end
+            if self._cb_oppDisconn then self.socket:removeCallback(self._cb_oppDisconn) end
+        end
         -- Reset global perspective when leaving the game screen
         Constants.PERSPECTIVE = 1
     end
