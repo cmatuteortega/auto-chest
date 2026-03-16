@@ -1,0 +1,96 @@
+
+========== Server Starting ==========
+12:24:23 - Database initialized
+12:24:23 - AutoChest matchmaking server started on port 12345
+12:25:21 - Client connected: 127.0.0.1:61110
+12:25:24 - Client connected: 127.0.0.1:49539
+12:25:27 - Login: matute2
+12:25:32 - Login: matute
+12:25:34 - Queue join: matute (0 trophies)
+12:25:35 - Queue join: matute2 (0 trophies)
+12:25:35 - Match: matute (0) vs matute2 (0)
+
+========== Server Starting ==========
+12:27:47 - Database initialized
+12:27:47 - AutoChest matchmaking server started on port 12345
+12:28:11 - Client connected: 127.0.0.1:59012
+12:28:13 - Client connected: 127.0.0.1:53246
+12:28:20 - Login: matute2
+12:28:25 - Login: matute
+12:28:27 - Queue join: matute (0 trophies)
+12:28:28 - Queue join: matute2 (0 trophies)
+12:28:28 - Match: matute (0) vs matute2 (0)
+12:29:32 - Match result: Winner +20, Loser -15
+12:29:32 - Match result: Winner +20, Loser -15
+12:29:42 - Session closed: matute
+12:29:42 - Player disconnected from match (role 1)
+12:29:43 - Session closed: matute2
+
+========== Server Starting ==========
+12:37:45 - Database initialized
+12:37:45 - AutoChest matchmaking server started on port 12345
+12:38:35 - Client connected: 127.0.0.1:50716
+12:38:39 - Client connected: 127.0.0.1:56207
+12:38:45 - Login: matute2
+12:38:48 - Login: matute
+12:39:05 - Session closed: matute2
+12:39:07 - Session closed: matute
+12:42:48 - Client connected: 127.0.0.1:65531
+12:42:50 - Client connected: 127.0.0.1:65284
+12:42:56 - Login: matute
+12:42:59 - Failed login: matute1
+12:43:05 - Login: matute2
+12:43:14 - Session closed: matute2
+12:43:32 - Session closed: matute
+12:44:35 - Client connected: 127.0.0.1:57790
+12:44:38 - Login: matute2
+12:45:37 - Session closed: matute2
+
+========== Server Starting ==========
+12:55:47 - Database initialized
+12:55:47 - AutoChest matchmaking server started on port 12345
+12:55:51 - Client connected: 127.0.0.1:49586
+12:55:56 - Login: matute2
+12:56:23 - All decks synced: matute2
+12:56:24 - All decks synced: matute2
+12:56:24 - All decks synced: matute2
+12:56:25 - All decks synced: matute2
+12:56:26 - All decks synced: matute2
+12:56:27 - All decks synced: matute2
+12:56:38 - Client connected: 127.0.0.1:61481
+12:56:38 - Session closed: matute2
+12:56:41 - Client connected: 127.0.0.1:52806
+12:56:45 - Login: matute2
+12:56:52 - Login: matute
+12:56:57 - Queue join: matute2 (40 trophies)
+12:56:58 - Queue join: matute (0 trophies)
+12:56:58 - Match: matute2 (40) vs matute (0)
+
+========== Server Starting ==========
+13:02:16 - Database initialized
+13:02:16 - AutoChest matchmaking server started on port 12345
+13:02:18 - Client connected: 127.0.0.1:57063
+13:02:23 - Login: matute
+13:02:28 - All decks synced: matute
+13:02:35 - All decks synced: matute
+13:02:36 - All decks synced: matute
+13:02:37 - All decks synced: matute
+13:02:38 - All decks synced: matute
+13:02:40 - All decks synced: matute
+13:02:40 - All decks synced: matute
+13:02:50 - Session closed: matute
+13:02:58 - Client connected: 127.0.0.1:50250
+13:03:01 - Failed registration: matute2
+13:03:02 - Login: matute2
+13:03:25 - Queue join: matute2 (40 trophies)
+13:04:05 - Queue leave: matute2
+13:04:10 - Client connected: 127.0.0.1:50017
+13:04:13 - Login: matute
+13:04:15 - Queue join: matute (0 trophies)
+13:04:17 - Queue join: matute2 (40 trophies)
+13:04:17 - Match: matute (0) vs matute2 (40)
+13:05:27 - Match result: Winner +20, Loser -15
+13:05:27 - Match result: Winner +20, Loser -15
+13:05:30 - Session closed: matute
+13:05:30 - Player disconnected from match (role 1)
+13:05:31 - Session closed: matute2

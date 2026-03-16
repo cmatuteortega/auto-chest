@@ -28,6 +28,16 @@ function GameScreen.new()
         -- Set rendering perspective so the local player always appears at the bottom
         Constants.PERSPECTIVE = self.playerRole
 
+        -- Player & opponent info (for trophy display)
+        self.playerName = _G.PlayerData and _G.PlayerData.username or "Player"
+        self.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
+        self.opponentName = _G.OpponentData and _G.OpponentData.name or "Opponent"
+        self.opponentTrophies = _G.OpponentData and _G.OpponentData.trophies or 0
+
+        -- Trophy changes (calculated when match ends)
+        self.trophyChange = nil
+        self.matchResultSent = false
+
         -- Opponent ready / battle-start tracking (online only)
         self.localReady    = false
         self.opponentReady = false
@@ -417,6 +427,34 @@ function GameScreen.new()
         self:_rebuildCardsFromTypes(unitTypes)
     end
 
+    -- Helper: Enter finished state with trophy calculation
+    function self:enterFinishedState(winnerId)
+        self.state = "finished"
+        self.winner = winnerId
+
+        -- Calculate trophy change (only in online mode, not sandbox)
+        if self.isOnline and not self.isSandbox and not self.trophyChange then
+            local didWin = (winnerId == self.playerRole)
+            self.trophyChange = didWin and 20 or -15
+
+            -- Send match result to server (once)
+            if not self.matchResultSent then
+                self.matchResultSent = true
+                if self.socket then
+                    self.socket:send("match_result", {
+                        winner_id = _G.PlayerData.id and (didWin and _G.PlayerData.id or nil) or 0
+                    })
+                end
+
+                -- Update local trophy count
+                self.playerTrophies = math.max(0, self.playerTrophies + self.trophyChange)
+                if _G.PlayerData then
+                    _G.PlayerData.trophies = self.playerTrophies
+                end
+            end
+        end
+    end
+
     function self:update(dt)
         -- Poll network (must happen every frame)
         if self.isOnline and self.socket then
@@ -426,8 +464,7 @@ function GameScreen.new()
         -- Opponent disconnected mid-game
         if self.opponentDisconnected and self.state ~= "finished" then
             self.opponentDisconnected = false
-            self.winner    = self.playerRole   -- local player wins by forfeit
-            self.state     = "finished"
+            self:enterFinishedState(self.playerRole)  -- local player wins by forfeit
             self.statusMsg = "Oponente desconectado. ¡Ganaste!"
         end
 
@@ -440,12 +477,12 @@ function GameScreen.new()
                 if w == 1 then
                     self.p2Lives = self.p2Lives - 1
                     if self.p2Lives <= 0 then
-                        if self.isSandbox then self.p2Lives = 3; self:resetRound() else self.state = "finished" end
+                        if self.isSandbox then self.p2Lives = 3; self:resetRound() else self:enterFinishedState(1) end
                     else self:resetRound() end
                 elseif w == 2 then
                     self.p1Lives = self.p1Lives - 1
                     if self.p1Lives <= 0 then
-                        if self.isSandbox then self.p1Lives = 3; self:resetRound() else self.state = "finished" end
+                        if self.isSandbox then self.p1Lives = 3; self:resetRound() else self:enterFinishedState(2) end
                     else self:resetRound() end
                 else
                     self.state = "setup"
@@ -618,6 +655,15 @@ function GameScreen.new()
         local stateTextY = Constants.GAME_HEIGHT * 0.025  -- 2.5% from top
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
+        -- Trophy change (if in finished state and online mode)
+        if self.state == "finished" and self.trophyChange and self.isOnline and not self.isSandbox then
+            local trophyText = (self.trophyChange >= 0 and "+" or "") .. self.trophyChange .. " trophies"
+            lg.setFont(Fonts.medium)
+            local trophyColor = self.trophyChange >= 0 and {0.4, 1, 0.4, 1} or {1, 0.5, 0.5, 1}
+            lg.setColor(trophyColor)
+            lg.printf(trophyText, 0, stateTextY + Fonts.large:getHeight() + 10 * Constants.SCALE, Constants.GAME_WIDTH, 'center')
+        end
+
         -- Player labels (proportional positioning)
         -- In online mode the local player is always shown at the bottom right.
         lg.setFont(Fonts.large)
@@ -626,8 +672,10 @@ function GameScreen.new()
         local bottomMargin = topMargin
 
         -- Determine which label goes where based on perspective
-        local topLabel    = self.playerRole == 2 and "P1" or "P2"
-        local bottomLabel = self.playerRole == 2 and "P2" or "P1"
+        local topLabel     = self.opponentName  -- Opponent always at top
+        local bottomLabel  = self.playerName    -- Player always at bottom
+        local topTrophies  = self.opponentTrophies
+        local bottomTrophies = self.playerTrophies
         local topColor    = self.playerRole == 2 and {1, 0.7, 0.5, 1} or {0.5, 0.7, 1, 1}
         local bottomColor = self.playerRole == 2 and {0.5, 0.7, 1, 1} or {1, 0.7, 0.5, 1}
 
@@ -650,14 +698,25 @@ function GameScreen.new()
             end
         end
 
+        -- Top player (opponent)
         lg.setColor(topColor)
         lg.print(topLabel, topMargin, topMargin)
-        drawLives(topMargin, topMargin + fontHeight + 3 * Constants.SCALE, topLives, topColor)
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.9, 0.85, 0.3, 1)
+        lg.print(topTrophies .. " trophies", topMargin, topMargin + Fonts.large:getHeight())
+        drawLives(topMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
 
+        -- Bottom player (you)
+        lg.setFont(Fonts.large)
         lg.setColor(bottomColor)
         local bLabelWidth = Fonts.large:getWidth(bottomLabel)
         local bLabelX = Constants.GAME_WIDTH - bLabelWidth - topMargin
         lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.9, 0.85, 0.3, 1)
+        local trophyText = bottomTrophies .. " trophies"
+        local trophyW = Fonts.tiny:getWidth(trophyText)
+        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - topMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 

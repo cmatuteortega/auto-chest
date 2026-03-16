@@ -33,6 +33,15 @@ function DeckManager.reset()
 end
 
 function DeckManager.save()
+    -- If logged in, sync to server
+    if _G.PlayerData and _G.GameSocket then
+        _G.GameSocket:send("sync_decks", {
+            active_deck_index = DeckManager._data.activeDeckIndex,
+            decks = DeckManager._data.decks
+        })
+    end
+
+    -- Always save locally as backup
     local ok, encoded = pcall(json.encode, DeckManager._data)
     if ok then
         love.filesystem.write(SAVE_FILE, encoded)
@@ -40,6 +49,28 @@ function DeckManager.save()
 end
 
 function DeckManager.load()
+    -- If logged in, load from server data
+    if _G.PlayerData and _G.PlayerData.decks then
+        DeckManager._data = {
+            activeDeckIndex = _G.PlayerData.activeDeckIndex,
+            decks = _G.PlayerData.decks
+        }
+
+        -- Ensure all unit type keys exist in each deck (forward-compat)
+        for i = 1, NUM_SLOTS do
+            if not DeckManager._data.decks[i] then
+                DeckManager._data.decks[i] = emptyDeck(i)
+            end
+            for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do
+                if not DeckManager._data.decks[i].counts[u] then
+                    DeckManager._data.decks[i].counts[u] = 0
+                end
+            end
+        end
+        return
+    end
+
+    -- Otherwise, load from local file
     local content = love.filesystem.read(SAVE_FILE)
     if content then
         local ok, data = pcall(json.decode, content)

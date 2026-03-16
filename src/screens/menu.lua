@@ -33,11 +33,7 @@ function MenuScreen.new()
         self.SWIPE_THRESH = 10   -- px before committing to horizontal drag
         self.SNAP_THRESH  = 60   -- px release delta to switch panel
 
-        -- IP input (Play Online panel)
-        self.ipText       = "127.0.0.1"
-        self.inputActive  = false
-        self.cursorTimer  = 0
-        self.cursorVisible = true
+        -- (IP input removed - now using authentication)
 
         -- Unit detail overlay
         self.showDetail = false
@@ -97,11 +93,9 @@ function MenuScreen.new()
     -- ── update ──────────────────────────────────────────────────────────────
 
     function self:update(dt)
-        -- Cursor blink
-        self.cursorTimer = self.cursorTimer + dt
-        if self.cursorTimer >= 0.5 then
-            self.cursorTimer   = 0
-            self.cursorVisible = not self.cursorVisible
+        -- Keep socket connection alive
+        if _G.GameSocket then
+            _G.GameSocket:update()
         end
 
         -- Save feedback timer
@@ -229,50 +223,25 @@ function MenuScreen.new()
         lg.setColor(1, 1, 1, 1)
         lg.printf("AutoChest", ox, 52 * sc, W, 'center')
 
-        -- Server label
-        local fieldW = 280 * sc
-        local fieldH = 42  * sc
-        local fieldX = cx - fieldW / 2
-        local fieldY = H * 0.48
+        -- Player info (if logged in)
+        if _G.PlayerData then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.printf(_G.PlayerData.username, ox, 100 * sc, W, 'center')
 
-        lg.setFont(Fonts.small)
-        lg.setColor(0.65, 0.65, 0.7, 1)
-        lg.printf("Server", fieldX, fieldY - Fonts.small:getHeight() - 6 * sc, fieldW, 'left')
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.9, 0.85, 0.3, 1)
+            lg.printf(_G.PlayerData.trophies .. " trophies", ox, 120 * sc, W, 'center')
 
-        -- IP input field
-        local active = self.inputActive
-        lg.setColor(active and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
-        roundedRect(fieldX, fieldY, fieldW, fieldH, 5, sc)
-        lg.setColor(active and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
-        roundedRectLine(fieldX, fieldY, fieldW, fieldH, 5, sc, 2 * sc)
-
-        local textPad = 10 * sc
-        local textY   = fieldY + (fieldH - Fonts.small:getHeight()) / 2
-        lg.setFont(Fonts.small)
-        lg.setColor(1, 1, 1, 1)
-        lg.print(self.ipText, fieldX + textPad, textY)
-
-        -- Cursor
-        if active and self.cursorVisible then
-            local tw = Fonts.small:getWidth(self.ipText)
-            lg.setColor(1, 1, 1, 0.85)
-            local cx2 = fieldX + textPad + tw + 1
-            lg.rectangle('fill', cx2, textY + 2 * sc, 2 * sc, Fonts.small:getHeight() - 4 * sc)
+            lg.setColor(0.9, 0.75, 0.2, 1)
+            lg.printf(_G.PlayerData.coins .. " coins", ox, 135 * sc, W, 'center')
         end
-
-        -- Store field rect in screen coords
-        self._ipFieldRect = {
-            x = fieldX + self.panelOffset,
-            y = fieldY,
-            w = fieldW,
-            h = fieldH
-        }
 
         -- PLAY ONLINE button
         local btnW = 240 * sc
         local btnH = 56  * sc
         local btnX = cx - btnW / 2
-        local btnY = fieldY + fieldH + 28 * sc
+        local btnY = H * 0.50  -- Centered position
 
         lg.setColor(0.15, 0.32, 0.65, 1)
         roundedRect(btnX, btnY, btnW, btnH, 8, sc)
@@ -800,16 +769,6 @@ function MenuScreen.new()
 
         -- Overlay absorbs all presses
         if self.showDetail then return end
-
-        -- IP field tap (only on Play panel)
-        if self.currentPanel == 3 and self._ipFieldRect then
-            local f = self._ipFieldRect
-            if x >= f.x and x <= f.x + f.w and y >= f.y and y <= f.y + f.h then
-                self.inputActive = true
-                return
-            end
-        end
-        self.inputActive = false
     end
 
     function self:handleMove(x, y)
@@ -936,9 +895,14 @@ function MenuScreen.new()
             local btn = self._playBtnRect
             if btn and x >= btn.x and x <= btn.x + btn.w and
                        y >= btn.y and y <= btn.y + btn.h then
-                local ScreenManager = require('lib.screen_manager')
-                local ip = (self.ipText ~= "" and self.ipText) or "127.0.0.1"
-                ScreenManager.switch('lobby', ip)
+                if _G.GameSocket then
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('lobby', _G.GameSocket)
+                else
+                    -- Not logged in, go to login screen
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('login')
+                end
                 return
             end
             local sbtn = self._sandboxBtnRect
@@ -970,26 +934,13 @@ function MenuScreen.new()
         self:handleRelease(x, y)
     end
 
-    function self:textinput(t)
-        if not self.inputActive then return end
-        self.ipText = self.ipText .. t
-    end
-
     function self:keypressed(key)
         if key == "escape" then
             if self.showDetail then
                 self.showDetail = false
                 self.detailUnit = nil
-            else
-                self.inputActive = false
             end
             return
-        end
-        if not self.inputActive then return end
-        if key == "backspace" then
-            self.ipText = self.ipText:sub(1, -2)
-        elseif key == "return" or key == "kpenter" then
-            self.inputActive = false
         end
     end
 
