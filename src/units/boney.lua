@@ -96,6 +96,12 @@ function Boney:update(dt, grid)
     Boney.super.update(self, dt, grid)
 end
 
+function Boney:resetCombatState()
+    Boney.super.resetCombatState(self)
+    self.hasHealed          = false
+    self.wasAboveHalfHealth = true
+end
+
 -- Melee attack: lunge toward target and apply damage
 function Boney:attack(target, grid)
     if target and not target.isDead then

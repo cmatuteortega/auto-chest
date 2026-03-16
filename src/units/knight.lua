@@ -109,6 +109,15 @@ function Knight:update(dt, grid)
     Knight.super.update(self, dt, grid)
 end
 
+function Knight:resetCombatState()
+    -- Restore maxHealth to level-scaled base (strips Guardian bonus so it re-applies fresh each round)
+    self.maxHealth = math.floor(self.baseHealth * (1.5 ^ self.level))
+    Knight.super.resetCombatState(self)
+    self.hasHealed          = false
+    self.wasAboveHalfHealth = true
+    self.hpBonusApplied     = false
+end
+
 -- Melee attack: lunge toward target and apply damage
 function Knight:attack(target, grid)
     if target and not target.isDead then

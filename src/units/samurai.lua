@@ -107,6 +107,12 @@ function Samurai:update(dt, grid)
     Samurai.super.update(self, dt, grid)
 end
 
+function Samurai:resetCombatState()
+    Samurai.super.resetCombatState(self)
+    self.damageFromAlliedDeaths = 0
+    self.allyDeathsObserved     = {}
+end
+
 -- Heal on kill (Bloodthirst upgrade)
 function Samurai:onKill(target)
     -- Upgrade 1: Heal 30% HP on kill

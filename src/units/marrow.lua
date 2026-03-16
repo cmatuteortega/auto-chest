@@ -79,6 +79,12 @@ function Marrow:onKill(target)
     end
 end
 
+function Marrow:resetCombatState()
+    Marrow.super.resetCombatState(self)
+    self.attackSpeed      = self.baseAttackSpeed
+    self.damageBoostTimer = 0
+end
+
 -- Override attack for multi-shot (upgrade 3)
 function Marrow:attack(target, grid)
     if target and not target.isDead then
