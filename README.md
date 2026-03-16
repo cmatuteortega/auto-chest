@@ -1,159 +1,283 @@
 # AutoChest
 
-A 1v1 asynchronous grid-based autobattler mobile game built with Love2D.
+A 1v1 online autobattler (Clash Mini-style) built with Love2D/Lua.
 
-## Game Concept
+## Game Overview
 
-Players draft cards to place or upgrade units on their side of a 12x7 grid. After a timer expires, units automatically battle. The game features:
+AutoChest is a competitive autobattler where players draft cards during a 30-second setup phase to place and upgrade units on their side of the grid. Once both players are ready (or the timer expires), units battle automatically until one side is eliminated. The first player to lose 3 lives loses the match.
 
-- **Grid**: 12 rows × 7 columns (16×16px cells)
-- **Mobile-first**: Portrait orientation (1080×1920 resolution)
-- **Asynchronous multiplayer**: Players make decisions during a timer, then watch the battle play out
-- **Pixel art style**: Clean grid-based visuals
+**Key Features**:
+- **Online multiplayer**: Cloud-hosted matchmaking server with authentication
+- **Trophy-based matchmaking**: Players matched by skill rating (±100-500 range)
+- **Deck building**: 5 persistent deck slots, up to 20 cards per deck
+- **Strategic gameplay**: Unit placement, upgrades, and economy management
+- **Deterministic battles**: Fixed timestep simulation ensures fair, reproducible results
 
-## Current Status (MVP)
+## Current Status
 
-✅ **Completed**:
-- Core game setup and configuration
-- Mobile portrait layout with pixel-perfect scaling
-- 12×7 grid system with 16×16px cells
-- Touch/mouse input handling
-- Screen management (Menu → Game)
-- Grid cell highlighting and selection
-- Player zone separation (top/bottom halves)
-- Setup timer (30 seconds countdown)
-- Basic UI elements
+✅ **Fully Implemented**:
+- Complete 1v1 online multiplayer with authentication
+- Cloud server deployment (75.119.142.247:12345)
+- Trophy-based matchmaking system
+- 5-panel swipe UI (Collection/Decks/Battle/Shop/Ranking)
+- Persistent deck system (5 slots, server-synced)
+- Card drafting and hand management
+- Unit placement, upgrading, and repositioning
+- Deterministic battle simulation
+- Economy system (coins, rerolls, consolation bonuses)
+- Lives system (3 lives each, -1 per loss)
+- 4 unit types: Knight, Samurai, Boney, Marrow
+- Ranged and melee combat with pathfinding
+- Desync detection and prevention
+- Round flow with intermissions
+- SQLite database with bcrypt password hashing
 
-❌ **Future Features**:
-- Unit placement system
-- Card drafting UI
-- Unit stats (health, damage, abilities)
-- Combat simulation
-- Networking/multiplayer
-- Deck building
-- Pixel art character sprites
-- Sound effects and music
+🚧 **In Progress**:
+- Additional unit types and abilities
+- Shop system for unlocking units
+- Trophy ranking leaderboards
+- Unit collection UI
+
+## How to Run
+
+### Local Development (Localhost Server)
+
+Run client and local server on your machine:
+
+```bash
+# Terminal 1: Start local development server
+love server/
+
+# Terminal 2: Start client (connects to localhost)
+love .
+```
+
+### Production (Cloud Server)
+
+Play online against other players:
+
+```bash
+# Quick launcher for production server
+./play-online.sh
+
+# Or manually
+love .
+# (server configured for production in src/config.lua)
+```
+
+### Prerequisites
+
+- [Love2D](https://love2d.org/) (v11.4 or later)
+- For server: LuaRocks packages: `luasocket`, `enet`, `lsqlite3`, `bcrypt`
 
 ## Project Structure
 
 ```
 autochest/
-├── conf.lua              # Love2D configuration
-├── main.lua              # Entry point
-├── lib/                  # External libraries
-│   ├── classic.lua       # OOP system
-│   ├── push.lua          # Resolution scaling
-│   ├── screen_manager.lua # Screen state management
-│   ├── screen.lua        # Base screen class
-│   ├── baton.lua         # Input handling
-│   ├── bump.lua          # Collision detection
-│   ├── tween.lua         # Animation tweening
-│   ├── cron.lua          # Timers
-│   ├── signal.lua        # Event system
-│   ├── camera.lua        # Camera effects
-│   ├── tilemapper.lua    # Tile map support
-│   ├── json.lua          # JSON serialization
-│   ├── lume.lua          # Utility functions
-│   ├── inspect.lua       # Debug tool
-│   ├── audio.lua         # Audio helper
-│   ├── anim8.lua         # Sprite animation
-│   ├── sock.lua          # Networking
-│   └── suit/             # UI library
+├── CLAUDE.md                          # Complete project reference
+├── conf.lua                           # Love2D config (540×960 window)
+├── main.lua                           # Entry point
+├── play-online.sh                     # Quick launcher for production
+├── tests/
+│   └── test_battle_determinism.lua    # Determinism regression test
+├── deploy/                            # Cloud deployment files
+│   ├── DEPLOYMENT_GUIDE.md            # Complete deployment guide
+│   ├── YOUR_DEPLOYMENT_STEPS.md       # Quick setup instructions
+│   ├── server-setup.sh                # VPS setup script
+│   ├── autochest-server.service       # Systemd service file
+│   └── backup-db.sh                   # Database backup script
+├── server/                            # Matchmaking Server
+│   ├── main.lua                       # ENet server (auth, matchmaking, relay)
+│   ├── database.lua                   # SQLite wrapper
+│   ├── players.db                     # Player database (created on first run)
+│   └── matchmaking.log                # Server event log
+├── lib/
+│   ├── classic.lua                    # OOP system
+│   ├── sock.lua                       # ENet networking wrapper
+│   ├── json.lua                       # JSON encode/decode
+│   ├── screen.lua & screen_manager.lua
+│   └── suit/                          # Immediate-mode UI library
 └── src/
-    ├── constants.lua     # Game constants
-    ├── grid.lua          # Grid system
+    ├── config.lua                     # Server address config (dev/production)
+    ├── constants.lua                  # Resolution, grid layout, scaling
+    ├── grid.lua                       # Grid data model + rendering
+    ├── deck_manager.lua               # Persistent deck storage + draw pile
+    ├── base_unit.lua                  # Base class for all units
+    ├── base_unit_ranged.lua           # Ranged unit base (arrow projectiles)
+    ├── unit_registry.lua              # Unit type registry, cost table
+    ├── card.lua                       # Draggable card UI element
+    ├── tooltip.lua                    # Unit stat tooltip with upgrade button
+    ├── pathfinding.lua                # A* pathfinding for unit movement
+    ├── units/
+    │   ├── knight.lua                 # Melee tank unit
+    │   ├── samurai.lua                # High-damage melee unit
+    │   ├── boney.lua                  # Ranged skeleton archer
+    │   └── marrow.lua                 # Ranged bone mage
     └── screens/
-        ├── menu.lua      # Menu screen
-        └── game.lua      # Game screen
-
+        ├── login.lua                  # Authentication screen
+        ├── menu.lua                   # Main menu (5-panel swipe UI)
+        ├── lobby.lua                  # Matchmaking lobby
+        └── game.lua                   # Core game screen (all game logic)
 ```
 
-## How to Run
-
-### Prerequisites
-
-Install Love2D: https://love2d.org/
-
-### Running the Game
-
-```bash
-# From the project directory
-love .
-
-# Or on macOS with Love2D installed
-open -n -a love .
-```
-
-### Controls
-
-- **Mouse/Touch**: Click or tap cells to select them
-- **Escape**: Quit the game
-- **R**: Reset the game (when in game screen)
-
-## Technical Details
-
-### Libraries Used
-
-- **push.lua**: Handles resolution scaling for mobile devices
-- **classic.lua**: Object-oriented programming
-- **screen_manager.lua**: Screen state management
-- **anim8.lua**: Ready for sprite animations
-- **sock.lua**: Ready for networking
-- **SUIT**: Ready for UI components
+## Game Mechanics
 
 ### Grid System
 
-- 12 rows × 7 columns = 84 cells
-- Each cell: 16×16 pixels
-- Total grid size: 112px × 192px
-- Player 1: Bottom 6 rows (rows 7-12)
-- Player 2: Top 6 rows (rows 1-6)
+- **8 rows × 5 columns** (16×16px cells)
+- **Player 1 zone**: Rows 5-8 (bottom)
+- **Player 2 zone**: Rows 1-4 (top)
+- Perspective flips based on player role (always see your zone at bottom)
 
-### Resolution
+### Economy
 
-- Target: 1080×1920 (mobile portrait)
-- Desktop testing: 540×960 (50% scale)
-- Uses pixel-perfect rendering
+- Start: **6 coins**
+- Each round: **+6 coins**
+- Losing a round: **+3 consolation coins**
+- Reroll: **1 coin**
 
-## Next Steps
+### Lives System
 
-To continue building the game, consider implementing:
+- Each player starts with **3 lives**
+- Losing a round: **-1 life**
+- 0 lives: **Game over**
 
-1. **Unit System** ([src/unit.lua](src/unit.lua))
-   - Extend classic.lua for unit entities
-   - Add health, damage, and abilities
-   - Unit rendering on grid
+### Round Flow
 
-2. **Card System** ([src/card.lua](src/card.lua))
-   - Card definitions and data
-   - Draft UI using SUIT
-   - Hand management
+1. **Setup (30s)**: Place, upgrade, and reposition units from hand
+2. **Pre-battle (1s)**: "GO!" flash before battle starts
+3. **Battle**: Units fight automatically until one side is eliminated
+4. **Intermission (2.5s)**: Bodies remain visible, life deducted after
+5. **Reset**: All units return to home positions, +6 coins, repeat
 
-3. **Battle System** ([src/battle.lua](src/battle.lua))
-   - Turn-based or real-time auto-combat
-   - Damage calculation
-   - Victory conditions
+### Deck System
 
-4. **Networking** ([src/network.lua](src/network.lua))
-   - Integrate sock.lua
-   - Matchmaking
-   - State synchronization
+- **5 deck slots** per player (server-synced)
+- Up to **20 cards** per deck
+- Active deck indicator (gold dot)
+- Draw pile shuffles at game start
+- Reroll returns cards and draws new ones
 
-5. **Assets**
-   - Create pixel art sprites for units
-   - Background artwork
-   - Sound effects and music
+## Online Multiplayer
+
+### Server Architecture
+
+**Production Server**: `75.119.142.247:12345` (Contabo VPS, Ubuntu 22.04)
+
+- **Authentication**: SQLite database with bcrypt password hashing
+- **Matchmaking**: Queue-based, trophy range ±100 (expands +50 every 5s, max ±500)
+- **Relay**: Server forwards game messages between matched players
+- **Persistence**: Decks, trophies, and player stats stored server-side
+
+### Authentication Flow
+
+1. Register/login with username and password
+2. Server validates and returns player data (ID, trophies, coins, decks)
+3. Token stored for session management
+
+### Matchmaking
+
+1. Join queue with player ID and trophy count
+2. Server matches players within trophy range
+3. Roles assigned: P1 (host) generates RNG seed, P2 (guest) follows
+4. Match begins with opponent information displayed
+
+### Trophy System
+
+- **Winner**: +20 trophies
+- **Loser**: -15 trophies (min 0)
+- Updated server-side after each match
+
+## Determinism & Fair Play
+
+AutoChest uses several techniques to ensure both players see identical battles:
+
+1. **Fixed timestep loop**: Battle advances in discrete 1/60s steps (independent of frame rate)
+2. **Deterministic pathfinding**: A* tie-breaks by row → col for reproducible paths
+3. **Deterministic target selection**: Equidistant enemies broken by col → row → owner
+4. **RNG seed**: P1 generates seed, both players initialize with same seed
+5. **Board hash sync**: Clients exchange board state hash at battle start to detect desyncs
+
+**Run determinism test**:
+```bash
+lua tests/test_battle_determinism.lua
+```
+
+## Controls
+
+- **Mouse/Touch**: Click or drag units/cards
+- **Drag & Drop**: Place units on grid or reposition existing units
+- **Tooltip**: Click unit to see stats and upgrade button
+- **Ready Button**: Start battle (both players must click)
+- **Reroll Button**: Return cards and draw new hand (costs 1 coin)
+
+## Cloud Server Management
+
+### View Server Logs
+
+```bash
+ssh root@75.119.142.247
+sudo journalctl -u autochest-server -f
+```
+
+### Restart Server
+
+```bash
+ssh root@75.119.142.247
+sudo systemctl restart autochest-server
+```
+
+### Deploy Code Changes
+
+```bash
+# From local project directory
+cd /Users/cmatute1/auto-chest/auto-chest
+rsync -avz --exclude 'server/players.db' . root@75.119.142.247:/opt/autochest/
+ssh root@75.119.142.247
+sudo systemctl restart autochest-server
+```
+
+See [deploy/YOUR_DEPLOYMENT_STEPS.md](deploy/YOUR_DEPLOYMENT_STEPS.md) for complete deployment instructions.
 
 ## Development
 
-The game uses a modular architecture:
+### Adding New Units
 
-- **Screens**: Menu, Game (future: Settings, Deck Builder, etc.)
-- **Grid**: Handles cell positioning, highlighting, and ownership
-- **Constants**: Centralized configuration
-- **Input**: Normalized touch/mouse input through push.lua
+1. Create unit file in `src/units/` extending `BaseUnit` or `BaseUnitRanged`
+2. Implement stats, abilities, and `onBattleStart()` logic
+3. Register in `src/unit_registry.lua` with cost and sprite paths
+4. Add sprites: `front.png`, `back.png`, `dead.png`
 
-All coordinates are automatically converted from window space to game space, ensuring consistent behavior across different screen sizes.
+### Network Messages
+
+All game actions send messages through server relay:
+- `place_unit`, `remove_unit`, `upgrade_unit` (setup phase)
+- `ready` (trigger battle)
+- `battle_start` (P1 only, includes RNG seed)
+- `round_end_ready` (animations complete)
+- `board_sync_check` (desync detection)
+
+## Testing
+
+### Determinism Regression Test
+
+Ensures battles are reproducible across clients:
+
+```bash
+lua tests/test_battle_determinism.lua
+```
+
+Runs 10 battles with identical setups and verifies outcome consistency.
+
+## Technical Stack
+
+- **Love2D**: Game engine (Lua)
+- **ENet**: UDP networking with reliability layer
+- **SQLite**: Player database (server-side)
+- **bcrypt**: Password hashing
+- **SUIT**: Immediate-mode UI library
+- **classic.lua**: OOP system
+- **sock.lua**: ENet wrapper
 
 ## License
 
@@ -162,3 +286,5 @@ TBD
 ---
 
 Built with Love2D ❤️
+
+For detailed technical documentation, see [CLAUDE.md](CLAUDE.md).
