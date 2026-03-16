@@ -188,6 +188,12 @@ function GameScreen.new()
         if t == "place_unit" then
             local unitSprites = self.sprites[msg.unitType]
             local unit = UnitRegistry.createUnit(msg.unitType, msg.row, msg.col, msg.owner, unitSprites)
+            -- Restore upgrades when the message carries level info (repositioned upgraded unit)
+            if msg.activeUpgrades then
+                for _, idx in ipairs(msg.activeUpgrades) do
+                    unit:upgrade(idx)
+                end
+            end
             self.grid:placeUnit(msg.col, msg.row, unit)
         elseif t == "remove_unit" then
             self.grid:removeUnit(msg.col, msg.row)
@@ -507,8 +513,8 @@ function GameScreen.new()
                 self.timer = 0
                 if not self.isOnline then
                     self:beginBattleCountdown()
-                elseif self.playerRole == 1 and not self.localReady then
-                    -- Online host: mark self ready and check
+                elseif not self.localReady then
+                    -- Both players auto-ready when timer expires
                     self.localReady = true
                     self:sendMsg({type = "ready"})
                     self:checkBattleStart()
@@ -1043,7 +1049,9 @@ function GameScreen.new()
                 self:sendMsg({type = "place_unit",
                               unitType = self.draggedUnit.unitType,
                               col = col, row = row,
-                              owner = self.draggedUnit.owner})
+                              owner = self.draggedUnit.owner,
+                              level = self.draggedUnit.level,
+                              activeUpgrades = self.draggedUnit.activeUpgrades})
                 print(string.format("Repositioned unit to [%d, %d]", col, row))
             else
                 self.draggedUnit.col = origCol

@@ -85,7 +85,7 @@ function Grid:getCell(col, row)
     return nil
 end
 
-function Grid:canPlaceUnit(col, row)
+function Grid:canPlaceUnit(col, row, zoneOwner)
     local cell = self:getCell(col, row)
     if not cell then
         return false
@@ -96,7 +96,13 @@ function Grid:canPlaceUnit(col, row)
         return false
     end
 
-    -- Allow placement in any zone (for developer purposes)
+    -- Enforce zone restriction: P1 owns bottom half (rows > rows/2), P2 owns top half
+    if zoneOwner then
+        local half = self.rows / 2
+        if zoneOwner == 1 and row <= half then return false end
+        if zoneOwner == 2 and row >  half then return false end
+    end
+
     return true
 end
 
