@@ -46,6 +46,7 @@ function LoginScreen.new()
 
     function self:close()
         love.keyboard.setKeyRepeat(false)
+        love.keyboard.setTextInput(false)  -- Close mobile keyboard
         -- Only disconnect if not logged in successfully
         if self.client and self.status ~= "logged_in" then
             self.client:disconnect()
@@ -297,6 +298,8 @@ function LoginScreen.new()
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self.activeField = "username"
                 self.status = "ready"
+                -- Open mobile keyboard
+                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
                 return
             end
         end
@@ -305,6 +308,8 @@ function LoginScreen.new()
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self.activeField = "password"
                 self.status = "ready"
+                -- Open mobile keyboard
+                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
                 return
             end
         end
@@ -313,6 +318,8 @@ function LoginScreen.new()
         if self._loginBtnRect then
             local r = self._loginBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                -- Close keyboard before login
+                love.keyboard.setTextInput(false)
                 self:doLogin()
                 return
             end
@@ -320,13 +327,16 @@ function LoginScreen.new()
         if self._registerBtnRect then
             local r = self._registerBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                -- Close keyboard before register
+                love.keyboard.setTextInput(false)
                 self:doRegister()
                 return
             end
         end
 
-        -- Tap elsewhere deactivates
+        -- Tap elsewhere deactivates and closes keyboard
         self.activeField = nil
+        love.keyboard.setTextInput(false)
     end
 
     function self:touchpressed(_, x, y)
@@ -349,6 +359,7 @@ function LoginScreen.new()
     function self:keypressed(key)
         if key == "escape" then
             self.activeField = nil
+            love.keyboard.setTextInput(false)
             return
         end
 
@@ -361,15 +372,20 @@ function LoginScreen.new()
                 self.passwordText = self.passwordText:sub(1, -2)
             end
         elseif key == "tab" then
-            -- Switch fields
-            if self.activeField == "username" then
+            -- Switch fields - update keyboard position for mobile
+            if self.activeField == "username" and self._passwordRect then
                 self.activeField = "password"
-            else
+                local r = self._passwordRect
+                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
+            elseif self._usernameRect then
                 self.activeField = "username"
+                local r = self._usernameRect
+                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
             end
         elseif key == "return" or key == "kpenter" then
-            -- Submit login
+            -- Submit login and close keyboard
             if #self.usernameText > 0 and #self.passwordText > 0 then
+                love.keyboard.setTextInput(false)
                 self:doLogin()
             end
         end

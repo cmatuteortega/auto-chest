@@ -180,10 +180,30 @@ function LobbyScreen.new()
             local queueTime = math.floor(elapsed)
             lg.printf(string.format("Time in queue: %ds", queueTime), 0, cy + 80 * sc, W, 'center')
 
-            -- Trophy count
+            -- Trophy count and matchmaking range
             lg.setFont(Fonts.tiny)
             lg.setColor(0.9, 0.85, 0.3, 1)
             lg.printf("Your trophies: " .. self.myTrophies, 0, cy + 110 * sc, W, 'center')
+
+            -- Matchmaking range (expands over time)
+            local baseRange = 100
+            local expandStep = 50
+            local expandInterval = 5
+            local maxRange = 500
+            local expandAmount = math.min(math.floor(queueTime / expandInterval) * expandStep, maxRange - baseRange)
+            local currentRange = baseRange + expandAmount
+            local minTrophies = math.max(0, self.myTrophies - currentRange)
+            local maxTrophies = self.myTrophies + currentRange
+
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.5, 0.8, 1, 0.9)
+            lg.printf(string.format("Searching range: %d - %d (±%d)", minTrophies, maxTrophies, currentRange), 0, cy + 130 * sc, W, 'center')
+
+            -- Debug: Player ID
+            if _G.PlayerData then
+                lg.setColor(0.5, 0.5, 0.5, 0.6)
+                lg.printf("ID: " .. _G.PlayerData.id .. " | User: " .. _G.PlayerData.username, 0, cy + 150 * sc, W, 'center')
+            end
 
         elseif self.status == "matched" then
             -- Match found! Show checkmark

@@ -1,9 +1,13 @@
 -- Database wrapper for player persistence
 -- Uses lsqlite3 for SQLite operations
 
--- Set up LuaRocks path
-package.path = package.path .. ';/Users/cmatute1/.luarocks/share/lua/5.1/?.lua;/Users/cmatute1/.luarocks/share/lua/5.1/?/init.lua'
-package.cpath = package.cpath .. ';/Users/cmatute1/.luarocks/lib/lua/5.1/?.so'
+-- Set up LuaRocks path (works on both Mac and Linux)
+-- On Mac with local install
+if love.system.getOS() == "OS X" then
+    package.path = package.path .. ';/Users/cmatute1/.luarocks/share/lua/5.1/?.lua;/Users/cmatute1/.luarocks/share/lua/5.1/?/init.lua'
+    package.cpath = package.cpath .. ';/Users/cmatute1/.luarocks/lib/lua/5.1/?.so'
+end
+-- On Linux VPS, system-wide luarocks install will work automatically
 
 local sqlite3 = require("lsqlite3complete")
 local bcrypt = require("bcrypt")

@@ -16,9 +16,22 @@ AutoChest is a 1v1 online autobattler (Clash Mini-style) built in Love2D/Lua.
 
 ## How to Run
 
+**Local Development (localhost server):**
 ```bash
-love .                   # from project root
-love . server            # run the relay server (server/main.lua + conf.lua in server/)
+love .                   # client (connects to localhost)
+love server/             # local dev server
+```
+
+**Production (cloud server at 75.119.142.247):**
+```bash
+./play-online.sh         # client (connects to cloud)
+```
+
+**Cloud Server:**
+```bash
+# Runs automatically via systemd on VPS
+sudo systemctl status autochest-server
+sudo journalctl -u autochest-server -f   # view logs
 ```
 
 ---
@@ -30,11 +43,21 @@ autochest/
 ├── CLAUDE.md            ← this file
 ├── conf.lua             # Love2D config (540×960 window)
 ├── main.lua             # Entry point, font loading, screen manager setup
+├── play-online.sh       # Quick launcher for production server
 ├── tests/
-│   └── test_battle_determinism.lua  # Determinism regression test (run with: lua tests/test_battle_determinism.lua)
-├── server/              # Relay server (separate Love2D project)
-│   ├── conf.lua
-│   └── main.lua         # ENet relay: pairs two clients, forwards messages
+│   └── test_battle_determinism.lua  # Determinism regression test
+├── deploy/              # Cloud deployment files
+│   ├── DEPLOYMENT_GUIDE.md          # Complete deployment guide
+│   ├── YOUR_DEPLOYMENT_STEPS.md     # Quick setup with actual IP
+│   ├── server-setup.sh              # VPS setup script
+│   ├── autochest-server.service     # Systemd service file
+│   └── backup-db.sh                 # Database backup script
+├── server/              # Authentication + Matchmaking Server
+│   ├── conf.lua         # Love2D config (disables audio for headless)
+│   ├── main.lua         # ENet server: auth, queue-based matchmaking, relay
+│   ├── database.lua     # SQLite wrapper (players, sessions, decks)
+│   ├── players.db       # SQLite database (created on first run)
+│   └── matchmaking.log  # Server event log
 ├── lib/
 │   ├── classic.lua      # OOP (Class:extend())
 │   ├── sock.lua         # ENet networking wrapper
@@ -43,8 +66,10 @@ autochest/
 │   ├── screen_manager.lua
 │   └── suit/            # Immediate-mode UI (buttons)
 └── src/
+    ├── config.lua           # Server address config (dev/production)
     ├── constants.lua        # Resolution, grid layout, scaling helpers
     ├── grid.lua             # Grid data model + rendering
+    ├── deck_manager.lua     # Persistent deck storage + draw pile management
     ├── base_unit.lua        # Base class for all units
     ├── base_unit_ranged.lua # Ranged unit base (adds arrow projectiles)
     ├── unit_registry.lua    # Unit type registry, cost table, sprite loader
@@ -57,8 +82,9 @@ autochest/
     │   ├── boney.lua
     │   └── marrow.lua
     └── screens/
-        ├── menu.lua         # Main menu (local / online buttons)
-        ├── lobby.lua        # Online lobby (IP input, connect, wait for match)
+        ├── login.lua        # Authentication screen (register/login)
+        ├── menu.lua         # Main menu (5-panel swipe UI: Collection/Decks/Battle/Shop/Ranking)
+        ├── lobby.lua        # Matchmaking lobby (auto-joins queue, waits for match)
         └── game.lua         # Core game screen (all game logic lives here)
 ```
 
@@ -131,25 +157,70 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 
 ## Online Multiplayer Architecture
 
-**Relay server** (`server/`): pairs two ENet clients, forwards all "relay" events between them. No game logic on server.
+**Server Architecture**: Cloud-hosted matchmaking server with authentication and persistent player data.
 
-**Client roles**: P1 = host (role 1), P2 = guest (role 2). Set in `Constants.PERSPECTIVE`.
+**Production Server**: `75.119.142.247:12345` (Contabo VPS, Ubuntu 22.04)
 
-**Network messages** (all sent as `socket:send("relay", {type=..., ...})`):
+**Server Components** (`server/`):
+- `main.lua`: ENet server with auth, queue-based matchmaking, relay
+- `database.lua`: SQLite wrapper (bcrypt password hashing, session tokens)
+- `players.db`: SQLite database (players, sessions, decks)
 
-| Message | Sender | Description |
-|---------|--------|-------------|
-| `place_unit` | Either | Unit placed on grid |
-| `remove_unit` | Either | Unit removed from grid |
-| `upgrade_unit` | Either | Unit upgraded |
-| `ready` | Either | Player clicked Ready |
-| `battle_start` | P1 only | Includes RNG `seed` |
-| `round_end_ready` | Either | Animations done, ready to reset |
-| `board_sync_check` | Either | Board hash for desync detection |
+**Authentication Flow**:
+1. Client connects to server via ENet (TCP/UDP port 12345)
+2. Login screen: `login` or `register` message → server validates/creates account
+3. Server responds with `login_success` containing: `player_id`, `username`, `trophies`, `coins`, `decks`, `token`
+4. Client stores `_G.PlayerData` and `_G.GameSocket` globally
+
+**Matchmaking Flow**:
+1. Client sends `queue_join` with `player_id` and `trophies`
+2. Server adds player to matchmaking queue: `{peer, player_id, username, trophies, queue_time}`
+3. Server continuously processes queue (every frame):
+   - Base trophy range: ±100
+   - Expands by +50 every 5 seconds (max ±500)
+4. When match found: Server sends `match_found` to both players with:
+   - `role` (1 = P1/host, 2 = P2/guest)
+   - `opponent_name`, `opponent_trophies`, `my_trophies`
+5. Server creates "room": pairs peers for relay forwarding
+6. Clients receive role → update `Constants.PERSPECTIVE` → launch GameScreen
+
+**Game Messages** (relayed through server):
+
+| Message | Type | Sender | Description |
+|---------|------|--------|-------------|
+| `place_unit` | relay | Either | Unit placed on grid |
+| `remove_unit` | relay | Either | Unit removed from grid |
+| `upgrade_unit` | relay | Either | Unit upgraded |
+| `ready` | relay | Either | Player clicked Ready |
+| `battle_start` | relay | P1 only | Includes RNG `seed` |
+| `round_end_ready` | relay | Either | Animations done, ready to reset |
+| `board_sync_check` | relay | Either | Board hash for desync detection |
+| `match_result` | direct | Either | Winner ID → server updates trophies |
+
+**Server-Only Messages**:
+
+| Message | Description |
+|---------|-------------|
+| `login` / `register` | Authentication |
+| `login_success` / `login_failed` | Auth responses |
+| `queue_join` / `queue_leave` | Matchmaking queue |
+| `queue_joined` / `match_found` | Queue status |
+| `sync_decks` | Save all 5 deck slots to server |
+| `update_deck_slot` | Update single deck |
+| `update_active_deck` | Set active deck for battle |
+
+**Trophy System**:
+- Winner: +20 trophies
+- Loser: -15 trophies (min 0)
+- Server updates database after each match
+
+**Client Roles**: P1 = host (role 1), P2 = guest (role 2). Set in `Constants.PERSPECTIVE`.
 
 **Opponent placement buffering**: During `setup`/`intermission`/`pre_battle`, incoming `place_unit`/`remove_unit`/`upgrade_unit` messages are buffered in `pendingOpponentMsgs`. Applied at `startBattle()` so enemy unit positions appear frozen during setup (showing last round's positions).
 
 **Round 1**: Enemy units hidden entirely (element of surprise). Round 2+: enemy units visible during setup.
+
+**Socket Keepalive**: Menu screen calls `_G.GameSocket:update()` every frame to prevent ENet connection timeout.
 
 ---
 
@@ -232,10 +303,60 @@ At `startBattle()`, each client:
 
 ## Lobby Screen
 
-- IP text input + Connect button.
-- Connects via `sock.newClient(ip, 12345)`.
-- On `match_found`: receives `role` (1 or 2), waits 0.8s, switches to GameScreen passing the live socket.
+- Auto-joins matchmaking queue on init (no manual buttons).
+- Displays animated spinner while searching.
+- Shows queue time, player's trophy count.
+- On `match_found`: receives `role`, opponent info → brief display (1.2s) → launches GameScreen.
+- Cancel button: leaves queue, returns to menu.
 - `close()` skips disconnect if `status == "matched"` (socket handed to GameScreen).
+
+---
+
+## Deck System
+
+**Persistent Storage**: 5 deck slots per player, stored server-side in SQLite.
+
+**Deck Structure**:
+```lua
+{
+    name = "Deck 1",
+    counts = {
+        knight = 5,
+        samurai = 3,
+        boney = 7,
+        marrow = 5
+    }
+}
+```
+
+**Deck Manager** (`src/deck_manager.lua`):
+- **Persistent data**: `_data = {activeDeckIndex, decks}` (survives screen switches)
+- **Transient draw pile**: `_drawPile = []` (reset each match)
+- Max 20 cards per deck
+- 5 deck slots (indices 1-5)
+- Active deck index (nullable) indicates which deck is equipped for battle
+
+**Key Functions**:
+- `DeckManager.load()`: Loads from `_G.PlayerData.decks` (server) or local `decks.json` (offline backup)
+- `DeckManager.save()`: Syncs to server via `sync_decks` message, saves locally as backup
+- `DeckManager.setActive(deckIndex)`: Sets/toggles active deck for battle
+- `DeckManager.initDrawPile()`: Builds and shuffles draw pile from active deck at game start
+- `DeckManager.drawCards(n)`: Draws n cards from top of pile
+- `DeckManager.reshuffleAndDraw(currentHand, n)`: Returns hand to pile, reshuffles, draws n new
+
+**Menu UI** (Decks Panel):
+- 5 deck slot tabs (D1-D5)
+- Gold dot indicates active deck
+- Card grid with +/- buttons to adjust unit counts
+- Save button (shows "Saved!" feedback for 1.5s)
+- Equip button (toggle active deck)
+- Total card counter (20 max, red when full)
+
+**Battle Integration**:
+- `initDrawPile()` called at game start
+- Returns `true` if active deck loaded, `false` for random fallback
+- Cards drawn via `drawCards()` during setup phase
+- Reroll returns cards via `returnCards()` then draws new ones
 
 ---
 
@@ -247,3 +368,42 @@ At `startBattle()`, each client:
 - **Intermission shows bodies**: Grid is NOT cleared between `battle_ending` and `resetRound()`.
 - **All units respawn each round**: Dead and alive units both return to `homeCol`/`homeRow`.
 - **Cell size**: Rounded down to nearest multiple of 16 (sprites are 16×16px).
+
+---
+
+## IMPORTANT: Updating Production Server
+
+**After ANY code changes that affect gameplay, server logic, or networking:**
+
+1. **Upload changes to VPS:**
+   ```bash
+   cd /Users/cmatute1/auto-chest/auto-chest
+   rsync -avz --exclude 'server/players.db' . root@75.119.142.247:/opt/autochest/
+   ```
+
+2. **Restart server:**
+   ```bash
+   ssh root@75.119.142.247
+   sudo systemctl restart autochest-server
+   ```
+
+3. **Verify server is running:**
+   ```bash
+   sudo systemctl status autochest-server
+   sudo journalctl -u autochest-server -f  # view logs
+   ```
+
+**Changes that require server restart:**
+- Any changes to `server/` folder (matchmaking, database, authentication)
+- Changes to network message formats in `src/screens/game.lua` or `src/screens/lobby.lua`
+- Changes to unit behavior that affect determinism
+- Changes to deck system or economy
+
+**Local changes only (no server restart needed):**
+- UI/visual changes (fonts, colors, layout)
+- Client-side animations
+- Menu screen changes (unless affecting networking)
+
+**Production server:** `75.119.142.247:12345` (Contabo VPS, Ubuntu 22.04)
+
+See `deploy/YOUR_DEPLOYMENT_STEPS.md` for complete deployment instructions.

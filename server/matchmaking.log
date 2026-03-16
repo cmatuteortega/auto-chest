@@ -94,3 +94,31 @@
 13:05:30 - Session closed: matute
 13:05:30 - Player disconnected from match (role 1)
 13:05:31 - Session closed: matute2
+
+========== Server Starting ==========
+13:44:35 - Database initialized
+
+========== Server Starting ==========
+14:08:34 - Database initialized
+14:08:34 - AutoChest matchmaking server started on port 12345
+14:09:01 - Client connected: 127.0.0.1:58541
+14:09:05 - Login: matute2
+14:09:13 - Client connected: 127.0.0.1:53637
+14:09:17 - Login: matute
+14:09:20 - Queue join: matute2 (10 trophies)
+14:09:21 - Queue join: matute (40 trophies)
+14:09:21 - Match: matute2 (10) vs matute (40)
+14:09:31 - Session closed: matute2
+14:09:31 - Player disconnected from match (role 1)
+14:09:35 - Session closed: matute
+
+========== Server Starting ==========
+14:32:43 - Database initialized
+14:32:43 - AutoChest matchmaking server started on port 12345
+14:33:17 - Client connected: 127.0.0.1:53549
+14:33:20 - Login: matute2
+14:33:37 - Session closed: matute2
+
+========== Server Starting ==========
+14:37:38 - Database initialized
+14:37:38 - AutoChest matchmaking server started on port 12345

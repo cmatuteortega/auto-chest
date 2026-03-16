@@ -1,0 +1,20 @@
+[Unit]
+Description=AutoChest Matchmaking Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/autochest
+# Run with virtual display (headless Love2D)
+ExecStart=/usr/bin/xvfb-run -a love server/
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=autochest
+
+[Install]
+WantedBy=multi-user.target
