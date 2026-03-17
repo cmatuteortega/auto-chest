@@ -70,11 +70,14 @@ function LoginScreen.new()
         end)
 
         self.client:on("login_success", function(data)
+            print("[LOGIN] gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
             self.playerData = {
                 id = data.player_id,
                 username = data.username,
                 trophies = data.trophies,
                 coins = data.coins,
+                gold = data.gold or 0,
+                gems = data.gems or 0,
                 activeDeckIndex = data.active_deck_index,
                 decks = data.decks,
                 token = data.token

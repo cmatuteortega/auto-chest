@@ -34,8 +34,9 @@ function GameScreen.new()
         self.opponentName = _G.OpponentData and _G.OpponentData.name or "Foe"
         self.opponentTrophies = _G.OpponentData and _G.OpponentData.trophies or 0
 
-        -- Trophy changes (calculated when match ends)
+        -- Trophy and gold changes (calculated when match ends)
         self.trophyChange = nil
+        self.goldEarned   = nil
         self.matchResultSent = false
 
         -- Opponent ready / battle-start tracking (online only)
@@ -440,10 +441,11 @@ function GameScreen.new()
         self.state = "finished"
         self.winner = winnerId
 
-        -- Calculate trophy change (only in online mode, not sandbox)
+        -- Calculate trophy and gold changes (only in online mode, not sandbox)
         if self.isOnline and not self.isSandbox and not self.trophyChange then
             local didWin = (winnerId == self.playerRole)
             self.trophyChange = didWin and 20 or -15
+            self.goldEarned   = didWin and 10 or 5
 
             -- Send match result to server (once)
             if not self.matchResultSent then
@@ -454,10 +456,11 @@ function GameScreen.new()
                     })
                 end
 
-                -- Update local trophy count
+                -- Update local trophy and gold counts immediately
                 self.playerTrophies = math.max(0, self.playerTrophies + self.trophyChange)
                 if _G.PlayerData then
                     _G.PlayerData.trophies = self.playerTrophies
+                    _G.PlayerData.gold = (_G.PlayerData.gold or 0) + self.goldEarned
                 end
             end
         end
@@ -663,13 +666,20 @@ function GameScreen.new()
         local stateTextY = Constants.GAME_HEIGHT * 0.025  -- 2.5% from top
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
-        -- Trophy change (if in finished state and online mode)
+        -- Trophy and gold changes (if in finished state and online mode)
         if self.state == "finished" and self.trophyChange and self.isOnline and not self.isSandbox then
+            local sc = Constants.SCALE
+            local offsetY = stateTextY + Fonts.large:getHeight() + 10 * sc
             local trophyText = (self.trophyChange >= 0 and "+" or "") .. self.trophyChange .. " trophies"
             lg.setFont(Fonts.medium)
             local trophyColor = self.trophyChange >= 0 and {0.4, 1, 0.4, 1} or {1, 0.5, 0.5, 1}
             lg.setColor(trophyColor)
-            lg.printf(trophyText, 0, stateTextY + Fonts.large:getHeight() + 10 * Constants.SCALE, Constants.GAME_WIDTH, 'center')
+            lg.printf(trophyText, 0, offsetY, Constants.GAME_WIDTH, 'center')
+
+            if self.goldEarned then
+                lg.setColor(0.95, 0.80, 0.20, 1)
+                lg.printf("+" .. self.goldEarned .. " gold", 0, offsetY + Fonts.medium:getHeight() + 4 * sc, Constants.GAME_WIDTH, 'center')
+            end
         end
 
         -- Player labels (proportional positioning)

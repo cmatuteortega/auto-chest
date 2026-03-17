@@ -67,6 +67,10 @@ function Database:createTables()
     if result ~= sqlite3.OK then
         error("Failed to create tables: " .. self.db:errmsg())
     end
+
+    -- Migrations: add gold and gems columns if they don't exist yet
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN gold INTEGER DEFAULT 0") end)
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN gems INTEGER DEFAULT 0") end)
 end
 
 -- Register a new player
@@ -113,6 +117,8 @@ function Database:registerPlayer(username, password)
         username = username,
         trophies = 0,
         coins = 6,
+        gold = 0,
+        gems = 0,
         activeDeckIndex = nil,
         decks = {
             json.decode(string.format(emptyDeck, 1)),
@@ -128,7 +134,8 @@ end
 function Database:loginPlayer(username, password)
     local stmt = self.db:prepare([[
         SELECT id, username, password_hash, trophies, coins, active_deck_index,
-               deck1_json, deck2_json, deck3_json, deck4_json, deck5_json
+               deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
+               gold, gems
         FROM players WHERE username = ?
     ]])
     stmt:bind_values(username)
@@ -149,6 +156,8 @@ function Database:loginPlayer(username, password)
     local deck3Json = stmt:get_value(8)
     local deck4Json = stmt:get_value(9)
     local deck5Json = stmt:get_value(10)
+    local gold = stmt:get_value(11) or 0
+    local gems = stmt:get_value(12) or 0
     stmt:finalize()
 
     -- Verify password
@@ -176,6 +185,8 @@ function Database:loginPlayer(username, password)
         username = storedUsername,
         trophies = trophies,
         coins = coins,
+        gold = gold,
+        gems = gems,
         activeDeckIndex = activeDeckIndex,
         decks = decks
     }
@@ -204,7 +215,8 @@ end
 function Database:validateSession(token)
     local stmt = self.db:prepare([[
         SELECT s.player_id, p.username, p.trophies, p.coins, p.active_deck_index,
-               p.deck1_json, p.deck2_json, p.deck3_json, p.deck4_json, p.deck5_json
+               p.deck1_json, p.deck2_json, p.deck3_json, p.deck4_json, p.deck5_json,
+               p.gold, p.gems
         FROM sessions s
         JOIN players p ON s.player_id = p.id
         WHERE s.token = ?
@@ -226,6 +238,8 @@ function Database:validateSession(token)
     local deck3Json = stmt:get_value(7)
     local deck4Json = stmt:get_value(8)
     local deck5Json = stmt:get_value(9)
+    local gold = stmt:get_value(10) or 0
+    local gems = stmt:get_value(11) or 0
     stmt:finalize()
 
     local decks = {
@@ -241,6 +255,8 @@ function Database:validateSession(token)
         username = username,
         trophies = trophies,
         coins = coins,
+        gold = gold,
+        gems = gems,
         activeDeckIndex = activeDeckIndex,
         decks = decks
     }
@@ -250,7 +266,8 @@ end
 function Database:getPlayer(playerId)
     local stmt = self.db:prepare([[
         SELECT id, username, trophies, coins, active_deck_index,
-               deck1_json, deck2_json, deck3_json, deck4_json, deck5_json
+               deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
+               gold, gems
         FROM players WHERE id = ?
     ]])
     stmt:bind_values(playerId)
@@ -270,6 +287,8 @@ function Database:getPlayer(playerId)
     local deck3Json = stmt:get_value(7)
     local deck4Json = stmt:get_value(8)
     local deck5Json = stmt:get_value(9)
+    local gold = stmt:get_value(10) or 0
+    local gems = stmt:get_value(11) or 0
     stmt:finalize()
 
     local decks = {
@@ -285,6 +304,8 @@ function Database:getPlayer(playerId)
         username = username,
         trophies = trophies,
         coins = coins,
+        gold = gold,
+        gems = gems,
         activeDeckIndex = activeDeckIndex,
         decks = decks
     }
@@ -313,6 +334,50 @@ function Database:updateTrophies(playerId, delta)
 
     stmt:finalize()
     return 0
+end
+
+-- Add gold to a player (delta can be negative)
+function Database:updateGold(playerId, delta)
+    local stmt = self.db:prepare([[
+        UPDATE players SET gold = MAX(0, gold + ?) WHERE id = ?
+    ]])
+    stmt:bind_values(delta, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    stmt = self.db:prepare("SELECT gold FROM players WHERE id = ?")
+    stmt:bind_values(playerId)
+    local newGold = 0
+    if stmt:step() == sqlite3.ROW then newGold = stmt:get_value(0) end
+    stmt:finalize()
+    return newGold
+end
+
+-- Add gems to a player (delta can be negative)
+function Database:addGems(playerId, delta)
+    local stmt = self.db:prepare([[
+        UPDATE players SET gems = MAX(0, gems + ?) WHERE id = ?
+    ]])
+    stmt:bind_values(delta, playerId)
+    stmt:step()
+    stmt:finalize()
+
+    stmt = self.db:prepare("SELECT gems FROM players WHERE id = ?")
+    stmt:bind_values(playerId)
+    local newGems = 0
+    if stmt:step() == sqlite3.ROW then newGems = stmt:get_value(0) end
+    stmt:finalize()
+    return newGems
+end
+
+-- Get a player's current gems
+function Database:getGems(playerId)
+    local stmt = self.db:prepare("SELECT gems FROM players WHERE id = ?")
+    stmt:bind_values(playerId)
+    local gems = 0
+    if stmt:step() == sqlite3.ROW then gems = stmt:get_value(0) end
+    stmt:finalize()
+    return gems
 end
 
 -- Update a specific deck slot (1-5)
