@@ -134,17 +134,18 @@ function Constants.updateResolution(windowWidth, windowHeight)
     local topMarginPercent = 0.15
     Constants.GRID_OFFSET_Y = Constants.GAME_HEIGHT * topMarginPercent
 
-    -- Scale font sizes proportionally
-    Constants.FONT_SIZES.LARGE = math.floor(Constants.BASE_FONT_SIZES.LARGE * Constants.SCALE)
-    Constants.FONT_SIZES.MEDIUM = math.floor(Constants.BASE_FONT_SIZES.MEDIUM * Constants.SCALE)
-    Constants.FONT_SIZES.SMALL = math.floor(Constants.BASE_FONT_SIZES.SMALL * Constants.SCALE)
-    Constants.FONT_SIZES.TINY = math.floor(Constants.BASE_FONT_SIZES.TINY * Constants.SCALE)
+    -- Scale font sizes and snap to multiples of 8 (Pixellari's pixel grid)
+    -- This prevents sub-pixel rendering that blurs pixel-art fonts
+    local PIXEL_GRID = 8
+    local function snapFont(base, minSize)
+        local scaled = math.floor(base * Constants.SCALE / PIXEL_GRID) * PIXEL_GRID
+        return math.max(minSize, scaled)
+    end
 
-    -- Ensure minimum readable font sizes
-    Constants.FONT_SIZES.LARGE = math.max(Constants.FONT_SIZES.LARGE, 24)
-    Constants.FONT_SIZES.MEDIUM = math.max(Constants.FONT_SIZES.MEDIUM, 18)
-    Constants.FONT_SIZES.SMALL = math.max(Constants.FONT_SIZES.SMALL, 14)
-    Constants.FONT_SIZES.TINY = math.max(Constants.FONT_SIZES.TINY, 10)
+    Constants.FONT_SIZES.LARGE  = snapFont(Constants.BASE_FONT_SIZES.LARGE,  24)
+    Constants.FONT_SIZES.MEDIUM = snapFont(Constants.BASE_FONT_SIZES.MEDIUM, 16)
+    Constants.FONT_SIZES.SMALL  = snapFont(Constants.BASE_FONT_SIZES.SMALL,  8)
+    Constants.FONT_SIZES.TINY   = snapFont(Constants.BASE_FONT_SIZES.TINY,   8)
 end
 
 return Constants

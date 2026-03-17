@@ -173,6 +173,8 @@ local function handleMessage(peer, eventName, msgData)
                 username = player.username,
                 trophies = player.trophies,
                 coins = player.coins,
+                gold = player.gold,
+                gems = player.gems,
                 active_deck_index = player.activeDeckIndex,
                 decks = player.decks,
                 token = token
@@ -321,10 +323,22 @@ local function handleMessage(peer, eventName, msgData)
         end
 
         -- Update trophies
-        local winnerNewTrophies = db:updateTrophies(winnerData.id, 20)
-        local loserNewTrophies = db:updateTrophies(loserData.id, -15)
+        db:updateTrophies(winnerData.id, 20)
+        db:updateTrophies(loserData.id, -15)
 
-        pushLog("Match result: Winner +" .. 20 .. ", Loser -" .. 15)
+        -- Award gold: +10 winner, +5 loser
+        local winnerNewGold = db:updateGold(winnerData.id, 10)
+        local loserNewGold  = db:updateGold(loserData.id, 5)
+        local winnerGems    = db:getGems(winnerData.id)
+        local loserGems     = db:getGems(loserData.id)
+
+        -- Send currency updates to each player
+        local winnerPeer = (winnerId == room.player_id) and room.peer or room.partner
+        local loserPeer  = (winnerId == room.player_id) and room.partner or room.peer
+        if winnerPeer then winnerPeer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems})) end
+        if loserPeer  then loserPeer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems}))  end
+
+        pushLog("Match result: Winner +10g, Loser +5g")
 
         -- Clean up rooms so both peers can re-queue immediately
         rooms[tostring(room.partner)] = nil
@@ -348,6 +362,8 @@ local function handleMessage(peer, eventName, msgData)
                 username = player.username,
                 trophies = player.trophies,
                 coins = player.coins,
+                gold = player.gold,
+                gems = player.gems,
                 active_deck_index = player.activeDeckIndex,
                 decks = player.decks,
                 token = token
@@ -356,6 +372,58 @@ local function handleMessage(peer, eventName, msgData)
         else
             peer:send(encode("login_failed", {reason = "Invalid or expired token"}))
         end
+
+    elseif eventName == "shop_purchase" then
+        -- Spend gems to buy gold
+        local session = sessions[tostring(peer)]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+
+        local costs = {gold_1000 = 10, gold_5000 = 50, gold_10000 = 100}
+        local gold_amounts = {gold_1000 = 1000, gold_5000 = 5000, gold_10000 = 10000}
+        local item = msgData.item
+        local gemCost = costs[item]
+        local goldGain = gold_amounts[item]
+
+        if not gemCost then
+            peer:send(encode("error", {reason = "Unknown item"}))
+            return
+        end
+
+        local currentGems = db:getGems(session.player_id)
+        if currentGems < gemCost then
+            peer:send(encode("shop_error", {reason = "Not enough gems"}))
+            return
+        end
+
+        local newGems = db:addGems(session.player_id, -gemCost)
+        local newGold = db:updateGold(session.player_id, goldGain)
+        peer:send(encode("currency_update", {gold = newGold, gems = newGems}))
+        pushLog("Shop purchase: " .. session.username .. " bought " .. item)
+
+    elseif eventName == "gem_purchase" then
+        -- Placeholder: grant gems directly (no real payment)
+        local session = sessions[tostring(peer)]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+
+        local gem_amounts = {gems_10 = 10, gems_50 = 50, gems_100 = 100}
+        local package = msgData.package
+        local gemGain = gem_amounts[package]
+
+        if not gemGain then
+            peer:send(encode("error", {reason = "Unknown package"}))
+            return
+        end
+
+        local newGems = db:addGems(session.player_id, gemGain)
+        local currentGold = db:updateGold(session.player_id, 0)  -- read current gold
+        pushLog("Gem purchase (mock): " .. session.username .. " +" .. gemGain .. " gems -> newGems=" .. tostring(newGems) .. " gold=" .. tostring(currentGold))
+        peer:send(encode("currency_update", {gold = currentGold, gems = newGems}))
 
     elseif eventName == "relay" then
         -- Forward game messages to partner

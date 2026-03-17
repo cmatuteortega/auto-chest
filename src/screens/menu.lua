@@ -72,6 +72,12 @@ function MenuScreen.new()
             img:setFilter('nearest', 'nearest')
             self.uiIcons[i] = img
         end
+
+        -- Currency strip icons
+        self.gemIcon  = love.graphics.newImage('src/assets/ui/gem.png')
+        self.goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
+        self.gemIcon:setFilter('nearest', 'nearest')
+        self.goldIcon:setFilter('nearest', 'nearest')
         -- Tab raise animation values: 0 = flat, 1 = fully popped
         self.tabRaiseAnim = { 0, 0, 1, 0, 0 }  -- panel 3 (Battle) starts active
 
@@ -82,6 +88,30 @@ function MenuScreen.new()
         self._sandboxBtnRect  = nil
         self._detailBackBtn   = nil
         self._tabRects        = {}
+
+        -- Shop state
+        self._shopGemBtns  = {}  -- hit rects for gem purchase buttons
+        self._shopGoldBtns = {}  -- hit rects for gold purchase buttons
+        self.shopNotice    = nil
+        self.shopNoticeTimer = 0
+
+        -- Register socket handlers once (not per-frame)
+        if _G.GameSocket then
+            _G.GameSocket:on("currency_update", function(data)
+                print("[MENU] currency_update received gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
+                if _G.PlayerData then
+                    if data.gold ~= nil then _G.PlayerData.gold = data.gold end
+                    if data.gems ~= nil then _G.PlayerData.gems = data.gems end
+                end
+            end)
+
+            _G.GameSocket:on("shop_error", function(data)
+                self.shopNotice = data.reason or "Purchase failed"
+                self.shopNoticeTimer = 2.5
+            end)
+        else
+            print("[MENU] WARNING: _G.GameSocket is nil at init, no handlers registered")
+        end
 
         love.keyboard.setKeyRepeat(true)
     end
@@ -101,6 +131,15 @@ function MenuScreen.new()
         -- Save feedback timer
         if self._saveFeedback > 0 then
             self._saveFeedback = self._saveFeedback - dt
+        end
+
+        -- Shop notice timer
+        if self.shopNoticeTimer > 0 then
+            self.shopNoticeTimer = self.shopNoticeTimer - dt
+            if self.shopNoticeTimer <= 0 then
+                self.shopNotice    = nil
+                self.shopNoticeTimer = 0
+            end
         end
 
         -- Lerp panel strip toward target
@@ -133,6 +172,11 @@ function MenuScreen.new()
     local function roundedRectLine(x, y, w, h, r, sc, lw)
         love.graphics.setLineWidth(lw or 2)
         love.graphics.rectangle('line', x, y, w, h, r * sc, r * sc)
+    end
+
+    -- Vertically centre text in a box using actual glyph bounds (excludes leading)
+    local function textCY(font, boxY, boxH)
+        return math.floor(boxY + (boxH - (font:getAscent() - font:getDescent())) / 2)
     end
 
     function self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
@@ -172,7 +216,7 @@ function MenuScreen.new()
 
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Collection", ox, 52 * sc, W, 'center')
+        lg.printf("Collection", ox, 82 * sc, W, 'center')
 
         local cols   = 4
         local cardW  = 100 * sc
@@ -181,7 +225,7 @@ function MenuScreen.new()
         local gapY   = 14  * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
-        local startY = 130 * sc
+        local startY = 160 * sc
 
         -- cards laid out in rows of 4
         self._collectionCards = {}
@@ -221,21 +265,8 @@ function MenuScreen.new()
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, 52 * sc, W, 'center')
+        lg.printf("AutoChest", ox, 82 * sc, W, 'center')
 
-        -- Player info (if logged in)
-        if _G.PlayerData then
-            lg.setFont(Fonts.small)
-            lg.setColor(0.9, 0.9, 0.9, 1)
-            lg.printf(_G.PlayerData.username, ox, 100 * sc, W, 'center')
-
-            lg.setFont(Fonts.tiny)
-            lg.setColor(0.9, 0.85, 0.3, 1)
-            lg.printf(_G.PlayerData.trophies .. " trophies", ox, 120 * sc, W, 'center')
-
-            lg.setColor(0.9, 0.75, 0.2, 1)
-            lg.printf(_G.PlayerData.coins .. " coins", ox, 135 * sc, W, 'center')
-        end
 
         -- PLAY ONLINE button
         local btnW = 240 * sc
@@ -249,7 +280,7 @@ function MenuScreen.new()
         roundedRectLine(btnX, btnY, btnW, btnH, 8, sc, 2 * sc)
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("PLAY ONLINE", btnX, btnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+        lg.printf("PLAY ONLINE", btnX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
 
         self._playBtnRect = {
             x = btnX + self.panelOffset,
@@ -266,7 +297,7 @@ function MenuScreen.new()
         roundedRectLine(btnX, sbtnY, btnW, btnH, 8, sc, 2 * sc)
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("SANDBOX", btnX, sbtnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+        lg.printf("SANDBOX", btnX, textCY(Fonts.medium, sbtnY, btnH), btnW, 'center')
         self._sandboxBtnRect = {
             x = btnX + self.panelOffset,
             y = sbtnY,
@@ -281,13 +312,13 @@ function MenuScreen.new()
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Decks", ox, 52 * sc, W, 'center')
+        lg.printf("Decks", ox, 82 * sc, W, 'center')
 
         -- ── Deck slot tabs ────────────────────────────────────────────────────
         local tabAreaW  = W - 40 * sc
         local tabW      = tabAreaW / 5
         local tabH      = 44 * sc
-        local tabY      = 108 * sc
+        local tabY      = 138 * sc
         local tabStartX = ox + 20 * sc
 
         self._deckSlotRects = {}
@@ -306,7 +337,7 @@ function MenuScreen.new()
             end
             lg.setFont(Fonts.small)
             lg.setColor(0.85, 0.85, 0.90, 1)
-            lg.printf("D" .. i, tx, tabY + (tabH - Fonts.small:getHeight()) / 2, tabW - 4 * sc, 'center')
+            lg.printf("D" .. i, tx, textCY(Fonts.small, tabY, tabH), tabW - 4 * sc, 'center')
             if DeckManager._data.activeDeckIndex == i then
                 lg.setColor(0.9, 0.85, 0.2, 1)
                 love.graphics.circle('fill', tx + tabW - 10 * sc, tabY + 8 * sc, 5 * sc)
@@ -337,7 +368,7 @@ function MenuScreen.new()
             roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.6, 1, 0.7, 1)
-            lg.printf("Saved!", saveX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Saved!", saveX, textCY(Fonts.small, barY, barH), btnW, 'center')
         else
             lg.setColor(0.16, 0.16, 0.24, 1)
             roundedRect(saveX, barY, btnW, barH, 5, sc)
@@ -345,7 +376,7 @@ function MenuScreen.new()
             roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.85, 0.85, 0.90, 1)
-            lg.printf("Save", saveX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Save", saveX, textCY(Fonts.small, barY, barH), btnW, 'center')
         end
         self._deckSaveRect = { x = saveX + self.panelOffset, y = barY, w = btnW, h = barH }
 
@@ -354,7 +385,7 @@ function MenuScreen.new()
         local counterW = barW - 2 * (btnW + 4 * sc)
         lg.setFont(Fonts.small)
         lg.setColor(total >= 20 and {1, 0.4, 0.4, 1} or {0.7, 0.7, 0.75, 1})
-        lg.printf(total .. " / 20", counterX, barY + (barH - Fonts.small:getHeight()) / 2, counterW, 'center')
+        lg.printf(total .. " / 20", counterX, textCY(Fonts.small, barY, barH), counterW, 'center')
 
         -- EQUIP button
         local equipX = barX + barW - btnW
@@ -365,7 +396,7 @@ function MenuScreen.new()
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.38, 0.38, 0.44, 1)
-            lg.printf("Equip", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Equip", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = nil
         elseif isActive then
             lg.setColor(0.10, 0.38, 0.18, 1)
@@ -374,7 +405,7 @@ function MenuScreen.new()
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.7, 1, 0.75, 1)
-            lg.printf("Equip ✓", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Equip ✓", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
         else
             lg.setColor(0.10, 0.22, 0.50, 1)
@@ -383,7 +414,7 @@ function MenuScreen.new()
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(1, 1, 1, 1)
-            lg.printf("Equip", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Equip", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
         end
 
@@ -464,14 +495,14 @@ function MenuScreen.new()
             else
                 lg.setColor(0.35, 0.35, 0.40, 1)
             end
-            lg.printf("-", cx, stripY + (stripH - Fonts.medium:getHeight()) / 2, minusW, 'center')
+            lg.printf("-", cx, textCY(Fonts.medium, stripY, stripH), minusW, 'center')
 
             -- count (center 40%)
             local centerW = math.floor(cardW * 0.40)
             local centerX = cx + minusW
             lg.setFont(Fonts.medium)
             lg.setColor(1, 1, 1, 1)
-            lg.printf(tostring(count), centerX, stripY + (stripH - Fonts.medium:getHeight()) / 2, centerW, 'center')
+            lg.printf(tostring(count), centerX, textCY(Fonts.medium, stripY, stripH), centerW, 'center')
 
             -- [+] label (right 30%)
             local plusW = cardW - minusW - centerW
@@ -481,7 +512,7 @@ function MenuScreen.new()
             else
                 lg.setColor(0.35, 0.35, 0.40, 1)
             end
-            lg.printf("+", plusX, stripY + (stripH - Fonts.medium:getHeight()) / 2, plusW, 'center')
+            lg.printf("+", plusX, textCY(Fonts.medium, stripY, stripH), plusW, 'center')
 
             -- Hit rect (screen space)
             self._deckCardRects[i] = {
@@ -500,7 +531,7 @@ function MenuScreen.new()
         local lg = love.graphics
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Ranking", ox, 52 * sc, W, 'center')
+        lg.printf("Ranking", ox, 82 * sc, W, 'center')
         lg.setFont(Fonts.medium)
         lg.setColor(0.4, 0.4, 0.45, 1)
         lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
@@ -509,33 +540,136 @@ function MenuScreen.new()
     function self:drawShopPanel(ox, W, H, sc)
         local lg = love.graphics
 
+        -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Shop", ox, 52 * sc, W, 'center')
+        lg.printf("Shop", ox, 82 * sc, W, 'center')
 
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.4, 0.4, 0.45, 1)
-        lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
+        -- Layout constants
+        local gapX    = 10 * sc
+        local gapY    = 16 * sc
+        local padX    = 14 * sc
+        local btnH    = 36  * sc
+        local cardPad = 10  * sc  -- inner top/bottom padding
+        local cardW   = math.floor((W - 2 * padX - 2 * gapX) / 3)
+        local startX  = ox + padX
 
-        -- Empty placeholder cards
-        local cardW  = 110 * sc
-        local cardH  = 140 * sc
-        local gapX   = 24  * sc
-        local gapY   = 18  * sc
-        local cols   = 2
-        local totalW = cols * cardW + gapX
-        local startX = ox + (W - totalW) / 2
-        local startY = 130 * sc
+        -- Compute card height from actual font metrics so nothing clips
+        local labelH  = Fonts.medium:getHeight()
+        local amountH = Fonts.large:getHeight()
+        local subH    = Fonts.small:getHeight()
+        local cardH   = cardPad + labelH + 6 * sc + amountH + 6 * sc + subH + 8 * sc + btnH + cardPad
 
-        for i = 1, 4 do
-            local col = (i - 1) % 2
-            local row = math.floor((i - 1) / 2)
-            local cx  = startX + col * (cardW + gapX)
-            local cy  = startY + row * (cardH + gapY)
-            lg.setColor(0.12, 0.12, 0.16, 1)
+        local curY = 126 * sc
+
+        -- ── Helper: draw one shop card ────────────────────────────────────────
+        local function drawCard(i, cy, bgCol, borderCol, labelCol, labelTxt, amountTxt, subCol, subTxt, btnEnabled)
+            local cx = startX + (i - 1) * (cardW + gapX)
+
+            lg.setColor(bgCol)
             roundedRect(cx, cy, cardW, cardH, 6, sc)
-            lg.setColor(0.2, 0.2, 0.26, 1)
+            lg.setColor(borderCol)
             roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
+
+            local yLabel  = cy + cardPad
+            local yAmount = yLabel  + labelH + 6 * sc
+            local yPrice  = yAmount + amountH + 6 * sc
+            local yBtn    = cy + cardH - cardPad - btnH
+
+            lg.setFont(Fonts.medium)
+            lg.setColor(labelCol)
+            lg.printf(labelTxt, cx, yLabel, cardW, 'center')
+
+            lg.setFont(Fonts.large)
+            lg.setColor(1, 1, 1, 1)
+            lg.printf(amountTxt, cx, yAmount, cardW, 'center')
+
+            lg.setFont(Fonts.small)
+            lg.setColor(subCol)
+            lg.printf(subTxt, cx, yPrice, cardW, 'center')
+
+            local bx = cx + 6 * sc
+            local bw = cardW - 12 * sc
+            if btnEnabled then
+                lg.setColor(borderCol[1] * 0.5, borderCol[2] * 0.5, borderCol[3] * 0.5, 1)
+                roundedRect(bx, yBtn, bw, btnH, 5, sc)
+                lg.setColor(borderCol)
+                roundedRectLine(bx, yBtn, bw, btnH, 5, sc, 2 * sc)
+                lg.setFont(Fonts.small)
+                lg.setColor(1, 1, 1, 1)
+            else
+                lg.setColor(0.14, 0.14, 0.18, 1)
+                roundedRect(bx, yBtn, bw, btnH, 5, sc)
+                lg.setColor(0.28, 0.28, 0.36, 1)
+                roundedRectLine(bx, yBtn, bw, btnH, 5, sc, 2 * sc)
+                lg.setFont(Fonts.small)
+                lg.setColor(0.40, 0.40, 0.45, 1)
+            end
+            lg.printf("Buy", bx, textCY(Fonts.small, yBtn, btnH), bw, 'center')
+
+            return { x = bx + self.panelOffset, y = yBtn, w = bw, h = btnH }
+        end
+
+        -- ── Section: Buy Gems ────────────────────────────────────────────────
+        lg.setFont(Fonts.small)
+        lg.setColor(0.65, 0.55, 1.0, 1)
+        lg.printf("Buy Gems  (real money – coming soon)", ox, curY, W, 'center')
+        curY = curY + subH + 8 * sc
+
+        local gemPackages = {
+            { gems = 10,  price = "€1.00",  key = "gems_10"  },
+            { gems = 50,  price = "€3.50",  key = "gems_50"  },
+            { gems = 100, price = "€10.00", key = "gems_100" },
+        }
+
+        self._shopGemBtns = {}
+        for i, pkg in ipairs(gemPackages) do
+            local btn = drawCard(i, curY,
+                {0.12, 0.10, 0.22, 1}, {0.55, 0.38, 0.90, 1},
+                {0.70, 0.50, 1.00, 1}, "GEMS",
+                tostring(pkg.gems),
+                {0.75, 0.75, 0.80, 1}, pkg.price,
+                true)
+            btn.key   = pkg.key
+            btn.gems  = pkg.gems
+            btn.price = pkg.price
+            self._shopGemBtns[i] = btn
+        end
+        curY = curY + cardH + gapY
+
+        -- ── Section: Buy Gold ────────────────────────────────────────────────
+        lg.setFont(Fonts.small)
+        lg.setColor(0.90, 0.75, 0.20, 1)
+        lg.printf("Buy Gold  (spend gems)", ox, curY, W, 'center')
+        curY = curY + subH + 8 * sc
+
+        local goldPackages = {
+            { gold = 1000,  gems = 10,  key = "gold_1000"  },
+            { gold = 5000,  gems = 50,  key = "gold_5000"  },
+            { gold = 10000, gems = 100, key = "gold_10000" },
+        }
+
+        local playerGems = (_G.PlayerData and _G.PlayerData.gems) or 0
+        self._shopGoldBtns = {}
+        for i, pkg in ipairs(goldPackages) do
+            local canAfford = playerGems >= pkg.gems
+            local goldText  = (pkg.gold >= 1000) and (math.floor(pkg.gold / 1000) .. "K") or tostring(pkg.gold)
+            local btn = drawCard(i, curY,
+                {0.14, 0.12, 0.06, 1}, {0.75, 0.60, 0.15, 1},
+                {0.90, 0.75, 0.20, 1}, "GOLD",
+                goldText,
+                {0.65, 0.55, 1.00, 1}, pkg.gems .. " gems",
+                canAfford)
+            btn.key        = pkg.key
+            btn.canAfford  = canAfford
+            self._shopGoldBtns[i] = btn
+        end
+
+        -- ── Notice ────────────────────────────────────────────────────────────
+        if self.shopNotice then
+            lg.setFont(Fonts.small)
+            lg.setColor(1, 0.85, 0.3, 1)
+            lg.printf(self.shopNotice, ox, curY + cardH + 8 * sc, W, 'center')
         end
     end
 
@@ -719,7 +853,7 @@ function MenuScreen.new()
         roundedRectLine(bbX, bbY, bbW, bbH, 6, sc, 2 * sc)
         lg.setFont(Fonts.small)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Back", bbX, bbY + (bbH - Fonts.small:getHeight()) / 2, bbW, 'center')
+        lg.printf("Back", bbX, textCY(Fonts.small, bbY, bbH), bbW, 'center')
 
         self._detailBackBtn = { x = bbX, y = bbY, w = bbW, h = bbH }
     end
@@ -748,6 +882,72 @@ function MenuScreen.new()
 
         lg.pop()
         lg.setScissor()
+
+        -- Top-left header: player name + trophies, then gem/gold strips
+        if _G.PlayerData then
+            local hPad    = math.floor(8  * sc)
+            local vPad    = math.floor(5  * sc)
+            local iconGap = math.floor(4  * sc)
+            local lw      = math.max(1, math.floor(sc))
+
+            -- Strip height based on Fonts.small (number text inside strips)
+            lg.setFont(Fonts.small)
+            local numLineH = Fonts.small:getHeight()
+            local stripH   = numLineH + vPad * 2
+            local stripY   = math.floor(8 * sc)
+            local xCur     = math.floor(8 * sc)
+
+            -- Player name in Fonts.medium, vertically centred against strip row
+            lg.setFont(Fonts.medium)
+            local nameStr  = _G.PlayerData.username or ""
+            local nameW    = Fonts.medium:getWidth(nameStr)
+            local nameY    = textCY(Fonts.medium, stripY, stripH)
+            lg.setColor(1, 1, 1, 1)
+            lg.print(nameStr, xCur, nameY)
+
+            -- Trophies below name, slightly indented
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.9, 0.85, 0.3, 0.9)
+            lg.print(tostring(_G.PlayerData.trophies or 0) .. " trophies",
+                     xCur + math.floor(4 * sc),
+                     stripY + stripH + math.floor(1 * sc))
+
+            xCur = xCur + nameW + math.floor(12 * sc)
+
+            -- Scale icon to integer multiple of its 6px height
+            local iconPixSc = math.max(1, math.floor(numLineH / 6))
+
+            local strips = {
+                { icon = self.goldIcon, value = _G.PlayerData.gold or 0 },
+                { icon = self.gemIcon,  value = _G.PlayerData.gems or 0 },
+            }
+
+            for _, s in ipairs(strips) do
+                local iw     = s.icon:getWidth()  * iconPixSc
+                local ih     = s.icon:getHeight() * iconPixSc
+                local numStr = tostring(s.value)
+                lg.setFont(Fonts.small)
+                local numW   = Fonts.small:getWidth(numStr)
+                local stripW = hPad + iw + iconGap + numW + hPad
+
+                -- White outline, slightly rounded
+                lg.setColor(1, 1, 1, 0.9)
+                lg.setLineWidth(lw)
+                local r = math.max(1, math.floor(3 * sc))
+                lg.rectangle('line', xCur, stripY, stripW, stripH, r, r)
+
+                -- Icon (integer scale, vertically centred)
+                local iy = math.floor(stripY + (stripH - ih) / 2)
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(s.icon, xCur + hPad, iy, 0, iconPixSc, iconPixSc)
+
+                -- Number
+                lg.setColor(1, 1, 1, 1)
+                lg.print(numStr, xCur + hPad + iw + iconGap, textCY(Fonts.small, stripY, stripH))
+
+                xCur = xCur + stripW + math.floor(6 * sc)
+            end
+        end
 
         -- Bottom tab bar (screen space)
         self:drawBottomBar(W, H, sc)
@@ -886,6 +1086,37 @@ function MenuScreen.new()
                         DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, 1)
                         return
                     end
+                end
+            end
+        end
+
+        -- Tap: shop buttons
+        if self.currentPanel == 4 then
+            -- Gem purchase buttons (placeholder)
+            for _, btn in ipairs(self._shopGemBtns) do
+                if x >= btn.x and x <= btn.x + btn.w and
+                   y >= btn.y and y <= btn.y + btn.h then
+                    if _G.GameSocket then
+                        _G.GameSocket:send("gem_purchase", {package = btn.key})
+                    end
+                    self.shopNotice = "Purchase simulated! +" .. btn.gems .. " gems added."
+                    self.shopNoticeTimer = 3.0
+                    return
+                end
+            end
+            -- Gold purchase buttons
+            for _, btn in ipairs(self._shopGoldBtns) do
+                if x >= btn.x and x <= btn.x + btn.w and
+                   y >= btn.y and y <= btn.y + btn.h then
+                    if not btn.canAfford then
+                        self.shopNotice = "Not enough gems!"
+                        self.shopNoticeTimer = 2.5
+                        return
+                    end
+                    if _G.GameSocket then
+                        _G.GameSocket:send("shop_purchase", {item = btn.key})
+                    end
+                    return
                 end
             end
         end

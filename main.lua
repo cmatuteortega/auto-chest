@@ -36,10 +36,15 @@ function love.load()
     Constants.updateResolution(windowWidth, windowHeight)
 
     -- Load Pixellari font once globally with scaled sizes
-    Fonts.large = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
+    -- Filter set to 'nearest' so pixel-art glyphs stay crisp (no bilinear blur)
+    Fonts.large  = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
     Fonts.medium = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.MEDIUM)
-    Fonts.small = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
-    Fonts.tiny = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
+    Fonts.small  = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
+    Fonts.tiny   = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
+    Fonts.large:setFilter('nearest', 'nearest')
+    Fonts.medium:setFilter('nearest', 'nearest')
+    Fonts.small:setFilter('nearest', 'nearest')
+    Fonts.tiny:setFilter('nearest', 'nearest')
 
     -- Setup push for resolution scaling with dynamic virtual resolution
     Push:setupScreen(
@@ -180,11 +185,15 @@ function applyResize(w, h)
     -- Recalculate dynamic resolution for new window size
     Constants.updateResolution(w, h)
 
-    -- Reload fonts with new sizes
-    Fonts.large = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
+    -- Reload fonts with new sizes (nearest filter for crisp pixel art)
+    Fonts.large  = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
     Fonts.medium = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.MEDIUM)
-    Fonts.small = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
-    Fonts.tiny = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
+    Fonts.small  = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.SMALL)
+    Fonts.tiny   = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.TINY)
+    Fonts.large:setFilter('nearest', 'nearest')
+    Fonts.medium:setFilter('nearest', 'nearest')
+    Fonts.small:setFilter('nearest', 'nearest')
+    Fonts.tiny:setFilter('nearest', 'nearest')
 
     -- Update the virtual resolution canvas
     Push:setupScreen(

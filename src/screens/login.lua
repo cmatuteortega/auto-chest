@@ -70,11 +70,14 @@ function LoginScreen.new()
         end)
 
         self.client:on("login_success", function(data)
+            print("[LOGIN] gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
             self.playerData = {
                 id = data.player_id,
                 username = data.username,
                 trophies = data.trophies,
                 coins = data.coins,
+                gold = data.gold or 0,
+                gems = data.gems or 0,
                 activeDeckIndex = data.active_deck_index,
                 decks = data.decks,
                 token = data.token
@@ -138,22 +141,25 @@ function LoginScreen.new()
         love.graphics.rectangle('line', x, y, w, h, r * sc, r * sc)
     end
 
+    local function textCY(font, boxY, boxH)
+        return math.floor(boxY + (boxH - (font:getAscent() - font:getDescent())) / 2)
+    end
+
     -- ── draw ────────────────────────────────────────────────────────────────
 
     function self:draw()
         local lg = love.graphics
-        local W = Constants.GAME_WIDTH
-        local H = Constants.GAME_HEIGHT
+        local W  = Constants.GAME_WIDTH
+        local H  = Constants.GAME_HEIGHT
         local sc = Constants.SCALE
+        local cx = W / 2
 
         lg.clear(Constants.COLORS.BACKGROUND)
-
-        local cx = W / 2
 
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", 0, 80 * sc, W, 'center')
+        lg.printf("AutoChest", 0, H * 0.10, W, 'center')
 
         -- Status message
         lg.setFont(Fonts.small)
@@ -164,21 +170,24 @@ function LoginScreen.new()
         else
             lg.setColor(0.6, 1, 0.6, 1)
         end
-        lg.printf(self.statusMessage, 0, 140 * sc, W, 'center')
+        lg.printf(self.statusMessage, 0, H * 0.10 + Fonts.large:getHeight() + 20 * sc, W, 'center')
 
         -- Only show input fields if connected
         if self.status ~= "connecting" and self.status ~= "logged_in" then
-            local fieldW = 300 * sc
-            local fieldH = 44 * sc
-            local fieldX = cx - fieldW / 2
-            local startY = 210 * sc
-            local gap = 16 * sc
+            local fieldW   = 300 * sc
+            local fieldH   = 50 * sc
+            local fieldX   = cx - fieldW / 2
+            local labelGap = 8 * sc   -- space between label and field above it
+            local fieldGap = 36 * sc  -- space between bottom of one field and label of next
+            local textPad  = 12 * sc
 
-            -- Username field
+            local startY = H * 0.32
+
+            -- ── Username ──────────────────────────────────────────────────────
             local usernameY = startY
             lg.setFont(Fonts.small)
             lg.setColor(0.65, 0.65, 0.7, 1)
-            lg.printf("Username", fieldX, usernameY - Fonts.small:getHeight() - 6 * sc, fieldW, 'left')
+            lg.print("Username", fieldX, usernameY - Fonts.small:getHeight() - labelGap)
 
             local active = (self.activeField == "username")
             lg.setColor(active and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
@@ -186,27 +195,25 @@ function LoginScreen.new()
             lg.setColor(active and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
             roundedRectLine(fieldX, usernameY, fieldW, fieldH, 5, sc, 2 * sc)
 
-            local textPad = 10 * sc
-            local textY = usernameY + (fieldH - Fonts.small:getHeight()) / 2
             lg.setFont(Fonts.small)
             lg.setColor(1, 1, 1, 1)
+            local textY = textCY(Fonts.small, usernameY, fieldH)
             lg.print(self.usernameText, fieldX + textPad, textY)
 
-            -- Cursor
             if active and self.cursorVisible then
                 local tw = Fonts.small:getWidth(self.usernameText)
                 lg.setColor(1, 1, 1, 0.85)
-                local cx2 = fieldX + textPad + tw + 1
-                lg.rectangle('fill', cx2, textY + 2 * sc, 2 * sc, Fonts.small:getHeight() - 4 * sc)
+                lg.rectangle('fill', fieldX + textPad + tw + 1, textY + 2 * sc,
+                             2 * sc, Fonts.small:getHeight() - 4 * sc)
             end
 
             self._usernameRect = {x = fieldX, y = usernameY, w = fieldW, h = fieldH}
 
-            -- Password field
-            local passwordY = usernameY + fieldH + gap
+            -- ── Password ──────────────────────────────────────────────────────
+            local passwordY = usernameY + fieldH + fieldGap
             lg.setFont(Fonts.small)
             lg.setColor(0.65, 0.65, 0.7, 1)
-            lg.printf("Password", fieldX, passwordY - Fonts.small:getHeight() - 6 * sc, fieldW, 'left')
+            lg.print("Password", fieldX, passwordY - Fonts.small:getHeight() - labelGap)
 
             active = (self.activeField == "password")
             lg.setColor(active and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
@@ -214,33 +221,32 @@ function LoginScreen.new()
             lg.setColor(active and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
             roundedRectLine(fieldX, passwordY, fieldW, fieldH, 5, sc, 2 * sc)
 
-            textY = passwordY + (fieldH - Fonts.small:getHeight()) / 2
             lg.setFont(Fonts.small)
             lg.setColor(1, 1, 1, 1)
-            -- Display asterisks for password
             local maskedPassword = string.rep("*", #self.passwordText)
+            textY = textCY(Fonts.small, passwordY, fieldH)
             lg.print(maskedPassword, fieldX + textPad, textY)
 
-            -- Cursor
             if active and self.cursorVisible then
                 local tw = Fonts.small:getWidth(maskedPassword)
                 lg.setColor(1, 1, 1, 0.85)
-                local cx2 = fieldX + textPad + tw + 1
-                lg.rectangle('fill', cx2, textY + 2 * sc, 2 * sc, Fonts.small:getHeight() - 4 * sc)
+                lg.rectangle('fill', fieldX + textPad + tw + 1, textY + 2 * sc,
+                             2 * sc, Fonts.small:getHeight() - 4 * sc)
             end
 
             self._passwordRect = {x = fieldX, y = passwordY, w = fieldW, h = fieldH}
 
-            -- Buttons
+            -- ── Buttons ───────────────────────────────────────────────────────
             local btnW = 140 * sc
-            local btnH = 50 * sc
+            local btnH = 54 * sc
             local btnGap = 20 * sc
-            local btnY = passwordY + fieldH + 36 * sc
-            local loginX = cx - btnW - btnGap / 2
+            local btnY = passwordY + fieldH + 44 * sc
+            local loginX    = cx - btnW - btnGap / 2
             local registerX = cx + btnGap / 2
 
-            -- LOGIN button
             local canLogin = #self.usernameText > 0 and #self.passwordText > 0
+
+            -- Login button
             if canLogin then
                 lg.setColor(0.15, 0.32, 0.65, 1)
                 roundedRect(loginX, btnY, btnW, btnH, 8, sc)
@@ -254,17 +260,11 @@ function LoginScreen.new()
             end
             lg.setFont(Fonts.medium)
             lg.setColor(canLogin and {1, 1, 1, 1} or {0.4, 0.4, 0.45, 1})
-            lg.printf("Login", loginX, btnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+            lg.printf("Login", loginX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
+            self._loginBtnRect = canLogin and {x = loginX, y = btnY, w = btnW, h = btnH} or nil
 
+            -- Register button
             if canLogin then
-                self._loginBtnRect = {x = loginX, y = btnY, w = btnW, h = btnH}
-            else
-                self._loginBtnRect = nil
-            end
-
-            -- REGISTER button
-            local canRegister = #self.usernameText > 0 and #self.passwordText > 0
-            if canRegister then
                 lg.setColor(0.15, 0.45, 0.25, 1)
                 roundedRect(registerX, btnY, btnW, btnH, 8, sc)
                 lg.setColor(0.25, 0.65, 0.40, 1)
@@ -276,14 +276,9 @@ function LoginScreen.new()
                 roundedRectLine(registerX, btnY, btnW, btnH, 8, sc, 2 * sc)
             end
             lg.setFont(Fonts.medium)
-            lg.setColor(canRegister and {1, 1, 1, 1} or {0.4, 0.4, 0.45, 1})
-            lg.printf("Register", registerX, btnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
-
-            if canRegister then
-                self._registerBtnRect = {x = registerX, y = btnY, w = btnW, h = btnH}
-            else
-                self._registerBtnRect = nil
-            end
+            lg.setColor(canLogin and {1, 1, 1, 1} or {0.4, 0.4, 0.45, 1})
+            lg.printf("Register", registerX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
+            self._registerBtnRect = canLogin and {x = registerX, y = btnY, w = btnW, h = btnH} or nil
         end
     end
 
