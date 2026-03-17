@@ -174,6 +174,11 @@ function MenuScreen.new()
         love.graphics.rectangle('line', x, y, w, h, r * sc, r * sc)
     end
 
+    -- Vertically centre text in a box using actual glyph bounds (excludes leading)
+    local function textCY(font, boxY, boxH)
+        return math.floor(boxY + (boxH - (font:getAscent() - font:getDescent())) / 2)
+    end
+
     function self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
         local lg = love.graphics
 
@@ -211,7 +216,7 @@ function MenuScreen.new()
 
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Collection", ox, 52 * sc, W, 'center')
+        lg.printf("Collection", ox, 82 * sc, W, 'center')
 
         local cols   = 4
         local cardW  = 100 * sc
@@ -220,7 +225,7 @@ function MenuScreen.new()
         local gapY   = 14  * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
-        local startY = 130 * sc
+        local startY = 160 * sc
 
         -- cards laid out in rows of 4
         self._collectionCards = {}
@@ -260,7 +265,7 @@ function MenuScreen.new()
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, 52 * sc, W, 'center')
+        lg.printf("AutoChest", ox, 82 * sc, W, 'center')
 
 
         -- PLAY ONLINE button
@@ -275,7 +280,7 @@ function MenuScreen.new()
         roundedRectLine(btnX, btnY, btnW, btnH, 8, sc, 2 * sc)
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("PLAY ONLINE", btnX, btnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+        lg.printf("PLAY ONLINE", btnX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
 
         self._playBtnRect = {
             x = btnX + self.panelOffset,
@@ -292,7 +297,7 @@ function MenuScreen.new()
         roundedRectLine(btnX, sbtnY, btnW, btnH, 8, sc, 2 * sc)
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("SANDBOX", btnX, sbtnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+        lg.printf("SANDBOX", btnX, textCY(Fonts.medium, sbtnY, btnH), btnW, 'center')
         self._sandboxBtnRect = {
             x = btnX + self.panelOffset,
             y = sbtnY,
@@ -307,13 +312,13 @@ function MenuScreen.new()
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Decks", ox, 52 * sc, W, 'center')
+        lg.printf("Decks", ox, 82 * sc, W, 'center')
 
         -- ── Deck slot tabs ────────────────────────────────────────────────────
         local tabAreaW  = W - 40 * sc
         local tabW      = tabAreaW / 5
         local tabH      = 44 * sc
-        local tabY      = 108 * sc
+        local tabY      = 138 * sc
         local tabStartX = ox + 20 * sc
 
         self._deckSlotRects = {}
@@ -332,7 +337,7 @@ function MenuScreen.new()
             end
             lg.setFont(Fonts.small)
             lg.setColor(0.85, 0.85, 0.90, 1)
-            lg.printf("D" .. i, tx, tabY + (tabH - Fonts.small:getHeight()) / 2, tabW - 4 * sc, 'center')
+            lg.printf("D" .. i, tx, textCY(Fonts.small, tabY, tabH), tabW - 4 * sc, 'center')
             if DeckManager._data.activeDeckIndex == i then
                 lg.setColor(0.9, 0.85, 0.2, 1)
                 love.graphics.circle('fill', tx + tabW - 10 * sc, tabY + 8 * sc, 5 * sc)
@@ -363,7 +368,7 @@ function MenuScreen.new()
             roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.6, 1, 0.7, 1)
-            lg.printf("Saved!", saveX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Saved!", saveX, textCY(Fonts.small, barY, barH), btnW, 'center')
         else
             lg.setColor(0.16, 0.16, 0.24, 1)
             roundedRect(saveX, barY, btnW, barH, 5, sc)
@@ -371,7 +376,7 @@ function MenuScreen.new()
             roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.85, 0.85, 0.90, 1)
-            lg.printf("Save", saveX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Save", saveX, textCY(Fonts.small, barY, barH), btnW, 'center')
         end
         self._deckSaveRect = { x = saveX + self.panelOffset, y = barY, w = btnW, h = barH }
 
@@ -380,7 +385,7 @@ function MenuScreen.new()
         local counterW = barW - 2 * (btnW + 4 * sc)
         lg.setFont(Fonts.small)
         lg.setColor(total >= 20 and {1, 0.4, 0.4, 1} or {0.7, 0.7, 0.75, 1})
-        lg.printf(total .. " / 20", counterX, barY + (barH - Fonts.small:getHeight()) / 2, counterW, 'center')
+        lg.printf(total .. " / 20", counterX, textCY(Fonts.small, barY, barH), counterW, 'center')
 
         -- EQUIP button
         local equipX = barX + barW - btnW
@@ -391,7 +396,7 @@ function MenuScreen.new()
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.38, 0.38, 0.44, 1)
-            lg.printf("Equip", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Equip", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = nil
         elseif isActive then
             lg.setColor(0.10, 0.38, 0.18, 1)
@@ -400,7 +405,7 @@ function MenuScreen.new()
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.7, 1, 0.75, 1)
-            lg.printf("Equip ✓", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Equip ✓", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
         else
             lg.setColor(0.10, 0.22, 0.50, 1)
@@ -409,7 +414,7 @@ function MenuScreen.new()
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(1, 1, 1, 1)
-            lg.printf("Equip", equipX, barY + (barH - Fonts.small:getHeight()) / 2, btnW, 'center')
+            lg.printf("Equip", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
         end
 
@@ -490,14 +495,14 @@ function MenuScreen.new()
             else
                 lg.setColor(0.35, 0.35, 0.40, 1)
             end
-            lg.printf("-", cx, stripY + (stripH - Fonts.medium:getHeight()) / 2, minusW, 'center')
+            lg.printf("-", cx, textCY(Fonts.medium, stripY, stripH), minusW, 'center')
 
             -- count (center 40%)
             local centerW = math.floor(cardW * 0.40)
             local centerX = cx + minusW
             lg.setFont(Fonts.medium)
             lg.setColor(1, 1, 1, 1)
-            lg.printf(tostring(count), centerX, stripY + (stripH - Fonts.medium:getHeight()) / 2, centerW, 'center')
+            lg.printf(tostring(count), centerX, textCY(Fonts.medium, stripY, stripH), centerW, 'center')
 
             -- [+] label (right 30%)
             local plusW = cardW - minusW - centerW
@@ -507,7 +512,7 @@ function MenuScreen.new()
             else
                 lg.setColor(0.35, 0.35, 0.40, 1)
             end
-            lg.printf("+", plusX, stripY + (stripH - Fonts.medium:getHeight()) / 2, plusW, 'center')
+            lg.printf("+", plusX, textCY(Fonts.medium, stripY, stripH), plusW, 'center')
 
             -- Hit rect (screen space)
             self._deckCardRects[i] = {
@@ -526,7 +531,7 @@ function MenuScreen.new()
         local lg = love.graphics
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Ranking", ox, 52 * sc, W, 'center')
+        lg.printf("Ranking", ox, 82 * sc, W, 'center')
         lg.setFont(Fonts.medium)
         lg.setColor(0.4, 0.4, 0.45, 1)
         lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
@@ -538,7 +543,7 @@ function MenuScreen.new()
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Shop", ox, 52 * sc, W, 'center')
+        lg.printf("Shop", ox, 82 * sc, W, 'center')
 
         -- Layout constants
         local gapX    = 10 * sc
@@ -555,7 +560,7 @@ function MenuScreen.new()
         local subH    = Fonts.small:getHeight()
         local cardH   = cardPad + labelH + 6 * sc + amountH + 6 * sc + subH + 8 * sc + btnH + cardPad
 
-        local curY = 96 * sc
+        local curY = 126 * sc
 
         -- ── Helper: draw one shop card ────────────────────────────────────────
         local function drawCard(i, cy, bgCol, borderCol, labelCol, labelTxt, amountTxt, subCol, subTxt, btnEnabled)
@@ -600,7 +605,7 @@ function MenuScreen.new()
                 lg.setFont(Fonts.small)
                 lg.setColor(0.40, 0.40, 0.45, 1)
             end
-            lg.printf("Buy", bx, yBtn + (btnH - Fonts.small:getHeight()) / 2, bw, 'center')
+            lg.printf("Buy", bx, textCY(Fonts.small, yBtn, btnH), bw, 'center')
 
             return { x = bx + self.panelOffset, y = yBtn, w = bw, h = btnH }
         end
@@ -848,7 +853,7 @@ function MenuScreen.new()
         roundedRectLine(bbX, bbY, bbW, bbH, 6, sc, 2 * sc)
         lg.setFont(Fonts.small)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Back", bbX, bbY + (bbH - Fonts.small:getHeight()) / 2, bbW, 'center')
+        lg.printf("Back", bbX, textCY(Fonts.small, bbY, bbH), bbW, 'center')
 
         self._detailBackBtn = { x = bbX, y = bbY, w = bbW, h = bbH }
     end
@@ -896,8 +901,7 @@ function MenuScreen.new()
             lg.setFont(Fonts.medium)
             local nameStr  = _G.PlayerData.username or ""
             local nameW    = Fonts.medium:getWidth(nameStr)
-            local nameH    = Fonts.medium:getHeight()
-            local nameY    = math.floor(stripY + (stripH - nameH) / 2)
+            local nameY    = textCY(Fonts.medium, stripY, stripH)
             lg.setColor(1, 1, 1, 1)
             lg.print(nameStr, xCur, nameY)
 
@@ -939,7 +943,7 @@ function MenuScreen.new()
 
                 -- Number
                 lg.setColor(1, 1, 1, 1)
-                lg.print(numStr, xCur + hPad + iw + iconGap, math.floor(stripY + vPad))
+                lg.print(numStr, xCur + hPad + iw + iconGap, textCY(Fonts.small, stripY, stripH))
 
                 xCur = xCur + stripW + math.floor(6 * sc)
             end

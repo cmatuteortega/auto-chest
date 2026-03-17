@@ -31,13 +31,14 @@ function theme.drawBox(x,y,w,h, colors, cornerRadius)
 end
 
 function theme.getVerticalOffsetForAlign(valign, font, h)
+	local glyphH = font:getAscent() - font:getDescent()
 	if valign == "top" then
 		return 0
 	elseif valign == "bottom" then
-		return h - font:getHeight()
+		return h - glyphH
 	end
 	-- else: "middle"
-	return (h - font:getHeight()) / 2
+	return math.floor((h - glyphH) / 2)
 end
 
 -- WIDGET VIEWS
