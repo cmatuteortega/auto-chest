@@ -85,6 +85,11 @@ function LoginScreen.new()
             self.status = "logged_in"
             self.statusMessage = "Login successful!"
 
+            -- Persist session token for auto-login on next launch
+            if data.token and data.token ~= "" then
+                love.filesystem.write("session.dat", data.token)
+            end
+
             -- Store player data and socket globally for other screens
             _G.PlayerData = self.playerData
             _G.GameSocket = self.client

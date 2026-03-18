@@ -81,12 +81,16 @@ function MenuScreen.new()
         -- Tab raise animation values: 0 = flat, 1 = fully popped
         self.tabRaiseAnim = { 0, 0, 1, 0, 0 }  -- panel 3 (Battle) starts active
 
+        -- Settings overlay
+        self.showSettings        = false
+        self._settingsBtnRect    = nil
+        self._settingsLogoutRect = nil
+
         -- Hit-rect caches (rebuilt each draw, stored in screen coords)
         self._collectionCards = {}
         self._ipFieldRect     = nil
         self._playBtnRect     = nil
         self._sandboxBtnRect  = nil
-        self._detailBackBtn   = nil
         self._tabRects        = {}
 
         -- Shop state
@@ -765,7 +769,7 @@ function MenuScreen.new()
         if not utype then return end
 
         -- Dim backdrop
-        lg.setColor(0, 0, 0, 0.78)
+        lg.setColor(0, 0, 0, 0.55)
         lg.rectangle('fill', 0, 0, W, H)
 
         -- Panel card
@@ -773,11 +777,13 @@ function MenuScreen.new()
         local panH = H * 0.74
         local panX = (W - panW) / 2
         local panY = (H - panH) / 2
+        local panR = math.max(1, math.floor(4 * sc))
 
-        lg.setColor(0.11, 0.11, 0.17, 1)
-        roundedRect(panX, panY, panW, panH, 10, sc)
-        lg.setColor(0.38, 0.38, 0.55, 1)
-        roundedRectLine(panX, panY, panW, panH, 10, sc, 2 * sc)
+        lg.setColor(0.18, 0.18, 0.22, 1)
+        lg.rectangle('fill', panX, panY, panW, panH, panR, panR)
+        lg.setColor(0.40, 0.40, 0.48, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.rectangle('line', panX, panY, panW, panH, panR, panR)
 
         -- Large sprite (text cursor positioned after visual height, ignoring blank rows)
         local img        = self.sprites[utype]
@@ -841,21 +847,6 @@ function MenuScreen.new()
             curY = curY + Fonts.tiny:getHeight() + 6 * sc
         end
 
-        -- Back button
-        local bbW = 150 * sc
-        local bbH = 42  * sc
-        local bbX = (W - bbW) / 2
-        local bbY = panY + panH - bbH - 12 * sc
-
-        lg.setColor(0.22, 0.22, 0.32, 1)
-        roundedRect(bbX, bbY, bbW, bbH, 6, sc)
-        lg.setColor(0.42, 0.42, 0.55, 1)
-        roundedRectLine(bbX, bbY, bbW, bbH, 6, sc, 2 * sc)
-        lg.setFont(Fonts.small)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Back", bbX, textCY(Fonts.small, bbY, bbH), bbW, 'center')
-
-        self._detailBackBtn = { x = bbX, y = bbY, w = bbW, h = bbH }
     end
 
     -- ── draw ────────────────────────────────────────────────────────────────
@@ -947,6 +938,21 @@ function MenuScreen.new()
 
                 xCur = xCur + stripW + math.floor(6 * sc)
             end
+
+            -- Settings "+" button (top-right corner, SUIT-style)
+            local sbW = stripH   -- square button
+            local sbX = W - sbW - math.floor(8 * sc)
+            local sbY = stripY
+            local sbR = math.max(1, math.floor(3 * sc))
+            lg.setColor(0.22, 0.22, 0.26, 1)
+            lg.rectangle('fill', sbX, sbY, sbW, sbW, sbR, sbR)
+            lg.setColor(0.55, 0.55, 0.60, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.rectangle('line', sbX, sbY, sbW, sbW, sbR, sbR)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.printf("+", sbX, textCY(Fonts.small, sbY, sbW), sbW, 'center')
+            self._settingsBtnRect = { x = sbX, y = sbY, w = sbW, h = sbW }
         end
 
         -- Bottom tab bar (screen space)
@@ -955,6 +961,45 @@ function MenuScreen.new()
         -- Detail overlay (screen space, topmost)
         if self.showDetail then
             self:drawDetailOverlay(W, H, sc)
+        end
+
+        -- Settings overlay
+        if self.showSettings then
+            -- Dim background
+            lg.setColor(0, 0, 0, 0.55)
+            lg.rectangle('fill', 0, 0, W, H)
+
+            -- Panel
+            local panW = math.floor(200 * sc)
+            local panH = math.floor(120 * sc)
+            local panX = math.floor((W - panW) / 2)
+            local panY = math.floor((H - panH) / 2)
+            local panR = math.max(1, math.floor(4 * sc))
+            lg.setColor(0.18, 0.18, 0.22, 1)
+            lg.rectangle('fill', panX, panY, panW, panH, panR, panR)
+            lg.setColor(0.40, 0.40, 0.48, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.rectangle('line', panX, panY, panW, panH, panR, panR)
+
+            -- Title
+            lg.setFont(Fonts.small)
+            lg.setColor(0.75, 0.75, 0.80, 1)
+            lg.printf("Settings", panX, panY + math.floor(12 * sc), panW, 'center')
+
+            -- Logout button inside panel
+            local lbW = math.floor(120 * sc)
+            local lbH = math.floor(32 * sc)
+            local lbX = panX + math.floor((panW - lbW) / 2)
+            local lbY = panY + math.floor(55 * sc)
+            local lbR = math.max(1, math.floor(3 * sc))
+            lg.setColor(0.30, 0.12, 0.12, 1)
+            lg.rectangle('fill', lbX, lbY, lbW, lbH, lbR, lbR)
+            lg.setColor(0.65, 0.28, 0.28, 1)
+            lg.rectangle('line', lbX, lbY, lbW, lbH, lbR, lbR)
+            lg.setFont(Fonts.small)
+            lg.setColor(1, 0.7, 0.7, 1)
+            lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
+            self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
         end
     end
 
@@ -967,13 +1012,13 @@ function MenuScreen.new()
         self.hasMoved   = false
         self.isDragging = false
 
-        -- Overlay absorbs all presses
-        if self.showDetail then return end
+        -- Overlays absorb all presses
+        if self.showDetail or self.showSettings then return end
     end
 
     function self:handleMove(x, y)
         if not self.isPressed then return end
-        if self.showDetail then return end
+        if self.showDetail or self.showSettings then return end
 
         local dx = x - self.pressX
         local dy = y - self.pressY
@@ -1005,13 +1050,41 @@ function MenuScreen.new()
         self.isPressed = false
         local dx = x - self.pressX
 
-        -- Detail overlay: check back button
-        if self.showDetail then
-            local bb = self._detailBackBtn
-            if bb and x >= bb.x and x <= bb.x + bb.w and y >= bb.y and y <= bb.y + bb.h then
-                self.showDetail = false
-                self.detailUnit = nil
+        -- Settings overlay
+        if self.showSettings then
+            -- Logout button inside overlay
+            if self._settingsLogoutRect then
+                local r = self._settingsLogoutRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    love.filesystem.remove("session.dat")
+                    if _G.GameSocket then
+                        _G.GameSocket:disconnect()
+                        _G.GameSocket = nil
+                    end
+                    _G.PlayerData = nil
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('login')
+                    return
+                end
             end
+            -- Tap anywhere else closes overlay
+            self.showSettings = false
+            return
+        end
+
+        -- Settings "+" button
+        if self._settingsBtnRect then
+            local r = self._settingsBtnRect
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self.showSettings = true
+                return
+            end
+        end
+
+        -- Detail overlay: tap anywhere to close
+        if self.showDetail then
+            self.showDetail = false
+            self.detailUnit = nil
             return
         end
 

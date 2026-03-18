@@ -7,10 +7,11 @@ local ScreenManager = require('lib.screen_manager')
 local Constants = require('src.constants')
 
 -- Load screens
-local LoginScreen = require('src.screens.login')
-local MenuScreen  = require('src.screens.menu')
-local GameScreen  = require('src.screens.game')
-local LobbyScreen = require('src.screens.lobby')
+local LoginScreen   = require('src.screens.login')
+local LoadingScreen = require('src.screens.loading')
+local MenuScreen    = require('src.screens.menu')
+local GameScreen    = require('src.screens.game')
+local LobbyScreen   = require('src.screens.lobby')
 
 -- Global fonts (loaded once, shared by all screens)
 Fonts = {}
@@ -64,12 +65,15 @@ function love.load()
 
     -- Initialize screen manager with screen table
     local screens = {
-        login = LoginScreen,
-        menu  = MenuScreen,
-        game  = GameScreen,
-        lobby = LobbyScreen,
+        login   = LoginScreen,
+        loading = LoadingScreen,
+        menu    = MenuScreen,
+        game    = GameScreen,
+        lobby   = LobbyScreen,
     }
-    ScreenManager.init(screens, 'login')
+    local savedToken = love.filesystem.read("session.dat")
+    local startScreen = (savedToken and #savedToken > 0) and 'loading' or 'login'
+    ScreenManager.init(screens, startScreen)
 
     -- Track initial size
     lastWidth = windowWidth
