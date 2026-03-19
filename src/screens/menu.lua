@@ -3,7 +3,6 @@
 
 local Screen       = require('lib.screen')
 local Constants    = require('src.constants')
-local Grid         = require('src.grid')
 local UnitRegistry = require('src.unit_registry')
 local DeckManager  = require('src.deck_manager')
 
@@ -47,6 +46,7 @@ function MenuScreen.new()
         self._deckSaveRect    = nil
         self._deckActiveRect  = nil
         self._saveFeedback    = 0
+        self.previewLayout    = {}
 
         -- Load front sprites for collection display (sorted for stable ordering).
         -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
@@ -59,11 +59,7 @@ function MenuScreen.new()
             self.sprites[utype]           = loaded.front
             self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
         end
-
-        -- Battle panel background
-        self.menuGrid  = Grid()
-        self.bgSprite  = love.graphics.newImage('src/assets/background_battle.png')
-        self.bgSprite:setFilter('nearest', 'nearest')
+        self:buildPreviewLayout()
 
         -- Bottom tab bar icons (order matches panel indices)
         self.uiIcons = {}
@@ -122,6 +118,42 @@ function MenuScreen.new()
 
     function self:close()
         love.keyboard.setKeyRepeat(false)
+    end
+
+    function self:buildPreviewLayout()
+        self.previewLayout = {}
+        local deck = DeckManager.getActiveDeck()
+        if not deck then return end
+
+        -- One entry per unit type that has at least 1 card
+        local units = {}
+        for utype, count in pairs(deck.counts) do
+            if count > 0 then
+                table.insert(units, utype)
+            end
+        end
+        if #units == 0 then return end
+
+        -- All 20 positions (4 rows × 5 cols), Fisher-Yates shuffled
+        local positions = {}
+        for r = 1, 4 do
+            for c = 1, 5 do
+                table.insert(positions, { col = c, row = r })
+            end
+        end
+        for i = #positions, 2, -1 do
+            local j = math.random(i)
+            positions[i], positions[j] = positions[j], positions[i]
+        end
+
+        local n = math.min(#units, #positions)
+        for i = 1, n do
+            table.insert(self.previewLayout, {
+                unitType = units[i],
+                col      = positions[i].col,
+                row      = positions[i].row,
+            })
+        end
     end
 
     -- ── update ──────────────────────────────────────────────────────────────
@@ -250,33 +282,67 @@ function MenuScreen.new()
     end
 
     function self:drawPlayPanel(ox, W, H, sc)
-        local lg = love.graphics
-        local cx = ox + W / 2
-
-        -- Battle background: grid + bg sprite drawn in screen space via panel translation
-        lg.push()
-        lg.translate(ox, 0)
-        local spriteScale = Constants.CELL_SIZE / 16
-        local bgW = self.bgSprite:getWidth()
-        local bgH = self.bgSprite:getHeight()
-        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
-        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
-        lg.setColor(1, 1, 1, 1)
-        lg.draw(self.bgSprite, bgX, bgY + 42, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
-        self.menuGrid:draw(nil, nil)
-        lg.pop()
+        local lg       = love.graphics
+        local cx       = ox + W / 2
+        local cellSize    = Constants.CELL_SIZE
+        local gridW       = 5 * cellSize
+        local gridH       = 4 * cellSize
+        local gridX       = ox + (W - gridW) / 2
+        local titleY      = 82 * sc
+        local btnY        = H * 0.70
+        local titleBottom = titleY + Fonts.large:getHeight()
+        local gridY       = math.floor(titleBottom + (btnY - titleBottom - gridH) / 2)
 
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, 82 * sc, W, 'center')
+        lg.printf("AutoChest", ox, titleY, W, 'center')
 
+        -- Checkerboard cells
+        local CDARK  = Constants.COLORS.CHESS_DARK
+        local CLIGHT = Constants.COLORS.CHESS_LIGHT
+        for row = 1, 4 do
+            for col = 1, 5 do
+                local cx2 = gridX + (col - 1) * cellSize
+                local cy2 = gridY + (row - 1) * cellSize
+                lg.setColor((row + col) % 2 == 0 and CDARK or CLIGHT)
+                lg.rectangle('fill', cx2, cy2, cellSize, cellSize)
+            end
+        end
 
-        -- PLAY ONLINE button
+        -- Grid border
+        lg.setColor(0.22, 0.35, 0.50, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.rectangle('line', gridX, gridY, gridW, gridH)
+
+        -- Unit sprites
+        local sprSc = cellSize / 16
+        for _, entry in ipairs(self.previewLayout) do
+            local img = self.sprites[entry.unitType]
+            if img then
+                local iw, ih     = img:getDimensions()
+                local trimBottom = self.spriteTrimBottoms[entry.unitType] or 0
+                local cx2 = gridX + (entry.col - 1) * cellSize
+                local cy2 = gridY + (entry.row - 1) * cellSize
+                local sx  = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
+                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom) * sprSc)
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(img, sx, sy, 0, sprSc, sprSc)
+            end
+        end
+
+        -- Empty deck hint
+        if #self.previewLayout == 0 then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.45, 0.50, 0.60, 1)
+            lg.printf("Equip a deck to preview", gridX,
+                gridY + gridH / 2 - Fonts.small:getHeight() / 2, gridW, 'center')
+        end
+
+        -- Buttons
         local btnW = 240 * sc
         local btnH = 56  * sc
         local btnX = cx - btnW / 2
-        local btnY = H * 0.50  -- Centered position
 
         lg.setColor(0.15, 0.32, 0.65, 1)
         roundedRect(btnX, btnY, btnW, btnH, 8, sc)
@@ -285,15 +351,8 @@ function MenuScreen.new()
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
         lg.printf("PLAY ONLINE", btnX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
+        self._playBtnRect = { x = btnX + self.panelOffset, y = btnY, w = btnW, h = btnH }
 
-        self._playBtnRect = {
-            x = btnX + self.panelOffset,
-            y = btnY,
-            w = btnW,
-            h = btnH
-        }
-
-        -- SANDBOX button
         local sbtnY = btnY + btnH + 14 * sc
         lg.setColor(0.45, 0.28, 0.08, 1)
         roundedRect(btnX, sbtnY, btnW, btnH, 8, sc)
@@ -302,12 +361,7 @@ function MenuScreen.new()
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
         lg.printf("SANDBOX", btnX, textCY(Fonts.medium, sbtnY, btnH), btnW, 'center')
-        self._sandboxBtnRect = {
-            x = btnX + self.panelOffset,
-            y = sbtnY,
-            w = btnW,
-            h = btnH
-        }
+        self._sandboxBtnRect = { x = btnX + self.panelOffset, y = sbtnY, w = btnW, h = btnH }
     end
 
     function self:drawDecksPanel(ox, W, H, sc)
@@ -1140,6 +1194,7 @@ function MenuScreen.new()
                       y >= sv.y and y <= sv.y + sv.h then
                 DeckManager.save()
                 self._saveFeedback = 1.5
+                self:buildPreviewLayout()
                 return
             end
             -- Equip button
@@ -1147,6 +1202,7 @@ function MenuScreen.new()
             if ar and x >= ar.x and x <= ar.x + ar.w and
                       y >= ar.y and y <= ar.y + ar.h then
                 DeckManager.setActive(self.selectedDeckSlot)
+                self:buildPreviewLayout()
                 return
             end
             -- Card minus/plus strips
