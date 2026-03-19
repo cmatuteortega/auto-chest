@@ -1278,20 +1278,11 @@ function MenuScreen.new()
     function self:mousepressed(x, y, button)
         if button == 1 then self:handlePress(x, y) end
     end
-    function self:touchpressed(_, x, y)
-        self:handlePress(x, y)
-    end
     function self:mousemoved(x, y)
-        self:handleMove(x, y)
-    end
-    function self:touchmoved(_, x, y)
         self:handleMove(x, y)
     end
     function self:mousereleased(x, y, button)
         if button == 1 then self:handleRelease(x, y) end
-    end
-    function self:touchreleased(_, x, y)
-        self:handleRelease(x, y)
     end
 
     function self:keypressed(key)
