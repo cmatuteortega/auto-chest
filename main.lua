@@ -33,8 +33,14 @@ function love.load()
     local windowWidth = love.graphics.getWidth()
     local windowHeight = love.graphics.getHeight()
 
-    -- Calculate dynamic resolution based on window size
-    Constants.updateResolution(windowWidth, windowHeight)
+    -- Get safe area (excludes status bar / nav bar on Android & iOS)
+    local safeX, safeY, safeW, safeH = 0, 0, windowWidth, windowHeight
+    if love.window.getSafeArea then
+        safeX, safeY, safeW, safeH = love.window.getSafeArea()
+    end
+
+    -- Calculate dynamic resolution based on safe area size
+    Constants.updateResolution(safeW, safeH)
 
     -- Load Pixellari font once globally with scaled sizes
     -- Filter set to 'nearest' so pixel-art glyphs stay crisp (no bilinear blur)
@@ -47,21 +53,22 @@ function love.load()
     Fonts.small:setFilter('nearest', 'nearest')
     Fonts.tiny:setFilter('nearest', 'nearest')
 
-    -- Setup push for resolution scaling with dynamic virtual resolution
+    -- Setup push scaled to the safe area; draw offset shifts canvas below status bar
     Push:setupScreen(
-        Constants.GAME_WIDTH,    -- Game width (virtual resolution - matches window)
-        Constants.GAME_HEIGHT,   -- Game height (virtual resolution - matches window)
-        windowWidth,             -- Window width (actual)
-        windowHeight,            -- Window height (actual)
+        Constants.GAME_WIDTH,    -- Virtual width
+        Constants.GAME_HEIGHT,   -- Virtual height
+        safeW,                   -- Safe area width (excludes system UI)
+        safeH,                   -- Safe area height (excludes system UI)
         {
             fullscreen = false,
-            resizable = true,    -- Enable resizable window support
-            pixelperfect = false, -- Allow smooth scaling for any resolution
-            highdpi = false,     -- Disable highdpi to prevent scaling issues
+            resizable = true,
+            pixelperfect = false,
+            highdpi = false,
             canvas = true,
-            stretched = true     -- Fill entire window (no letterboxing)
+            stretched = true
         }
     )
+    Push:setDrawOffset(safeX, safeY)
 
     -- Initialize screen manager with screen table
     local screens = {
@@ -186,8 +193,14 @@ end
 
 -- Apply resize (debounced)
 function applyResize(w, h)
-    -- Recalculate dynamic resolution for new window size
-    Constants.updateResolution(w, h)
+    -- Get safe area (excludes status bar / nav bar on Android & iOS)
+    local safeX, safeY, safeW, safeH = 0, 0, w, h
+    if love.window.getSafeArea then
+        safeX, safeY, safeW, safeH = love.window.getSafeArea()
+    end
+
+    -- Recalculate dynamic resolution for safe area size
+    Constants.updateResolution(safeW, safeH)
 
     -- Reload fonts with new sizes (nearest filter for crisp pixel art)
     Fonts.large  = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
@@ -203,7 +216,7 @@ function applyResize(w, h)
     Push:setupScreen(
         Constants.GAME_WIDTH,
         Constants.GAME_HEIGHT,
-        w, h,
+        safeW, safeH,
         {
             fullscreen = false,
             resizable = true,
@@ -213,6 +226,7 @@ function applyResize(w, h)
             stretched = true
         }
     )
+    Push:setDrawOffset(safeX, safeY)
 
     print(string.format("Resized to: %dx%d (Virtual: %dx%d, Scale: %.2f)",
                        w, h, Constants.GAME_WIDTH, Constants.GAME_HEIGHT, Constants.SCALE))

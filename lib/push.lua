@@ -205,7 +205,7 @@ function push:finish(shader)
     love.graphics.setCanvas()
     
     --draw render
-    love.graphics.translate(self._OFFSET.x, self._OFFSET.y)
+    love.graphics.translate(self._OFFSET.x + (self._drawOffsetX or 0), self._OFFSET.y + (self._drawOffsetY or 0))
     local shader = shader or _render.shader
     love.graphics.push()
     love.graphics.scale(self._SCALE.x, self._SCALE.y)
@@ -231,7 +231,7 @@ function push:setBorderColor(color, g, b)
 end
 
 function push:toGame(x, y)
-  x, y = x - self._OFFSET.x, y - self._OFFSET.y
+  x, y = x - self._OFFSET.x - (self._drawOffsetX or 0), y - self._OFFSET.y - (self._drawOffsetY or 0)
   local normalX, normalY = x / self._GWIDTH, y / self._GHEIGHT
   
   x = (x >= 0 and x <= self._WWIDTH * self._SCALE.x) and normalX * self._WWIDTH or nil
@@ -277,5 +277,10 @@ end
 function push:getWidth() return self._WWIDTH end
 function push:getHeight() return self._WHEIGHT end
 function push:getDimensions() return self._WWIDTH, self._WHEIGHT end
+
+function push:setDrawOffset(x, y)
+  self._drawOffsetX = x or 0
+  self._drawOffsetY = y or 0
+end
 
 return push
