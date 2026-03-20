@@ -262,6 +262,7 @@ function GameScreen.new()
     function self:startBattle()
         self.timer = 0
         self.state = "battle"
+        AudioManager.setBattleMode(true)
         self.battleAccumulator = 0
         self.battleStepCount   = 0
 
@@ -591,6 +592,7 @@ function GameScreen.new()
                     self.pendingWinner     = self.winner
                     self.state             = "intermission"
                     self.intermissionTimer = 2.5
+                    AudioManager.setBattleMode(false)
                 end
             end
         end
@@ -768,6 +770,7 @@ function GameScreen.new()
             -- Ready button below the grid (disabled after pressing in online mode)
             local readyButton = self.suit:Button(buttonText, {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
             if readyButton.hit and not (self.isOnline and self.localReady) then
+                AudioManager.playTap()
                 if self.isOnline then
                     self.localReady = true
                     self:sendMsg({type = "ready"})
@@ -783,6 +786,7 @@ function GameScreen.new()
                 self.rerollButtonX, self.rerollButtonY,
                 self.rerollButtonSize, self.rerollButtonSize)
             if rerollButton.hit then
+                AudioManager.playTap()
                 if self.isSandbox or self.playerCoins >= self.rerollCost then
                     if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
                     if self.usingDeck and not self.isSandbox then
@@ -801,6 +805,7 @@ function GameScreen.new()
                 local menuBtnX = Constants.GAME_WIDTH - menuBtnW - 10 * Constants.SCALE
                 local menuBtn = self.suit:Button("MENU", {id="menu_btn"}, menuBtnX, 6 * Constants.SCALE, menuBtnW, menuBtnH)
                 if menuBtn.hit then
+                    AudioManager.playTap()
                     Constants.PERSPECTIVE = 1
                     local ScreenManager = require('lib.screen_manager')
                     ScreenManager.switch('menu')
@@ -816,6 +821,7 @@ function GameScreen.new()
             local restartButton = self.suit:Button(buttonText, {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
 
             if restartButton.hit then
+                AudioManager.playTap()
                 if self.isOnline then
                     -- Keep socket alive so player can re-queue without re-logging in
                     _G.GameSocket = self.socket
@@ -1276,6 +1282,7 @@ function GameScreen.new()
         end
         -- Reset global perspective when leaving the game screen
         Constants.PERSPECTIVE = 1
+        AudioManager.setBattleMode(false)
     end
 
     -- Check if all attack animations have completed

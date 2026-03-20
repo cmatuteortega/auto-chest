@@ -318,6 +318,7 @@ function LoginScreen.new()
         if self._loginBtnRect then
             local r = self._loginBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                AudioManager.playTap()
                 -- Close keyboard before login
                 love.keyboard.setTextInput(false)
                 self:doLogin()
@@ -327,6 +328,7 @@ function LoginScreen.new()
         if self._registerBtnRect then
             local r = self._registerBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                AudioManager.playTap()
                 -- Close keyboard before register
                 love.keyboard.setTextInput(false)
                 self:doRegister()
