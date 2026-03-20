@@ -330,8 +330,9 @@ function MenuScreen.new()
                 local trimBottom = self.spriteTrimBottoms[entry.unitType] or 0
                 local cx2 = gridX + (entry.col - 1) * cellSize
                 local cy2 = gridY + (entry.row - 1) * cellSize
+                local BOTTOM_MARGIN = 3
                 local sx  = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
-                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom) * sprSc)
+                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
             end
