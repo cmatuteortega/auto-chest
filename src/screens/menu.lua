@@ -3,7 +3,6 @@
 
 local Screen       = require('lib.screen')
 local Constants    = require('src.constants')
-local Grid         = require('src.grid')
 local UnitRegistry = require('src.unit_registry')
 local DeckManager  = require('src.deck_manager')
 
@@ -47,6 +46,7 @@ function MenuScreen.new()
         self._deckSaveRect    = nil
         self._deckActiveRect  = nil
         self._saveFeedback    = 0
+        self.previewLayout    = {}
 
         -- Load front sprites for collection display (sorted for stable ordering).
         -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
@@ -59,11 +59,7 @@ function MenuScreen.new()
             self.sprites[utype]           = loaded.front
             self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
         end
-
-        -- Battle panel background
-        self.menuGrid  = Grid()
-        self.bgSprite  = love.graphics.newImage('src/assets/background_battle.png')
-        self.bgSprite:setFilter('nearest', 'nearest')
+        self:buildPreviewLayout()
 
         -- Bottom tab bar icons (order matches panel indices)
         self.uiIcons = {}
@@ -81,12 +77,16 @@ function MenuScreen.new()
         -- Tab raise animation values: 0 = flat, 1 = fully popped
         self.tabRaiseAnim = { 0, 0, 1, 0, 0 }  -- panel 3 (Battle) starts active
 
+        -- Settings overlay
+        self.showSettings        = false
+        self._settingsBtnRect    = nil
+        self._settingsLogoutRect = nil
+
         -- Hit-rect caches (rebuilt each draw, stored in screen coords)
         self._collectionCards = {}
         self._ipFieldRect     = nil
         self._playBtnRect     = nil
         self._sandboxBtnRect  = nil
-        self._detailBackBtn   = nil
         self._tabRects        = {}
 
         -- Shop state
@@ -118,6 +118,42 @@ function MenuScreen.new()
 
     function self:close()
         love.keyboard.setKeyRepeat(false)
+    end
+
+    function self:buildPreviewLayout()
+        self.previewLayout = {}
+        local deck = DeckManager.getActiveDeck()
+        if not deck then return end
+
+        -- One entry per unit type that has at least 1 card
+        local units = {}
+        for utype, count in pairs(deck.counts) do
+            if count > 0 then
+                table.insert(units, utype)
+            end
+        end
+        if #units == 0 then return end
+
+        -- All 20 positions (4 rows × 5 cols), Fisher-Yates shuffled
+        local positions = {}
+        for r = 1, 4 do
+            for c = 1, 5 do
+                table.insert(positions, { col = c, row = r })
+            end
+        end
+        for i = #positions, 2, -1 do
+            local j = math.random(i)
+            positions[i], positions[j] = positions[j], positions[i]
+        end
+
+        local n = math.min(#units, #positions)
+        for i = 1, n do
+            table.insert(self.previewLayout, {
+                unitType = units[i],
+                col      = positions[i].col,
+                row      = positions[i].row,
+            })
+        end
     end
 
     -- ── update ──────────────────────────────────────────────────────────────
@@ -246,33 +282,67 @@ function MenuScreen.new()
     end
 
     function self:drawPlayPanel(ox, W, H, sc)
-        local lg = love.graphics
-        local cx = ox + W / 2
-
-        -- Battle background: grid + bg sprite drawn in screen space via panel translation
-        lg.push()
-        lg.translate(ox, 0)
-        local spriteScale = Constants.CELL_SIZE / 16
-        local bgW = self.bgSprite:getWidth()
-        local bgH = self.bgSprite:getHeight()
-        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
-        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
-        lg.setColor(1, 1, 1, 1)
-        lg.draw(self.bgSprite, bgX, bgY + 42, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
-        self.menuGrid:draw(nil, nil)
-        lg.pop()
+        local lg       = love.graphics
+        local cx       = ox + W / 2
+        local cellSize    = Constants.CELL_SIZE
+        local gridW       = 5 * cellSize
+        local gridH       = 4 * cellSize
+        local gridX       = ox + (W - gridW) / 2
+        local titleY      = 82 * sc
+        local btnY        = H * 0.70
+        local titleBottom = titleY + Fonts.large:getHeight()
+        local gridY       = math.floor(titleBottom + (btnY - titleBottom - gridH) / 2)
 
         -- Title
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, 82 * sc, W, 'center')
+        lg.printf("AutoChest", ox, titleY, W, 'center')
 
+        -- Checkerboard cells
+        local CDARK  = Constants.COLORS.CHESS_DARK
+        local CLIGHT = Constants.COLORS.CHESS_LIGHT
+        for row = 1, 4 do
+            for col = 1, 5 do
+                local cx2 = gridX + (col - 1) * cellSize
+                local cy2 = gridY + (row - 1) * cellSize
+                lg.setColor((row + col) % 2 == 0 and CDARK or CLIGHT)
+                lg.rectangle('fill', cx2, cy2, cellSize, cellSize)
+            end
+        end
 
-        -- PLAY ONLINE button
+        -- Grid border
+        lg.setColor(0.22, 0.35, 0.50, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.rectangle('line', gridX, gridY, gridW, gridH)
+
+        -- Unit sprites
+        local sprSc = cellSize / 16
+        for _, entry in ipairs(self.previewLayout) do
+            local img = self.sprites[entry.unitType]
+            if img then
+                local iw, ih     = img:getDimensions()
+                local trimBottom = self.spriteTrimBottoms[entry.unitType] or 0
+                local cx2 = gridX + (entry.col - 1) * cellSize
+                local cy2 = gridY + (entry.row - 1) * cellSize
+                local sx  = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
+                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom) * sprSc)
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(img, sx, sy, 0, sprSc, sprSc)
+            end
+        end
+
+        -- Empty deck hint
+        if #self.previewLayout == 0 then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.45, 0.50, 0.60, 1)
+            lg.printf("Equip a deck to preview", gridX,
+                gridY + gridH / 2 - Fonts.small:getHeight() / 2, gridW, 'center')
+        end
+
+        -- Buttons
         local btnW = 240 * sc
         local btnH = 56  * sc
         local btnX = cx - btnW / 2
-        local btnY = H * 0.50  -- Centered position
 
         lg.setColor(0.15, 0.32, 0.65, 1)
         roundedRect(btnX, btnY, btnW, btnH, 8, sc)
@@ -281,15 +351,8 @@ function MenuScreen.new()
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
         lg.printf("PLAY ONLINE", btnX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
+        self._playBtnRect = { x = btnX + self.panelOffset, y = btnY, w = btnW, h = btnH }
 
-        self._playBtnRect = {
-            x = btnX + self.panelOffset,
-            y = btnY,
-            w = btnW,
-            h = btnH
-        }
-
-        -- SANDBOX button
         local sbtnY = btnY + btnH + 14 * sc
         lg.setColor(0.45, 0.28, 0.08, 1)
         roundedRect(btnX, sbtnY, btnW, btnH, 8, sc)
@@ -298,12 +361,7 @@ function MenuScreen.new()
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
         lg.printf("SANDBOX", btnX, textCY(Fonts.medium, sbtnY, btnH), btnW, 'center')
-        self._sandboxBtnRect = {
-            x = btnX + self.panelOffset,
-            y = sbtnY,
-            w = btnW,
-            h = btnH
-        }
+        self._sandboxBtnRect = { x = btnX + self.panelOffset, y = sbtnY, w = btnW, h = btnH }
     end
 
     function self:drawDecksPanel(ox, W, H, sc)
@@ -765,7 +823,7 @@ function MenuScreen.new()
         if not utype then return end
 
         -- Dim backdrop
-        lg.setColor(0, 0, 0, 0.78)
+        lg.setColor(0, 0, 0, 0.55)
         lg.rectangle('fill', 0, 0, W, H)
 
         -- Panel card
@@ -773,11 +831,13 @@ function MenuScreen.new()
         local panH = H * 0.74
         local panX = (W - panW) / 2
         local panY = (H - panH) / 2
+        local panR = math.max(1, math.floor(4 * sc))
 
-        lg.setColor(0.11, 0.11, 0.17, 1)
-        roundedRect(panX, panY, panW, panH, 10, sc)
-        lg.setColor(0.38, 0.38, 0.55, 1)
-        roundedRectLine(panX, panY, panW, panH, 10, sc, 2 * sc)
+        lg.setColor(0.18, 0.18, 0.22, 1)
+        lg.rectangle('fill', panX, panY, panW, panH, panR, panR)
+        lg.setColor(0.40, 0.40, 0.48, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.rectangle('line', panX, panY, panW, panH, panR, panR)
 
         -- Large sprite (text cursor positioned after visual height, ignoring blank rows)
         local img        = self.sprites[utype]
@@ -841,21 +901,6 @@ function MenuScreen.new()
             curY = curY + Fonts.tiny:getHeight() + 6 * sc
         end
 
-        -- Back button
-        local bbW = 150 * sc
-        local bbH = 42  * sc
-        local bbX = (W - bbW) / 2
-        local bbY = panY + panH - bbH - 12 * sc
-
-        lg.setColor(0.22, 0.22, 0.32, 1)
-        roundedRect(bbX, bbY, bbW, bbH, 6, sc)
-        lg.setColor(0.42, 0.42, 0.55, 1)
-        roundedRectLine(bbX, bbY, bbW, bbH, 6, sc, 2 * sc)
-        lg.setFont(Fonts.small)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Back", bbX, textCY(Fonts.small, bbY, bbH), bbW, 'center')
-
-        self._detailBackBtn = { x = bbX, y = bbY, w = bbW, h = bbH }
     end
 
     -- ── draw ────────────────────────────────────────────────────────────────
@@ -947,6 +992,21 @@ function MenuScreen.new()
 
                 xCur = xCur + stripW + math.floor(6 * sc)
             end
+
+            -- Settings "+" button (top-right corner, SUIT-style)
+            local sbW = stripH   -- square button
+            local sbX = W - sbW - math.floor(8 * sc)
+            local sbY = stripY
+            local sbR = math.max(1, math.floor(3 * sc))
+            lg.setColor(0.22, 0.22, 0.26, 1)
+            lg.rectangle('fill', sbX, sbY, sbW, sbW, sbR, sbR)
+            lg.setColor(0.55, 0.55, 0.60, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.rectangle('line', sbX, sbY, sbW, sbW, sbR, sbR)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.printf("+", sbX, textCY(Fonts.small, sbY, sbW), sbW, 'center')
+            self._settingsBtnRect = { x = sbX, y = sbY, w = sbW, h = sbW }
         end
 
         -- Bottom tab bar (screen space)
@@ -955,6 +1015,45 @@ function MenuScreen.new()
         -- Detail overlay (screen space, topmost)
         if self.showDetail then
             self:drawDetailOverlay(W, H, sc)
+        end
+
+        -- Settings overlay
+        if self.showSettings then
+            -- Dim background
+            lg.setColor(0, 0, 0, 0.55)
+            lg.rectangle('fill', 0, 0, W, H)
+
+            -- Panel
+            local panW = math.floor(200 * sc)
+            local panH = math.floor(120 * sc)
+            local panX = math.floor((W - panW) / 2)
+            local panY = math.floor((H - panH) / 2)
+            local panR = math.max(1, math.floor(4 * sc))
+            lg.setColor(0.18, 0.18, 0.22, 1)
+            lg.rectangle('fill', panX, panY, panW, panH, panR, panR)
+            lg.setColor(0.40, 0.40, 0.48, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.rectangle('line', panX, panY, panW, panH, panR, panR)
+
+            -- Title
+            lg.setFont(Fonts.small)
+            lg.setColor(0.75, 0.75, 0.80, 1)
+            lg.printf("Settings", panX, panY + math.floor(12 * sc), panW, 'center')
+
+            -- Logout button inside panel
+            local lbW = math.floor(120 * sc)
+            local lbH = math.floor(32 * sc)
+            local lbX = panX + math.floor((panW - lbW) / 2)
+            local lbY = panY + math.floor(55 * sc)
+            local lbR = math.max(1, math.floor(3 * sc))
+            lg.setColor(0.30, 0.12, 0.12, 1)
+            lg.rectangle('fill', lbX, lbY, lbW, lbH, lbR, lbR)
+            lg.setColor(0.65, 0.28, 0.28, 1)
+            lg.rectangle('line', lbX, lbY, lbW, lbH, lbR, lbR)
+            lg.setFont(Fonts.small)
+            lg.setColor(1, 0.7, 0.7, 1)
+            lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
+            self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
         end
     end
 
@@ -967,13 +1066,13 @@ function MenuScreen.new()
         self.hasMoved   = false
         self.isDragging = false
 
-        -- Overlay absorbs all presses
-        if self.showDetail then return end
+        -- Overlays absorb all presses
+        if self.showDetail or self.showSettings then return end
     end
 
     function self:handleMove(x, y)
         if not self.isPressed then return end
-        if self.showDetail then return end
+        if self.showDetail or self.showSettings then return end
 
         local dx = x - self.pressX
         local dy = y - self.pressY
@@ -1005,13 +1104,41 @@ function MenuScreen.new()
         self.isPressed = false
         local dx = x - self.pressX
 
-        -- Detail overlay: check back button
-        if self.showDetail then
-            local bb = self._detailBackBtn
-            if bb and x >= bb.x and x <= bb.x + bb.w and y >= bb.y and y <= bb.y + bb.h then
-                self.showDetail = false
-                self.detailUnit = nil
+        -- Settings overlay
+        if self.showSettings then
+            -- Logout button inside overlay
+            if self._settingsLogoutRect then
+                local r = self._settingsLogoutRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    love.filesystem.remove("session.dat")
+                    if _G.GameSocket then
+                        _G.GameSocket:disconnect()
+                        _G.GameSocket = nil
+                    end
+                    _G.PlayerData = nil
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('login')
+                    return
+                end
             end
+            -- Tap anywhere else closes overlay
+            self.showSettings = false
+            return
+        end
+
+        -- Settings "+" button
+        if self._settingsBtnRect then
+            local r = self._settingsBtnRect
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self.showSettings = true
+                return
+            end
+        end
+
+        -- Detail overlay: tap anywhere to close
+        if self.showDetail then
+            self.showDetail = false
+            self.detailUnit = nil
             return
         end
 
@@ -1067,6 +1194,7 @@ function MenuScreen.new()
                       y >= sv.y and y <= sv.y + sv.h then
                 DeckManager.save()
                 self._saveFeedback = 1.5
+                self:buildPreviewLayout()
                 return
             end
             -- Equip button
@@ -1074,6 +1202,7 @@ function MenuScreen.new()
             if ar and x >= ar.x and x <= ar.x + ar.w and
                       y >= ar.y and y <= ar.y + ar.h then
                 DeckManager.setActive(self.selectedDeckSlot)
+                self:buildPreviewLayout()
                 return
             end
             -- Card minus/plus strips
@@ -1149,20 +1278,11 @@ function MenuScreen.new()
     function self:mousepressed(x, y, button)
         if button == 1 then self:handlePress(x, y) end
     end
-    function self:touchpressed(_, x, y)
-        self:handlePress(x, y)
-    end
     function self:mousemoved(x, y)
-        self:handleMove(x, y)
-    end
-    function self:touchmoved(_, x, y)
         self:handleMove(x, y)
     end
     function self:mousereleased(x, y, button)
         if button == 1 then self:handleRelease(x, y) end
-    end
-    function self:touchreleased(_, x, y)
-        self:handleRelease(x, y)
     end
 
     function self:keypressed(key)

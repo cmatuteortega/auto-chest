@@ -1,6 +1,6 @@
 function love.conf(t)
     t.identity = "autochest"
-    t.version = "11.4"
+    t.version = "12.0"
     t.console = false
     t.accelerometerjoystick = true
     t.externalstorage = false
@@ -29,9 +29,12 @@ function love.conf(t)
     t.window.x = nil
     t.window.y = nil
 
-    -- Mobile orientation (portrait mode lock)
-    if love.system then
-        t.window.orientation = "portrait"  -- Lock to portrait on mobile devices
+    -- Mobile-specific settings (Android / iOS)
+    if love.system and love.system.getOS then
+        local os = love.system.getOS()
+        if os == "Android" or os == "iOS" then
+            t.window.orientation = "portrait"   -- Lock to portrait (Love2D hint)
+        end
     end
 
     t.modules.audio = true
