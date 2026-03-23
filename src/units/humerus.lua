@@ -82,12 +82,9 @@ function Humerus:getDamage(grid)
 end
 
 -- Melee attack with optional Cleave on every 3rd hit.
+-- Animation is started by startMeleeAnimation() in update(); damage fires here at 2/3 progress.
 function Humerus:attack(target, grid)
     if not target or target.isDead then return end
-
-    self.attackAnimProgress = 0
-    self.attackTargetCol    = target.col
-    self.attackTargetRow    = target.row
 
     target:takeDamage(self:getDamage(grid))
     self.hitCounter = self.hitCounter + 1

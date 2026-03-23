@@ -141,9 +141,13 @@ function BaseUnit:new(row, col, owner, sprites, stats)
 
     -- Attack animation state
     self.attackAnimProgress = 0
-    self.attackAnimDuration = 0.45  -- 3 phases: windup / lunge / impact (0.15s each)
+    self.attackAnimDuration = 0.45  -- 3 phases: windup / lunge / impact; scaled at fire time
     self.attackTargetCol = nil
     self.attackTargetRow = nil
+
+    -- Deferred melee damage (applied at 2/3 of lunge animation)
+    self.pendingAttackTarget = nil
+    self.pendingAttackGrid   = nil
 
     -- Hit animation state
     self.hitAnimProgress = 0
@@ -299,11 +303,13 @@ function BaseUnit:updateVisuals(dt, gameState)
         end
     else
         -- Cycle idle/walk frames via timer (only when actually moving for walk)
+        -- Idle uses a slower cadence than walk for a more relaxed breathing feel
+        local frameDur = (self.animState == "idle") and (self.animFrameDuration * 2) or self.animFrameDuration
         local shouldCycle = (self.animState == "idle") or self.isMoving
         if shouldCycle then
             self.animFrameTimer = self.animFrameTimer + dt
-            if self.animFrameTimer >= self.animFrameDuration then
-                self.animFrameTimer = self.animFrameTimer - self.animFrameDuration
+            if self.animFrameTimer >= frameDur then
+                self.animFrameTimer = self.animFrameTimer - frameDur
                 local d = self.sprites.directional
                 local steps = (self.animState == "idle") and {0, 180} or {0, 45, 135, 180, 225, 315}
                 local step = self:getNearestStep(self.facingAngle, steps)
@@ -345,8 +351,8 @@ function BaseUnit:draw()
         y = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
     end
 
-    -- Apply attack animation (lunge with outBack for punch effect)
-    if self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then
+    -- Apply attack animation (lunge with outBack for punch effect) — melee only
+    if self.attackRange == 0 and self.attackAnimProgress < 1 and self.attackTargetCol and self.attackTargetRow then
         local visualTargetRow = Constants.toVisualRow(self.attackTargetRow)
         local targetX = Constants.GRID_OFFSET_X + (self.attackTargetCol - 1) * Constants.CELL_SIZE
         local targetY = Constants.GRID_OFFSET_Y + (visualTargetRow - 1) * Constants.CELL_SIZE
@@ -606,9 +612,11 @@ function BaseUnit:resetCombatState()
     self.startRow           = self.row
     self.targetCol          = nil
     self.targetRow          = nil
-    self.attackAnimProgress = 1
-    self.attackTargetCol    = nil
-    self.attackTargetRow    = nil
+    self.attackAnimProgress  = 1
+    self.attackTargetCol     = nil
+    self.attackTargetRow     = nil
+    self.pendingAttackTarget = nil
+    self.pendingAttackGrid   = nil
 
     -- Reset directional sprite fields
     if self.hasDirectionalSprites then
@@ -631,6 +639,13 @@ function BaseUnit:update(dt, grid)
             self.attackTargetCol = nil
             self.attackTargetRow = nil
         end
+    end
+
+    -- Fire deferred melee damage at the end-of-lunge threshold (2/3 of animation)
+    if self.pendingAttackTarget and self.attackAnimProgress >= 2/3 and not self.isDead then
+        self:attack(self.pendingAttackTarget, self.pendingAttackGrid)
+        self.pendingAttackTarget = nil
+        self.pendingAttackGrid   = nil
     end
 
     if self.hitAnimProgress < 1 and self.hitAnimIntensity > 0 then
@@ -711,7 +726,18 @@ function BaseUnit:update(dt, grid)
                 self.targetFacingAngle = self:computeTargetAngle(
                     self.target.col - self.col, self.target.row - self.row)
             end
-            self:attack(self.target, grid)
+            if self.attackRange == 0 then
+                self:startMeleeAnimation(self.target, grid)
+            else
+                -- Ranged: fire projectile immediately; also trigger hit_* windup sprites
+                if self.hasDirectionalSprites then
+                    self.attackAnimProgress = 0
+                    self.attackTargetCol    = self.target.col
+                    self.attackTargetRow    = self.target.row
+                    self.attackAnimDuration = math.min(0.45, 1 / self.attackSpeed)
+                end
+                self:attack(self.target, grid)
+            end
             self.attackCooldown = 1 / self.attackSpeed
         end
     else
@@ -733,7 +759,18 @@ function BaseUnit:update(dt, grid)
                     self.targetFacingAngle = self:computeTargetAngle(
                         self.target.col - self.col, self.target.row - self.row)
                 end
-                self:attack(self.target, grid)
+                if self.attackRange == 0 then
+                    self:startMeleeAnimation(self.target, grid)
+                else
+                    -- Ranged: fire projectile immediately; also trigger hit_* windup sprites
+                    if self.hasDirectionalSprites then
+                        self.attackAnimProgress = 0
+                        self.attackTargetCol    = self.target.col
+                        self.attackTargetRow    = self.target.row
+                        self.attackAnimDuration = math.min(0.45, 1 / self.attackSpeed)
+                    end
+                    self:attack(self.target, grid)
+                end
                 self.attackCooldown = 1 / self.attackSpeed
             end
         else
@@ -858,10 +895,30 @@ function BaseUnit:isInAttackRange(target)
     end
 end
 
--- Attack the target (abstract method - override in subclasses)
+-- Default melee attack: apply damage and handle kill.
+-- Ranged units override this via BaseUnitRanged to fire a projectile instead.
+-- Melee subclasses may override to add extra effects (e.g. Humerus cleave).
 function BaseUnit:attack(target, grid)
-    -- Base implementation - subclasses should override this
-    error("BaseUnit:attack() must be overridden in subclass")
+    if not target or target.isDead then return end
+    target:takeDamage(self:getDamage(grid))
+    if target.isDead then
+        local cell = grid:getCell(target.col, target.row)
+        if cell then cell.occupied = false end
+        self:onKill(target)
+    end
+end
+
+-- Queue deferred melee damage: starts the lunge animation and stores the target.
+-- Damage is applied when attackAnimProgress reaches 2/3 (end of lunge phase).
+-- attackAnimDuration is scaled to the unit's current attack speed so fast units
+-- have proportionally shorter windup/lunge/impact cycles.
+function BaseUnit:startMeleeAnimation(target, grid)
+    self.attackAnimProgress  = 0
+    self.attackTargetCol     = target.col
+    self.attackTargetRow     = target.row
+    self.attackAnimDuration  = math.min(0.45, 1 / self.attackSpeed)
+    self.pendingAttackTarget = target
+    self.pendingAttackGrid   = grid
 end
 
 -- Move along the current path (with tween animation)

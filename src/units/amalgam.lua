@@ -88,21 +88,9 @@ function Amalgam:takeDamage(amount)
     end
 end
 
--- Standard melee attack: lunge animation + damage
+-- Standard melee attack: apply damage (animation started by startMeleeAnimation in update())
 function Amalgam:attack(target, grid)
-    if target and not target.isDead then
-        self.attackAnimProgress = 0
-        self.attackTargetCol    = target.col
-        self.attackTargetRow    = target.row
-
-        target:takeDamage(self:getDamage(grid))
-
-        if target.isDead then
-            local cell = grid:getCell(target.col, target.row)
-            if cell then cell.occupied = false end
-            self:onKill(target)
-        end
-    end
+    Amalgam.super.attack(self, target, grid)
 end
 
 -- AoE burst when invulnerability triggers (upgrade 2)

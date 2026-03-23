@@ -180,20 +180,9 @@ end
 -- ============================================================
 -- attack: melee lunge + damage.
 -- ============================================================
+-- Melee attack: apply damage (animation started by startMeleeAnimation in update())
 function Bull:attack(target, grid)
-    if not target or target.isDead then return end
-
-    self.attackAnimProgress = 0
-    self.attackTargetCol    = target.col
-    self.attackTargetRow    = target.row
-
-    target:takeDamage(self:getDamage(grid))
-
-    if target.isDead then
-        local cell = grid:getCell(target.col, target.row)
-        if cell then cell.occupied = false end
-        self:onKill(target)
-    end
+    Bull.super.attack(self, target, grid)
 end
 
 -- ============================================================

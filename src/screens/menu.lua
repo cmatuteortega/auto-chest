@@ -54,10 +54,16 @@ function MenuScreen.new()
         table.sort(self.unitOrder)
         self.sprites          = {}
         self.spriteTrimBottoms = {}
+        -- Directional sprites for play-panel idle animation (keyed by unitType)
+        self.dirSprites = {}
+        -- Per-unit idle animation state: {frameIndex, timer}
+        self.idleAnim   = {}
         for _, utype in ipairs(self.unitOrder) do
-            local loaded = UnitRegistry.loadSprites(utype)
+            local loaded = UnitRegistry.loadDirectionalSprites(utype)
             self.sprites[utype]           = loaded.front
             self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
+            self.dirSprites[utype]        = loaded
+            self.idleAnim[utype]          = { frameIndex = 1, timer = 0 }
         end
         self:buildPreviewLayout()
 
@@ -184,6 +190,21 @@ function MenuScreen.new()
             end
         end
 
+        -- Advance idle animation for play-panel preview (uses the same 2× slower cadence as in-game)
+        local IDLE_FRAME_DUR = 0.12 * 2  -- matches animFrameDuration * 2 from base_unit
+        for _, utype in ipairs(self.unitOrder) do
+            local d = self.dirSprites[utype]
+            if d and d.hasDirectionalSprites and d.directional.idle and d.directional.idle[0] then
+                local frames = d.directional.idle[0].frames
+                local anim   = self.idleAnim[utype]
+                anim.timer = anim.timer + dt
+                if anim.timer >= IDLE_FRAME_DUR then
+                    anim.timer = anim.timer - IDLE_FRAME_DUR
+                    anim.frameIndex = (anim.frameIndex % #frames) + 1
+                end
+            end
+        end
+
         -- Lerp panel strip toward target
         local diff = self.targetOffset - self.panelOffset
         if math.abs(diff) < 0.5 then
@@ -203,6 +224,18 @@ function MenuScreen.new()
                 self.tabRaiseAnim[i] = self.tabRaiseAnim[i] + d * 12 * dt
             end
         end
+    end
+
+    -- Returns the current idle animation frame + trimBottom for a unit type.
+    -- Falls back to the static front sprite when no directional sprites exist.
+    function self:getIdleFrame(utype)
+        local d = self.dirSprites[utype]
+        if d and d.hasDirectionalSprites and d.directional.idle and d.directional.idle[0] then
+            local dirData = d.directional.idle[0]
+            local idx     = self.idleAnim[utype].frameIndex
+            return dirData.frames[idx], dirData.trimBottom[idx]
+        end
+        return self.sprites[utype], self.spriteTrimBottoms[utype] or 0
     end
 
     -- ── draw helpers ────────────────────────────────────────────────────────
@@ -321,13 +354,12 @@ function MenuScreen.new()
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.rectangle('line', gridX, gridY, gridW, gridH)
 
-        -- Unit sprites
+        -- Unit sprites (idle-animated if directional sprites are available)
         local sprSc = cellSize / 16
         for _, entry in ipairs(self.previewLayout) do
-            local img = self.sprites[entry.unitType]
+            local img, trimBottom = self:getIdleFrame(entry.unitType)
             if img then
                 local iw, ih     = img:getDimensions()
-                local trimBottom = self.spriteTrimBottoms[entry.unitType] or 0
                 local cx2 = gridX + (entry.col - 1) * cellSize
                 local cy2 = gridY + (entry.row - 1) * cellSize
                 local BOTTOM_MARGIN = 3
