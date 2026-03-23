@@ -5,6 +5,10 @@
 local Push = require('lib.push')
 local ScreenManager = require('lib.screen_manager')
 local Constants = require('src.constants')
+require('lib.audio')  -- overrides love.audio.play/stop with source-tracking wrappers
+
+-- Global audio manager (music + SFX)
+AudioManager = require('src.audio_manager')
 
 -- Load screens
 local LoginScreen   = require('src.screens.login')
@@ -52,6 +56,9 @@ function love.load()
     Fonts.medium:setFilter('nearest', 'nearest')
     Fonts.small:setFilter('nearest', 'nearest')
     Fonts.tiny:setFilter('nearest', 'nearest')
+
+    -- Initialize audio (loads sources, reads settings.json)
+    AudioManager.init()
 
     -- Setup push scaled to the safe area; draw offset shifts canvas below status bar
     Push:setupScreen(
@@ -112,6 +119,7 @@ function love.update(dt)
         end
     end
 
+    love.audio.update()
     ScreenManager.update(dt)
 end
 

@@ -81,6 +81,8 @@ function MenuScreen.new()
         self.showSettings        = false
         self._settingsBtnRect    = nil
         self._settingsLogoutRect = nil
+        self._settingsMusicRect  = nil
+        self._settingsSFXRect    = nil
 
         -- Hit-rect caches (rebuilt each draw, stored in screen coords)
         self._collectionCards = {}
@@ -114,6 +116,10 @@ function MenuScreen.new()
         end
 
         love.keyboard.setKeyRepeat(true)
+
+        -- Start background music when player lands on menu
+        AudioManager.playMusic()
+        AudioManager.setBattleMode(false)
     end
 
     function self:close()
@@ -324,8 +330,9 @@ function MenuScreen.new()
                 local trimBottom = self.spriteTrimBottoms[entry.unitType] or 0
                 local cx2 = gridX + (entry.col - 1) * cellSize
                 local cy2 = gridY + (entry.row - 1) * cellSize
+                local BOTTOM_MARGIN = 3
                 local sx  = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
-                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom) * sprSc)
+                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
             end
@@ -822,85 +829,117 @@ function MenuScreen.new()
         local utype = self.detailUnit
         if not utype then return end
 
-        -- Dim backdrop
-        lg.setColor(0, 0, 0, 0.55)
-        lg.rectangle('fill', 0, 0, W, H)
-
-        -- Panel card
-        local panW = W * 0.84
-        local panH = H * 0.74
-        local panX = (W - panW) / 2
-        local panY = (H - panH) / 2
-        local panR = math.max(1, math.floor(4 * sc))
-
-        lg.setColor(0.18, 0.18, 0.22, 1)
-        lg.rectangle('fill', panX, panY, panW, panH, panR, panR)
-        lg.setColor(0.40, 0.40, 0.48, 1)
-        lg.setLineWidth(math.max(1, math.floor(sc)))
-        lg.rectangle('line', panX, panY, panW, panH, panR, panR)
-
-        -- Large sprite (text cursor positioned after visual height, ignoring blank rows)
         local img        = self.sprites[utype]
         local iw, ih     = img:getDimensions()
         local trimBottom = self.spriteTrimBottoms[utype] or 0
-        local sprSc      = math.max(1, math.floor(7 * sc))
-        local imgX       = math.floor(panX + (panW - iw * sprSc) / 2)
-        local imgY       = math.floor(panY + 18 * sc)
+        local info       = UnitRegistry.getUnitDisplayInfo(utype)
+        local passive    = UnitRegistry.passiveDescriptions[utype] or ""
+        local sprSc      = math.max(1, math.floor(5 * sc))
+
+        -- Panel width + text area
+        local panW  = math.floor(W * 0.84)
+        local textW = panW - math.floor(32 * sc)
+        local brd   = math.max(1, math.floor(2 * sc))
+
+        -- Pre-compute content height so panel fits content exactly
+        local _, pLines = Fonts.tiny:getWrap(passive, textW)
+        local vPad = math.floor(14 * sc)
+        local contentH =
+            (ih - trimBottom) * sprSc                                   +
+            math.floor(7 * sc)                                          + -- sprite → name gap
+            Fonts.medium:getHeight() + math.floor(5 * sc)              + -- name
+            Fonts.tiny:getHeight()   + math.floor(7 * sc)              + -- stats
+            math.floor(7 * sc)                                          + -- separator
+            math.max(1, #pLines) * Fonts.tiny:getHeight()
+                + math.floor(8 * sc)                                    + -- passive
+            Fonts.small:getHeight() + math.floor(4 * sc)               + -- "Upgrades" header
+            #info.upgrades * (2 * Fonts.tiny:getHeight()
+                + math.floor(6 * sc))                                     -- upgrade rows
+
+        local panH = contentH + vPad * 2
+        -- Guard: never taller than 88% of screen
+        panH = math.min(panH, math.floor(H * 0.88))
+        local panX = math.floor((W - panW) / 2)
+        local panY = math.floor((H - panH) / 2)
+
+        -- Dim backdrop
+        lg.setColor(0, 0, 0, 0.65)
+        lg.rectangle('fill', 0, 0, W, H)
+
+        -- Panel fill
+        lg.setColor(0.14, 0.15, 0.22, 1)
+        roundedRect(panX, panY, panW, panH, 5, sc)
+
+        -- Outer border
+        lg.setColor(0.42, 0.44, 0.62, 1)
+        roundedRectLine(panX, panY, panW, panH, 5, sc, brd)
+
+        -- Bevel: top-left highlight
+        local hl = brd + math.max(1, math.floor(sc))
+        lg.setColor(0.55, 0.57, 0.78, 0.45)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(panX + hl, panY + panH - hl,
+                panX + hl, panY + hl,
+                panX + panW - hl, panY + hl)
+        -- Bevel: bottom-right shadow
+        lg.setColor(0.04, 0.04, 0.08, 0.6)
+        lg.line(panX + hl, panY + panH - hl,
+                panX + panW - hl, panY + panH - hl,
+                panX + panW - hl, panY + hl)
+
+        -- Sprite (centred horizontally, top of content area)
+        local imgX = math.floor(panX + (panW - iw * sprSc) / 2)
+        local imgY = math.floor(panY + vPad)
         lg.setColor(1, 1, 1, 1)
         lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
 
-        local textX = panX + 18 * sc
-        local textW = panW - 36 * sc
-        local curY  = imgY + (ih - trimBottom) * sprSc + 12 * sc
+        local textX = panX + math.floor(16 * sc)
+        local curY  = imgY + (ih - trimBottom) * sprSc + math.floor(7 * sc)
 
         -- Unit name
         local name = utype:sub(1,1):upper() .. utype:sub(2)
         lg.setFont(Fonts.medium)
         lg.setColor(1, 1, 1, 1)
         lg.printf(name, panX, curY, panW, 'center')
-        curY = curY + Fonts.medium:getHeight() + 8 * sc
-
-        -- Pull all display data directly from the unit class
-        local info = UnitRegistry.getUnitDisplayInfo(utype)
+        curY = curY + Fonts.medium:getHeight() + math.floor(5 * sc)
 
         -- Stats row
+        local info2 = info  -- already fetched above
         lg.setFont(Fonts.tiny)
-        lg.setColor(0.7, 0.8, 1, 1)
+        lg.setColor(0.65, 0.78, 1, 1)
         local s = string.format("HP %d  ATK %d  SPD %.1f  RNG %d  [%s]",
-            info.hp, info.atk, info.spd, info.rng, info.unitClass)
+            info2.hp, info2.atk, info2.spd, info2.rng, info2.unitClass)
         lg.printf(s, textX, curY, textW, 'center')
-        curY = curY + Fonts.tiny:getHeight() + 10 * sc
+        curY = curY + Fonts.tiny:getHeight() + math.floor(7 * sc)
 
         -- Separator
-        lg.setColor(0.3, 0.3, 0.42, 1)
-        lg.setLineWidth(1 * sc)
-        lg.line(textX, curY, panX + panW - 18 * sc, curY)
-        curY = curY + 10 * sc
+        lg.setColor(0.30, 0.32, 0.48, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(textX, curY, panX + panW - math.floor(16 * sc), curY)
+        curY = curY + math.floor(7 * sc)
 
         -- Passive description
         lg.setFont(Fonts.tiny)
-        lg.setColor(0.72, 0.72, 0.75, 1)
-        local passive = UnitRegistry.passiveDescriptions[utype] or ""
+        lg.setColor(0.72, 0.74, 0.80, 1)
         lg.printf(passive, textX, curY, textW, 'left')
-        local _, pLines = Fonts.tiny:getWrap(passive, textW)
-        curY = curY + #pLines * Fonts.tiny:getHeight() + 14 * sc
+        curY = curY + math.max(1, #pLines) * Fonts.tiny:getHeight() + math.floor(8 * sc)
 
-        -- Upgrades section
+        -- Upgrades header
         lg.setFont(Fonts.small)
         lg.setColor(1, 0.85, 0.38, 1)
         lg.printf("Upgrades", textX, curY, textW, 'left')
-        curY = curY + Fonts.small:getHeight() + 5 * sc
+        curY = curY + Fonts.small:getHeight() + math.floor(4 * sc)
 
+        -- Upgrade rows
         lg.setFont(Fonts.tiny)
-        for i, upg in ipairs(info.upgrades) do
+        for i, upg in ipairs(info2.upgrades) do
             lg.setColor(1, 0.85, 0.38, 1)
-            lg.printf(i .. ". " .. upg.name, textX + 8 * sc, curY, textW, 'left')
-            curY = curY + Fonts.tiny:getHeight() + 2 * sc
-            lg.setColor(0.75, 0.75, 0.78, 1)
-            lg.printf("    " .. upg.description, textX + 8 * sc, curY, textW, 'left')
-            curY = curY + Fonts.tiny:getHeight() + 6 * sc
+            lg.printf(i .. ". " .. upg.name, textX + math.floor(6 * sc), curY, textW, 'left')
+            curY = curY + Fonts.tiny:getHeight() + math.floor(2 * sc)
+            lg.setColor(0.72, 0.74, 0.80, 1)
+            lg.printf("   " .. upg.description, textX + math.floor(6 * sc), curY, textW, 'left')
+            curY = curY + Fonts.tiny:getHeight() + math.floor(4 * sc)
         end
-
     end
 
     -- ── draw ────────────────────────────────────────────────────────────────
@@ -1019,39 +1058,114 @@ function MenuScreen.new()
 
         -- Settings overlay
         if self.showSettings then
-            -- Dim background
-            lg.setColor(0, 0, 0, 0.55)
+            -- Dim backdrop
+            lg.setColor(0, 0, 0, 0.65)
             lg.rectangle('fill', 0, 0, W, H)
 
-            -- Panel
-            local panW = math.floor(200 * sc)
-            local panH = math.floor(120 * sc)
-            local panX = math.floor((W - panW) / 2)
-            local panY = math.floor((H - panH) / 2)
-            local panR = math.max(1, math.floor(4 * sc))
-            lg.setColor(0.18, 0.18, 0.22, 1)
-            lg.rectangle('fill', panX, panY, panW, panH, panR, panR)
-            lg.setColor(0.40, 0.40, 0.48, 1)
+            -- Panel geometry
+            local panW  = math.floor(240 * sc)
+            local panH  = math.floor(240 * sc)
+            local panX  = math.floor((W - panW) / 2)
+            local panY  = math.floor((H - panH) / 2)
+            local brd   = math.max(1, math.floor(2 * sc))
+
+            -- Panel fill
+            lg.setColor(0.14, 0.15, 0.22, 1)
+            roundedRect(panX, panY, panW, panH, 5, sc)
+
+            -- Outer border (blue-grey, matches active tab)
+            lg.setColor(0.42, 0.44, 0.62, 1)
+            roundedRectLine(panX, panY, panW, panH, 5, sc, brd)
+
+            -- Bevel: top-left highlight
+            local hl = brd + math.max(1, math.floor(sc))
+            lg.setColor(0.55, 0.57, 0.78, 0.45)
             lg.setLineWidth(math.max(1, math.floor(sc)))
-            lg.rectangle('line', panX, panY, panW, panH, panR, panR)
+            lg.line(panX + hl, panY + panH - hl,
+                    panX + hl, panY + hl,
+                    panX + panW - hl, panY + hl)
 
-            -- Title
-            lg.setFont(Fonts.small)
-            lg.setColor(0.75, 0.75, 0.80, 1)
-            lg.printf("Settings", panX, panY + math.floor(12 * sc), panW, 'center')
+            -- Bevel: bottom-right shadow
+            lg.setColor(0.04, 0.04, 0.08, 0.6)
+            lg.line(panX + hl, panY + panH - hl,
+                    panX + panW - hl, panY + panH - hl,
+                    panX + panW - hl, panY + hl)
 
-            -- Logout button inside panel
-            local lbW = math.floor(120 * sc)
-            local lbH = math.floor(32 * sc)
-            local lbX = panX + math.floor((panW - lbW) / 2)
-            local lbY = panY + math.floor(55 * sc)
-            local lbR = math.max(1, math.floor(3 * sc))
-            lg.setColor(0.30, 0.12, 0.12, 1)
-            lg.rectangle('fill', lbX, lbY, lbW, lbH, lbR, lbR)
-            lg.setColor(0.65, 0.28, 0.28, 1)
-            lg.rectangle('line', lbX, lbY, lbW, lbH, lbR, lbR)
+            -- Vertical offset so the 196-unit content block is centred in panH
+            local contentH = math.floor(196 * sc)
+            local offY     = math.floor((panH - contentH) / 2)
+
+            -- Title (medium font, same weight as panel headers elsewhere)
+            local hdrH = math.floor(40 * sc)
+            lg.setFont(Fonts.medium)
+            lg.setColor(0.88, 0.90, 1.0, 1)
+            lg.printf("SETTINGS", panX, textCY(Fonts.medium, panY + offY, hdrH), panW, 'center')
+
+            -- Divider under title
+            lg.setColor(0.35, 0.37, 0.55, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.line(panX + math.floor(12 * sc), panY + offY + hdrH,
+                    panX + panW - math.floor(12 * sc), panY + offY + hdrH)
+
+            -- Toggle row helper: label left, game-style button right
+            local function drawToggleRow(label, enabled, rowY)
+                local rowH  = math.floor(38 * sc)
+                local btnW  = math.floor(64 * sc)
+                local btnH  = math.floor(28 * sc)
+                local btnX  = panX + panW - math.floor(16 * sc) - btnW
+                local btnY  = rowY + math.floor((rowH - btnH) / 2)
+                -- Label
+                lg.setFont(Fonts.small)
+                lg.setColor(0.78, 0.80, 0.90, 1)
+                lg.print(label, panX + math.floor(16 * sc), textCY(Fonts.small, rowY, rowH))
+                -- Button fill
+                if enabled then
+                    lg.setColor(0.17, 0.21, 0.40, 1)
+                else
+                    lg.setColor(0.10, 0.10, 0.14, 1)
+                end
+                roundedRect(btnX, btnY, btnW, btnH, 4, sc)
+                -- Button border
+                if enabled then
+                    lg.setColor(0.45, 0.48, 0.72, 1)
+                else
+                    lg.setColor(0.26, 0.26, 0.34, 1)
+                end
+                roundedRectLine(btnX, btnY, btnW, btnH, 4, sc, math.max(1, math.floor(sc)))
+                -- Button text
+                lg.setFont(Fonts.small)
+                if enabled then
+                    lg.setColor(0.72, 0.78, 1.0, 1)
+                else
+                    lg.setColor(0.32, 0.32, 0.40, 1)
+                end
+                lg.printf(enabled and "ON" or "OFF", btnX, textCY(Fonts.small, btnY, btnH), btnW, 'center')
+                return { x = btnX, y = btnY, w = btnW, h = btnH }
+            end
+
+            local row1Y = panY + offY + math.floor(46 * sc)
+            local row2Y = panY + offY + math.floor(90 * sc)
+            self._settingsMusicRect = drawToggleRow("Music", AudioManager.musicEnabled, row1Y)
+            self._settingsSFXRect   = drawToggleRow("SFX",   AudioManager.sfxEnabled,   row2Y)
+
+            -- Divider above logout
+            local divY = panY + offY + math.floor(138 * sc)
+            lg.setColor(0.28, 0.30, 0.44, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.line(panX + math.floor(12 * sc), divY,
+                    panX + panW - math.floor(12 * sc), divY)
+
+            -- Logout button (full-width minus margins)
+            local lbW = panW - math.floor(32 * sc)
+            local lbH = math.floor(34 * sc)
+            local lbX = panX + math.floor(16 * sc)
+            local lbY = divY + math.floor(8 * sc)
+            lg.setColor(0.20, 0.09, 0.09, 1)
+            roundedRect(lbX, lbY, lbW, lbH, 4, sc)
+            lg.setColor(0.52, 0.20, 0.20, 1)
+            roundedRectLine(lbX, lbY, lbW, lbH, 4, sc, math.max(1, math.floor(sc)))
             lg.setFont(Fonts.small)
-            lg.setColor(1, 0.7, 0.7, 1)
+            lg.setColor(0.88, 0.52, 0.52, 1)
             lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
             self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
         end
@@ -1106,6 +1220,23 @@ function MenuScreen.new()
 
         -- Settings overlay
         if self.showSettings then
+            -- Music toggle
+            if self._settingsMusicRect then
+                local r = self._settingsMusicRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    AudioManager.setMusic(not AudioManager.musicEnabled)
+                    return
+                end
+            end
+            -- SFX toggle
+            if self._settingsSFXRect then
+                local r = self._settingsSFXRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    AudioManager.setSFX(not AudioManager.sfxEnabled)
+                    AudioManager.playTap()
+                    return
+                end
+            end
             -- Logout button inside overlay
             if self._settingsLogoutRect then
                 local r = self._settingsLogoutRect
@@ -1158,6 +1289,7 @@ function MenuScreen.new()
         -- Tap: bottom tab icons
         for i, rect in ipairs(self._tabRects) do
             if x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h then
+                AudioManager.playTap()
                 if i ~= self.currentPanel then
                     self.currentPanel = i
                     self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
@@ -1192,6 +1324,7 @@ function MenuScreen.new()
             local sv = self._deckSaveRect
             if sv and x >= sv.x and x <= sv.x + sv.w and
                       y >= sv.y and y <= sv.y + sv.h then
+                AudioManager.playTap()
                 DeckManager.save()
                 self._saveFeedback = 1.5
                 self:buildPreviewLayout()
@@ -1201,6 +1334,7 @@ function MenuScreen.new()
             local ar = self._deckActiveRect
             if ar and x >= ar.x and x <= ar.x + ar.w and
                       y >= ar.y and y <= ar.y + ar.h then
+                AudioManager.playTap()
                 DeckManager.setActive(self.selectedDeckSlot)
                 self:buildPreviewLayout()
                 return
@@ -1209,9 +1343,11 @@ function MenuScreen.new()
             for _, cr in ipairs(self._deckCardRects) do
                 if y >= cr.stripY and y <= cr.stripY + cr.stripH then
                     if x >= cr.minusX and x <= cr.minusX + cr.minusW then
+                        AudioManager.playTap()
                         DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, -1)
                         return
                     elseif x >= cr.plusX and x <= cr.plusX + cr.plusW then
+                        AudioManager.playTap()
                         DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, 1)
                         return
                     end
@@ -1255,6 +1391,7 @@ function MenuScreen.new()
             local btn = self._playBtnRect
             if btn and x >= btn.x and x <= btn.x + btn.w and
                        y >= btn.y and y <= btn.y + btn.h then
+                AudioManager.playTap()
                 if _G.GameSocket then
                     local ScreenManager = require('lib.screen_manager')
                     ScreenManager.switch('lobby', _G.GameSocket)
@@ -1268,6 +1405,7 @@ function MenuScreen.new()
             local sbtn = self._sandboxBtnRect
             if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
                         y >= sbtn.y and y <= sbtn.y + sbtn.h then
+                AudioManager.playTap()
                 local ScreenManager = require('lib.screen_manager')
                 ScreenManager.switch('game', false, 1, false, true)
                 return
