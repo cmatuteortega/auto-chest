@@ -59,12 +59,17 @@ function MenuScreen.new()
         self.dirSprites = {}
         -- Per-unit idle animation state: {frameIndex, timer}
         self.idleAnim   = {}
+        -- Per-unit attack animation state for play-panel tap: {active, progress, duration}
+        self.attackAnim = {}
+        -- Hit rects for tappable units on the play-panel preview grid
+        self._previewUnitRects = {}
         for _, utype in ipairs(self.unitOrder) do
             local loaded = UnitRegistry.loadDirectionalSprites(utype)
             self.sprites[utype]           = loaded.front
             self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
             self.dirSprites[utype]        = loaded
             self.idleAnim[utype]          = { frameIndex = 1, timer = 0 }
+            self.attackAnim[utype]        = { active = false, progress = 0, duration = 0.45 }
         end
         self:buildPreviewLayout()
 
@@ -261,10 +266,11 @@ function MenuScreen.new()
             end
         end
 
-        -- Advance idle animation for play-panel preview (uses the same 2× slower cadence as in-game)
+        -- Advance idle and attack animations for play-panel preview
         local IDLE_FRAME_DUR = 0.12 * 2  -- matches animFrameDuration * 2 from base_unit
         for _, utype in ipairs(self.unitOrder) do
             local d = self.dirSprites[utype]
+            -- Idle frame cycling
             if d and d.hasDirectionalSprites and d.directional.idle and d.directional.idle[0] then
                 local frames = d.directional.idle[0].frames
                 local anim   = self.idleAnim[utype]
@@ -272,6 +278,15 @@ function MenuScreen.new()
                 if anim.timer >= IDLE_FRAME_DUR then
                     anim.timer = anim.timer - IDLE_FRAME_DUR
                     anim.frameIndex = (anim.frameIndex % #frames) + 1
+                end
+            end
+            -- Attack animation (triggered by tapping a unit on the preview grid)
+            local atk = self.attackAnim[utype]
+            if atk.active then
+                atk.progress = atk.progress + dt / atk.duration
+                if atk.progress >= 1 then
+                    atk.active   = false
+                    atk.progress = 0
                 end
             end
         end
@@ -297,14 +312,33 @@ function MenuScreen.new()
         end
     end
 
-    -- Returns the current idle animation frame + trimBottom for a unit type.
-    -- Falls back to the static front sprite when no directional sprites exist.
-    function self:getIdleFrame(utype)
+    -- Returns the current preview frame + trimBottom for a unit type.
+    -- Attack animation takes priority over idle; falls back to static front sprite.
+    function self:getPreviewFrame(utype)
         local d = self.dirSprites[utype]
-        if d and d.hasDirectionalSprites and d.directional.idle and d.directional.idle[0] then
-            local dirData = d.directional.idle[0]
-            local idx     = self.idleAnim[utype].frameIndex
-            return dirData.frames[idx], dirData.trimBottom[idx]
+        if d and d.hasDirectionalSprites then
+            -- Attack animation takes priority
+            local atk = self.attackAnim[utype]
+            if atk.active and d.directional.hit and d.directional.hit[0] then
+                local dirData = d.directional.hit[0]
+                local count   = #dirData.frames
+                local p       = atk.progress
+                local idx
+                if count >= 3 then
+                    if     p < 1/3 then idx = 1
+                    elseif p < 2/3 then idx = 2
+                    else                idx = 3 end
+                else
+                    idx = math.min(count, math.floor(p * count) + 1)
+                end
+                return dirData.frames[idx], dirData.trimBottom[idx]
+            end
+            -- Idle
+            if d.directional.idle and d.directional.idle[0] then
+                local dirData = d.directional.idle[0]
+                local idx     = self.idleAnim[utype].frameIndex
+                return dirData.frames[idx], dirData.trimBottom[idx]
+            end
         end
         return self.sprites[utype], self.spriteTrimBottoms[utype] or 0
     end
@@ -425,19 +459,24 @@ function MenuScreen.new()
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.rectangle('line', gridX, gridY, gridW, gridH)
 
-        -- Unit sprites (idle-animated if directional sprites are available)
+        -- Unit sprites (idle/attack animated; hit rects stored for tap detection)
         local sprSc = cellSize / 16
+        self._previewUnitRects = {}
         for _, entry in ipairs(self.previewLayout) do
-            local img, trimBottom = self:getIdleFrame(entry.unitType)
+            local img, trimBottom = self:getPreviewFrame(entry.unitType)
             if img then
-                local iw, ih     = img:getDimensions()
+                local iw, ih = img:getDimensions()
                 local cx2 = gridX + (entry.col - 1) * cellSize
                 local cy2 = gridY + (entry.row - 1) * cellSize
                 local BOTTOM_MARGIN = 3
-                local sx  = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
-                local sy  = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
+                local sx = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
+                local sy = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
+                table.insert(self._previewUnitRects, {
+                    x = cx2 + self.panelOffset, y = cy2, w = cellSize, h = cellSize,
+                    utype = entry.unitType
+                })
             end
         end
 
@@ -1398,6 +1437,19 @@ function MenuScreen.new()
                     self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
                 end
                 return
+            end
+        end
+
+        -- Tap: play-panel preview units → trigger attack animation
+        if self.currentPanel == 3 then
+            for _, rect in ipairs(self._previewUnitRects) do
+                if x >= rect.x and x <= rect.x + rect.w and
+                   y >= rect.y and y <= rect.y + rect.h then
+                    local atk = self.attackAnim[rect.utype]
+                    atk.active   = true
+                    atk.progress = 0
+                    return
+                end
             end
         end
 
