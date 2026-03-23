@@ -150,6 +150,18 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.hitAnimDuration = 0.1  -- Quick hit reaction
     self.hitAnimIntensity = 0
 
+    -- Directional sprite animation system (gated by sprites.hasDirectionalSprites)
+    self.hasDirectionalSprites = (sprites and sprites.hasDirectionalSprites) or false
+    local defaultAngle = (owner == 1) and 180 or 0  -- P1 faces north (180°), P2 faces south (0°)
+    self.facingAngle       = defaultAngle
+    self.targetFacingAngle = defaultAngle
+    self.prevFacingAngle   = defaultAngle  -- saved at move/attack start for 90°/270° tiebreaking
+    self.turnSpeed         = 360           -- degrees/second; subclasses may override
+    self.animState         = "idle"
+    self.animFrameIndex    = 1
+    self.animFrameTimer    = 0
+    self.animFrameDuration = 0.12          -- seconds/frame; subclasses may override
+
     -- Visual
     self.sprite = self:getSprite()
 end
@@ -167,6 +179,120 @@ function BaseUnit:getSprite()
         return self.sprites.back
     else
         return self.sprites.front
+    end
+end
+
+-- Compute screen-space facing angle (CW from south=0°) for a movement delta.
+-- dCol = targetCol - col (positive=right), dRow = targetRow - row (positive=down/south)
+function BaseUnit:computeTargetAngle(dCol, dRow)
+    if dCol == 0 and dRow == 0 then return self.facingAngle end
+    local angle = math.atan2(-dCol, dRow) * (180 / math.pi)
+    return angle % 360
+end
+
+-- Returns the nearest available angle step from availableSteps to the given angle.
+-- Uses prevFacingAngle as tiebreaker so 90° picks 45° or 135° based on origin direction.
+function BaseUnit:getNearestStep(angle, availableSteps)
+    local best, bestDist = availableSteps[1], 999
+    for _, step in ipairs(availableSteps) do
+        local d = math.abs(((angle - step + 180) % 360) - 180)
+        local isBetter = d < bestDist
+        if d == bestDist then
+            local dPrev = math.abs(((self.prevFacingAngle - step + 180) % 360) - 180)
+            local dBest = math.abs(((self.prevFacingAngle - best  + 180) % 360) - 180)
+            isBetter = dPrev < dBest
+        end
+        if isBetter then best, bestDist = step, d end
+    end
+    return best
+end
+
+-- Returns the directional sprite image and trimBottom for the current animation state.
+function BaseUnit:getDirectionalSprite()
+    if self.isDead then
+        return self.sprites.dead, self.sprites.deadTrimBottom or 0
+    end
+
+    local d = self.sprites.directional
+    local stateKey = self.animState == "attack" and "hit" or self.animState
+    local availableSteps = (self.animState == "idle") and {0, 180} or {0, 45, 135, 180, 225, 315}
+    local step = self:getNearestStep(self.facingAngle, availableSteps)
+
+    local stateData = d[stateKey]
+    local dirData   = stateData and stateData[step]
+    if not dirData and step ~= 0 then
+        dirData = stateData and stateData[0]
+    end
+
+    -- Last resort: legacy sprite
+    if not dirData then
+        local sprite = self:getSprite()
+        local spriteKey = self.isDead and "dead"
+            or (self.owner == (Constants.PERSPECTIVE or 1) and "back" or "front")
+        return sprite, self.sprites[spriteKey .. "TrimBottom"] or 0
+    end
+
+    local frameIdx = math.min(self.animFrameIndex, #dirData.frames)
+    return dirData.frames[frameIdx], dirData.trimBottom[frameIdx]
+end
+
+-- Visual-only update: smooth rotation and animation frame cycling.
+-- Called every frame for all game states (NOT in the fixed-timestep battle loop).
+function BaseUnit:updateVisuals(dt, gameState)
+    if not self.hasDirectionalSprites then return end
+    if self.isDead then return end
+
+    -- 1. Smooth rotation toward targetFacingAngle (shortest arc)
+    local delta = self.targetFacingAngle - self.facingAngle
+    delta = ((delta + 180) % 360) - 180
+    local maxStep = self.turnSpeed * dt
+    if math.abs(delta) <= maxStep then
+        self.facingAngle = self.targetFacingAngle
+    else
+        self.facingAngle = self.facingAngle + maxStep * (delta > 0 and 1 or -1)
+    end
+
+    -- 2. Determine animState
+    local prevState = self.animState
+    if self.attackAnimProgress < 1 and self.attackTargetCol then
+        self.animState = "attack"
+    elseif self.isMoving then
+        self.animState = "walk"
+    elseif gameState == "setup" then
+        self.animState = "idle"
+    else
+        self.animState = "walk"  -- freeze on last walk frame during battle pauses
+    end
+
+    if self.animState ~= prevState then
+        self.animFrameIndex = 1
+        self.animFrameTimer = 0
+    end
+
+    -- 3. Advance frame index
+    if self.animState == "attack" then
+        -- Map attackAnimProgress (0→1) to frame index
+        local d = self.sprites.directional
+        local step = self:getNearestStep(self.facingAngle, {0, 45, 135, 180, 225, 315})
+        local dirData = (d.hit and d.hit[step]) or (d.hit and d.hit[0])
+        local count = dirData and #dirData.frames or 1
+        self.animFrameIndex = math.min(count, math.floor(self.attackAnimProgress * count) + 1)
+    else
+        -- Cycle idle/walk frames via timer (only when actually moving for walk)
+        local shouldCycle = (self.animState == "idle") or self.isMoving
+        if shouldCycle then
+            self.animFrameTimer = self.animFrameTimer + dt
+            if self.animFrameTimer >= self.animFrameDuration then
+                self.animFrameTimer = self.animFrameTimer - self.animFrameDuration
+                local d = self.sprites.directional
+                local steps = (self.animState == "idle") and {0, 180} or {0, 45, 135, 180, 225, 315}
+                local step = self:getNearestStep(self.facingAngle, steps)
+                local stateData = d[self.animState]
+                local dirData = (stateData and stateData[step]) or (stateData and stateData[0])
+                local count = dirData and #dirData.frames or 1
+                self.animFrameIndex = (self.animFrameIndex % count) + 1
+            end
+        end
     end
 end
 
@@ -230,8 +356,22 @@ function BaseUnit:draw()
         x = x + shakeAmount
     end
 
-    -- Get current sprite
-    local sprite = self:getSprite()
+    -- Get current sprite and trimBottom
+    local sprite, trimBottom
+    if self.hasDirectionalSprites then
+        sprite, trimBottom = self:getDirectionalSprite()
+    else
+        sprite = self:getSprite()
+        local spriteKey
+        if self.isDead then
+            spriteKey = "dead"
+        elseif self.owner == (Constants.PERSPECTIVE or 1) then
+            spriteKey = "back"
+        else
+            spriteKey = "front"
+        end
+        trimBottom = self.sprites[spriteKey .. "TrimBottom"] or 0
+    end
 
     -- Draw sprite centered in cell
     lg.setColor(1, 1, 1, 1)
@@ -245,19 +385,6 @@ function BaseUnit:draw()
 
     -- Ensure scale is at least 1 to prevent invisible sprites
     scale = math.max(1, scale)
-
-    -- Determine how many transparent rows sit at the bottom of this sprite.
-    -- All sprites are normalised so their visual bottom lands 3 sprite-pixels above
-    -- the tile floor (matching boney's reference padding).
-    local spriteKey
-    if self.isDead then
-        spriteKey = "dead"
-    elseif self.owner == (Constants.PERSPECTIVE or 1) then
-        spriteKey = "back"
-    else
-        spriteKey = "front"
-    end
-    local trimBottom = self.sprites[spriteKey .. "TrimBottom"] or 0
     local BOTTOM_MARGIN = 3  -- sprite pixels; keep visual baseline consistent across units
 
     -- Center horizontally, anchor visual bottom 3 sprite-pixels above tile floor
@@ -460,6 +587,17 @@ function BaseUnit:resetCombatState()
     self.attackAnimProgress = 1
     self.attackTargetCol    = nil
     self.attackTargetRow    = nil
+
+    -- Reset directional sprite fields
+    if self.hasDirectionalSprites then
+        local defaultAngle = (self.owner == 1) and 180 or 0
+        self.facingAngle       = defaultAngle
+        self.targetFacingAngle = defaultAngle
+        self.prevFacingAngle   = defaultAngle
+        self.animState         = "idle"
+        self.animFrameIndex    = 1
+        self.animFrameTimer    = 0
+    end
 end
 
 function BaseUnit:update(dt, grid)
@@ -546,6 +684,11 @@ function BaseUnit:update(dt, grid)
         self.path = nil
 
         if self.attackCooldown <= 0 then
+            if self.hasDirectionalSprites and self.target then
+                self.prevFacingAngle   = self.facingAngle
+                self.targetFacingAngle = self:computeTargetAngle(
+                    self.target.col - self.col, self.target.row - self.row)
+            end
             self:attack(self.target, grid)
             self.attackCooldown = 1 / self.attackSpeed
         end
@@ -563,6 +706,11 @@ function BaseUnit:update(dt, grid)
             self.path = nil
 
             if self.attackCooldown <= 0 then
+                if self.hasDirectionalSprites and self.target then
+                    self.prevFacingAngle   = self.facingAngle
+                    self.targetFacingAngle = self:computeTargetAngle(
+                        self.target.col - self.col, self.target.row - self.row)
+                end
                 self:attack(self.target, grid)
                 self.attackCooldown = 1 / self.attackSpeed
             end
@@ -743,6 +891,13 @@ function BaseUnit:moveAlongPath(dt, grid)
                 self.startRow = self.row
                 self.targetCol = nextPos.col
                 self.targetRow = nextPos.row
+
+                -- Update facing angle for directional sprites
+                if self.hasDirectionalSprites then
+                    self.prevFacingAngle   = self.facingAngle
+                    self.targetFacingAngle = self:computeTargetAngle(
+                        nextPos.col - self.col, nextPos.row - self.row)
+                end
             else
                 -- Reservation failed, recalculate path
                 self.path = nil

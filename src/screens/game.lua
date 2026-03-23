@@ -599,6 +599,12 @@ function GameScreen.new()
             end
         end
 
+        -- Visual-only update for directional sprite animation (all game states, real dt)
+        local allUnitsForVisuals = self.grid:getAllUnits()
+        for _, unit in ipairs(allUnitsForVisuals) do
+            unit:updateVisuals(dt, self.state)
+        end
+
         -- Update grid with current mouse position
         self.grid:update(dt, self.mouseX, self.mouseY)
     end
