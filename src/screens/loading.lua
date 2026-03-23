@@ -78,6 +78,7 @@ function LoadingScreen.new()
         end)
 
         self.client:connect()
+        self.client:setTimeout(32, 5000, 60000)
     end
 
     function self:fallbackToLogin(reason)

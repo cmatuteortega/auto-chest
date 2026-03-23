@@ -153,6 +153,13 @@ function GameScreen.new()
         self._cb_oppDisconn = s:on("opponent_disconnected", function()
             self.opponentDisconnected = true
         end)
+
+        self._cb_disconnect = s:on("disconnect", function()
+            print("[GAME] Socket disconnected")
+            if self.state ~= "finished" then
+                self.opponentDisconnected = true
+            end
+        end)
     end
 
     -- Compute a deterministic string hash of all units on the board (type, position, owner, level).
@@ -1282,11 +1289,22 @@ function GameScreen.new()
         end
     end
 
+    function self:focus(hasFocus)
+        if hasFocus and self.isOnline and self.socket then
+            -- Returning from background: if socket died mid-game, treat as disconnect
+            if not self.socket:isConnected() and self.state ~= "finished" then
+                print("[GAME] Socket lost while backgrounded, triggering disconnect")
+                self.opponentDisconnected = true
+            end
+        end
+    end
+
     function self:close()
         -- Unregister network callbacks so stale handlers don't fire in future games
         if self.socket then
             if self._cb_relay      then self.socket:removeCallback(self._cb_relay)      end
             if self._cb_oppDisconn then self.socket:removeCallback(self._cb_oppDisconn) end
+            if self._cb_disconnect then self.socket:removeCallback(self._cb_disconnect) end
         end
         -- Reset global perspective when leaving the game screen
         Constants.PERSPECTIVE = 1
