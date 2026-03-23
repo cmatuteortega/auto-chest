@@ -154,6 +154,53 @@ local function trimBottomRows(path)
     return trim
 end
 
+-- Load directional sprites for a unit type (8-direction animation system).
+-- Falls back to loadSprites() if no directional sprites exist for this unit.
+function UnitRegistry.loadDirectionalSprites(unitType)
+    local basePath = "src/assets/" .. unitType .. "/"
+
+    -- Probe: if idle_0_1.png absent, fall back to legacy system
+    if not love.filesystem.getInfo(basePath .. "idle_0_1.png") then
+        return UnitRegistry.loadSprites(unitType)
+    end
+
+    -- Load legacy sprites as base (provides front/back/dead fallback + trimBottom)
+    local result = UnitRegistry.loadSprites(unitType)
+    result.hasDirectionalSprites = true
+    result.directional = {idle = {}, walk = {}, hit = {}}
+
+    -- Scan numbered frames for a state+angle combo until a file is absent
+    local function loadFrames(stateKey, angle)
+        local frames, trims = {}, {}
+        local i = 1
+        while true do
+            local path = basePath .. stateKey .. "_" .. angle .. "_" .. i .. ".png"
+            if not love.filesystem.getInfo(path) then break end
+            local img = love.graphics.newImage(path)
+            img:setFilter('nearest', 'nearest')
+            table.insert(frames, img)
+            table.insert(trims, trimBottomRows(path))
+            i = i + 1
+        end
+        if #frames > 0 then
+            result.directional[stateKey][angle] = {frames = frames, trimBottom = trims}
+        end
+    end
+
+    -- Idle: directions 0° and 180°
+    for _, angle in ipairs({0, 180}) do
+        loadFrames("idle", angle)
+    end
+
+    -- Walk and hit (attack windup): 6 directions
+    for _, angle in ipairs({0, 45, 135, 180, 225, 315}) do
+        loadFrames("walk", angle)
+        loadFrames("hit", angle)
+    end
+
+    return result
+end
+
 -- Load sprites for a specific unit type
 function UnitRegistry.loadSprites(unitType)
     local paths = UnitRegistry.spritePaths[unitType]
@@ -186,7 +233,7 @@ end
 function UnitRegistry.loadAllSprites()
     local allSprites = {}
     for unitType, _ in pairs(UnitRegistry.unitClasses) do
-        allSprites[unitType] = UnitRegistry.loadSprites(unitType)
+        allSprites[unitType] = UnitRegistry.loadDirectionalSprites(unitType)
     end
     return allSprites
 end
