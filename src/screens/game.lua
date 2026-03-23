@@ -129,6 +129,9 @@ function GameScreen.new()
         self.activeTouchId = nil
 
         self:dealSetupCards()
+
+        -- Apply battle-mode filter immediately (music stays moody for the full match)
+        AudioManager.setBattleMode(true)
     end
 
     -- ── Network helpers ───────────────────────────────────────────────────────
@@ -592,7 +595,6 @@ function GameScreen.new()
                     self.pendingWinner     = self.winner
                     self.state             = "intermission"
                     self.intermissionTimer = 2.5
-                    AudioManager.setBattleMode(false)
                 end
             end
         end

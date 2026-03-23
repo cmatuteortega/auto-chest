@@ -73,7 +73,7 @@ function AM.setBattleMode(enabled)
         if enabled then
             AM._music:setFilter({type = "lowpass", volume = 1.0, highgain = 0.08})
         else
-            AM._music:setFilter({})
+            AM._music:setFilter({type = "lowpass", volume = 1.0, highgain = 1.0})
         end
     end
 end
