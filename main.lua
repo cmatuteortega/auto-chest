@@ -251,6 +251,17 @@ function love.resize(w, h)
     resizeTimer = 0
 end
 
+function love.focus(focus)
+    ScreenManager.focus(focus)
+    if not focus then
+        -- App going to background: pause audio immediately
+        AudioManager.pauseAll()
+    else
+        -- App returning to foreground: resume audio
+        AudioManager.resumeAll()
+    end
+end
+
 function love.quit()
     print("Goodbye!")
 end

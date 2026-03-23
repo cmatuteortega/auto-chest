@@ -118,6 +118,8 @@ function LoginScreen.new()
         end)
 
         self.client:connect()
+        -- Generous timeout so brief interruptions (notification, quick app switch) don't kill the socket
+        self.client:setTimeout(32, 5000, 60000)
     end
 
     -- ── update ──────────────────────────────────────────────────────────────

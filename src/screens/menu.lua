@@ -1,10 +1,11 @@
 -- AutoChest – Main Menu Screen
 -- 3-panel swipeable card navigation: Collection | Play Online | Shop
 
-local Screen       = require('lib.screen')
-local Constants    = require('src.constants')
-local UnitRegistry = require('src.unit_registry')
-local DeckManager  = require('src.deck_manager')
+local Screen         = require('lib.screen')
+local Constants      = require('src.constants')
+local UnitRegistry   = require('src.unit_registry')
+local DeckManager    = require('src.deck_manager')
+local SocketManager  = require('src.socket_manager')
 
 local MenuScreen = {}
 
@@ -103,23 +104,17 @@ function MenuScreen.new()
         self.shopNotice    = nil
         self.shopNoticeTimer = 0
 
-        -- Register socket handlers once (not per-frame)
-        if _G.GameSocket then
-            _G.GameSocket:on("currency_update", function(data)
-                print("[MENU] currency_update received gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
-                if _G.PlayerData then
-                    if data.gold ~= nil then _G.PlayerData.gold = data.gold end
-                    if data.gems ~= nil then _G.PlayerData.gems = data.gems end
-                end
-            end)
+        -- Reconnection state
+        self._reconnectHandle = nil
+        self._reconnecting    = false
 
-            _G.GameSocket:on("shop_error", function(data)
-                self.shopNotice = data.reason or "Purchase failed"
-                self.shopNoticeTimer = 2.5
-            end)
-        else
-            print("[MENU] WARNING: _G.GameSocket is nil at init, no handlers registered")
-        end
+        -- Socket callback refs (for cleanup)
+        self._cb_currencyUpdate = nil
+        self._cb_shopError      = nil
+        self._cb_disconnect     = nil
+
+        -- Register socket handlers
+        self:registerSocketHandlers()
 
         love.keyboard.setKeyRepeat(true)
 
@@ -128,8 +123,78 @@ function MenuScreen.new()
         AudioManager.setBattleMode(false)
     end
 
+    function self:registerSocketHandlers()
+        if not _G.GameSocket then
+            print("[MENU] WARNING: _G.GameSocket is nil, no handlers registered")
+            return
+        end
+
+        self._cb_currencyUpdate = _G.GameSocket:on("currency_update", function(data)
+            print("[MENU] currency_update received gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
+            if _G.PlayerData then
+                if data.gold ~= nil then _G.PlayerData.gold = data.gold end
+                if data.gems ~= nil then _G.PlayerData.gems = data.gems end
+            end
+        end)
+
+        self._cb_shopError = _G.GameSocket:on("shop_error", function(data)
+            self.shopNotice = data.reason or "Purchase failed"
+            self.shopNoticeTimer = 2.5
+        end)
+
+        self._cb_disconnect = _G.GameSocket:on("disconnect", function()
+            print("[MENU] Socket disconnected, will reconnect on next action")
+        end)
+    end
+
+    function self:removeSocketHandlers()
+        if _G.GameSocket then
+            if self._cb_currencyUpdate then _G.GameSocket:removeCallback(self._cb_currencyUpdate) end
+            if self._cb_shopError      then _G.GameSocket:removeCallback(self._cb_shopError) end
+            if self._cb_disconnect     then _G.GameSocket:removeCallback(self._cb_disconnect) end
+        end
+        self._cb_currencyUpdate = nil
+        self._cb_shopError      = nil
+        self._cb_disconnect     = nil
+    end
+
+    function self:startReconnect()
+        if self._reconnecting then return end
+        self._reconnecting = true
+        print("[MENU] Starting socket reconnection...")
+        self._reconnectHandle = SocketManager.reconnect(
+            function()  -- onSuccess
+                print("[MENU] Reconnected successfully")
+                self._reconnecting    = false
+                self._reconnectHandle = nil
+                self:registerSocketHandlers()
+            end,
+            function(reason)  -- onFailure
+                print("[MENU] Reconnect failed: " .. tostring(reason))
+                self._reconnecting    = false
+                self._reconnectHandle = nil
+                love.filesystem.remove("session.dat")
+                _G.GameSocket = nil
+                _G.PlayerData = nil
+                local ScreenManager = require('lib.screen_manager')
+                ScreenManager.switch('login')
+            end
+        )
+    end
+
+    function self:focus(hasFocus)
+        if hasFocus then
+            -- Returning from background: check socket health
+            if _G.GameSocket and not _G.GameSocket:isConnected() and not self._reconnecting then
+                print("[MENU] Socket lost while backgrounded, reconnecting...")
+                self:startReconnect()
+            end
+        end
+    end
+
     function self:close()
         love.keyboard.setKeyRepeat(false)
+        self:removeSocketHandlers()
     end
 
     function self:buildPreviewLayout()
@@ -171,9 +236,15 @@ function MenuScreen.new()
     -- ── update ──────────────────────────────────────────────────────────────
 
     function self:update(dt)
-        -- Keep socket connection alive
-        if _G.GameSocket then
-            _G.GameSocket:update()
+        -- Keep socket connection alive, or reconnect if dead
+        if self._reconnecting and self._reconnectHandle then
+            SocketManager.updateReconnect(self._reconnectHandle, dt)
+        elseif _G.GameSocket then
+            if _G.GameSocket:isConnected() then
+                _G.GameSocket:update()
+            elseif not self._reconnecting then
+                self:startReconnect()
+            end
         end
 
         -- Save feedback timer
@@ -1424,9 +1495,13 @@ function MenuScreen.new()
             if btn and x >= btn.x and x <= btn.x + btn.w and
                        y >= btn.y and y <= btn.y + btn.h then
                 AudioManager.playTap()
-                if _G.GameSocket then
+                if _G.GameSocket and _G.GameSocket:isConnected() then
+                    self:removeSocketHandlers()
                     local ScreenManager = require('lib.screen_manager')
                     ScreenManager.switch('lobby', _G.GameSocket)
+                elseif _G.GameSocket then
+                    -- Socket exists but dead — reconnect first
+                    self:startReconnect()
                 else
                     -- Not logged in, go to login screen
                     local ScreenManager = require('lib.screen_manager')

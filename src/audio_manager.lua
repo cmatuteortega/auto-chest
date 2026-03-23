@@ -9,6 +9,7 @@ local AM = {
     _music       = nil,   -- streaming Source for OST
     _taps        = {},    -- 3 static Sources for UI taps
     _battleMode  = false,
+    _wasMusicPlaying = false,  -- tracks music state across focus loss/gain
 }
 
 local SETTINGS_FILE = "settings.json"
@@ -88,6 +89,24 @@ function AM.playTap()
         local clone = src:clone()
         clone:play()
     end
+end
+
+-- ── focus pause / resume (background handling) ──────────────────────────────
+
+function AM.pauseAll()
+    if AM._music and AM._music:isPlaying() then
+        AM._wasMusicPlaying = true
+        AM._music:pause()
+    else
+        AM._wasMusicPlaying = false
+    end
+end
+
+function AM.resumeAll()
+    if AM._wasMusicPlaying and AM._music and AM.musicEnabled then
+        AM._music:play()
+    end
+    AM._wasMusicPlaying = false
 end
 
 -- ── toggle helpers ────────────────────────────────────────────────────────────
