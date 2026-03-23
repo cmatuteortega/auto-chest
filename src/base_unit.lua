@@ -141,7 +141,7 @@ function BaseUnit:new(row, col, owner, sprites, stats)
 
     -- Attack animation state
     self.attackAnimProgress = 0
-    self.attackAnimDuration = 0.15  -- Quick lunge animation
+    self.attackAnimDuration = 0.45  -- 3 phases: windup / lunge / impact (0.15s each)
     self.attackTargetCol = nil
     self.attackTargetRow = nil
 
@@ -279,12 +279,24 @@ function BaseUnit:updateVisuals(dt, gameState)
 
     -- 3. Advance frame index
     if self.animState == "attack" then
-        -- Map attackAnimProgress (0→1) to frame index
+        -- 3-phase attack: windup (0→⅓) / lunge (⅓→⅔) / impact (⅔→1)
+        -- frame 1 = windup, frame 2 = lunge, frame 3 = impact
         local d = self.sprites.directional
         local step = self:getNearestStep(self.facingAngle, {0, 45, 135, 180, 225, 315})
         local dirData = (d.hit and d.hit[step]) or (d.hit and d.hit[0])
         local count = dirData and #dirData.frames or 1
-        self.animFrameIndex = math.min(count, math.floor(self.attackAnimProgress * count) + 1)
+        local p = self.attackAnimProgress
+        if count >= 3 then
+            if p < 1/3 then
+                self.animFrameIndex = 1
+            elseif p < 2/3 then
+                self.animFrameIndex = 2
+            else
+                self.animFrameIndex = 3
+            end
+        else
+            self.animFrameIndex = math.min(count, math.floor(p * count) + 1)
+        end
     else
         -- Cycle idle/walk frames via timer (only when actually moving for walk)
         local shouldCycle = (self.animState == "idle") or self.isMoving
@@ -349,9 +361,11 @@ function BaseUnit:draw()
             dx = dx / distance
             dy = dy / distance
 
-            -- Use outBack easing for overshoot punch effect
+            -- Use outBack easing for overshoot punch effect.
+            -- Lunge only starts after the windup phase (first 1/3 of progress).
+            local lungeProgress = math.max(0, (self.attackAnimProgress - 1/3) / (2/3))
             local maxLunge = Constants.CELL_SIZE * 0.3
-            local lungeAmount = tween.easing.outBack(self.attackAnimProgress, 0, maxLunge, 1, 1.7)
+            local lungeAmount = tween.easing.outBack(lungeProgress, 0, maxLunge, 1, 1.7)
             x = x + dx * lungeAmount
             y = y + dy * lungeAmount
         end
