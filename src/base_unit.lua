@@ -242,6 +242,14 @@ function BaseUnit:updateVisuals(dt, gameState)
     if not self.hasDirectionalSprites then return end
     if self.isDead then return end
 
+    -- Continuously track the current target so the unit faces it between attacks.
+    -- Only when stationary and not mid-attack (those set prevFacingAngle intentionally).
+    if self.target and not self.target.isDead and not self.isMoving
+       and not (self.attackAnimProgress < 1 and self.attackTargetCol) then
+        self.targetFacingAngle = self:computeTargetAngle(
+            self.target.col - self.col, self.target.row - self.row)
+    end
+
     -- 1. Smooth rotation toward targetFacingAngle (shortest arc)
     local delta = self.targetFacingAngle - self.facingAngle
     delta = ((delta + 180) % 360) - 180
