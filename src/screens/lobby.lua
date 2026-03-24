@@ -279,20 +279,33 @@ function LobbyScreen.new()
 
     function self:mousepressed(x, y, button)
         if button ~= 1 then return end
-
-        -- Cancel button
         if self._cancelBtnRect then
             local r = self._cancelBtnRect
+            self._cancelPressedInside = x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h
+        end
+    end
+
+    function self:mousereleased(x, y, button)
+        if button ~= 1 then return end
+        if self._cancelPressedInside and self._cancelBtnRect then
+            local r = self._cancelBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._cancelPressedInside = false
                 self:leaveQueue()
                 local ScreenManager = require('lib.screen_manager')
                 ScreenManager.switch('menu')
+                return
             end
         end
+        self._cancelPressedInside = false
     end
 
     function self:touchpressed(_, x, y)
         self:mousepressed(x, y, 1)
+    end
+
+    function self:touchreleased(_, x, y)
+        self:mousereleased(x, y, 1)
     end
 
     function self:keypressed(key)
