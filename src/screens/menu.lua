@@ -126,6 +126,27 @@ function MenuScreen.new()
         -- Start background music when player lands on menu
         AudioManager.playMusic()
         AudioManager.setBattleMode(false)
+
+        -- Scrolling ticker stripe (one message at a time, with pause between).
+        -- Add more strings here to have them appear in the ticker.
+        self._tickerMessages   = {
+            "This is a test",
+            "This is not a test",
+            "Okay maybe this IS a test",
+            "Build your deck. Crush your enemies.",
+            "Units respawn every round. Plan accordingly.",
+            "Losing gives you bonus coins. Stay in the fight.",
+        }
+        self._tickerCurrentMsg = nil
+        self._tickerLastIdx    = nil   -- prevents back-to-back repeats
+        self._tickerMsgPx      = 0
+        self._tickerOffset     = 0
+        self._tickerState      = "waiting"
+        self._tickerWaitTimer  = 1.0
+
+        -- Button spring physics (Balatro squish/bounce)
+        self._playSpring = { scale = 1.0, vel = 0.0, pressed = false }
+        self._sbtnSpring = { scale = 1.0, vel = 0.0, pressed = false }
     end
 
     function self:registerSocketHandlers()
@@ -310,6 +331,47 @@ function MenuScreen.new()
                 self.tabRaiseAnim[i] = self.tabRaiseAnim[i] + d * 12 * dt
             end
         end
+
+        -- Ticker: one message scrolls across, then pauses before the next
+        local tickerW = Constants.GAME_WIDTH
+        local tickerSpeed = 60 * Constants.SCALE
+        local TICKER_PAUSE = 2.5   -- seconds of blank between messages
+
+        if self._tickerState == "scrolling" then
+            self._tickerOffset = self._tickerOffset + tickerSpeed * dt
+            if self._tickerOffset >= tickerW + self._tickerMsgPx then
+                self._tickerState     = "waiting"
+                self._tickerWaitTimer = TICKER_PAUSE
+            end
+        elseif self._tickerState == "waiting" then
+            self._tickerWaitTimer = self._tickerWaitTimer - dt
+            if self._tickerWaitTimer <= 0 then
+                local msgs = self._tickerMessages
+                local idx  = math.random(#msgs)
+                -- avoid showing the same message twice in a row
+                if #msgs > 1 then
+                    while idx == self._tickerLastIdx do
+                        idx = math.random(#msgs)
+                    end
+                end
+                self._tickerLastIdx    = idx
+                self._tickerCurrentMsg = msgs[idx]
+                self._tickerMsgPx      = Fonts.small:getWidth(self._tickerCurrentMsg)
+                self._tickerOffset     = 0
+                self._tickerState      = "scrolling"
+            end
+        end
+
+        -- Button spring physics (underdamped: k=480, d=18 → overshoot ~1.05)
+        local function updateSpring(sp, dt2)
+            local target = sp.pressed and 0.93 or 1.0
+            local accel  = -480 * (sp.scale - target) - 18 * sp.vel
+            sp.vel   = sp.vel   + accel * dt2
+            sp.scale = sp.scale + sp.vel  * dt2
+            sp.scale = math.max(0.85, math.min(1.12, sp.scale))
+        end
+        updateSpring(self._playSpring, dt)
+        updateSpring(self._sbtnSpring, dt)
     end
 
     -- Returns the current preview frame + trimBottom for a unit type.
@@ -341,6 +403,34 @@ function MenuScreen.new()
             end
         end
         return self.sprites[utype], self.spriteTrimBottoms[utype] or 0
+    end
+
+    -- ── ticker stripe ────────────────────────────────────────────────────────
+
+    function self:drawTickerStripe(W, sc)
+        local lg      = love.graphics
+        local stripeY = math.floor(75 * sc)
+        local stripeH = math.floor(36 * sc)
+
+        -- Background
+        lg.setColor(0.08, 0.10, 0.16, 1)
+        lg.rectangle('fill', 0, stripeY, W, stripeH)
+
+        -- Separator lines
+        lg.setColor(0.22, 0.28, 0.42, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(0, stripeY, W, stripeY)
+        lg.line(0, stripeY + stripeH, W, stripeY + stripeH)
+
+        -- Draw current message scrolling right-to-left (messages & timing driven by update)
+        if self._tickerCurrentMsg and self._tickerState == "scrolling" then
+            lg.setScissor(0, stripeY, W, stripeH)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.72, 0.82, 1.0, 1)
+            local textY = math.floor(stripeY + (stripeH - (Fonts.small:getAscent() - Fonts.small:getDescent())) / 2)
+            lg.print(self._tickerCurrentMsg, math.floor(W - self._tickerOffset), textY)
+            lg.setScissor()
+        end
     end
 
     -- ── draw helpers ────────────────────────────────────────────────────────
@@ -392,12 +482,6 @@ function MenuScreen.new()
     end
 
     function self:drawCollectionPanel(ox, W, H, sc)
-        local lg = love.graphics
-
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Collection", ox, 82 * sc, W, 'center')
-
         local cols   = 4
         local cardW  = 100 * sc
         local cardH  = 130 * sc
@@ -432,15 +516,9 @@ function MenuScreen.new()
         local gridW       = 5 * cellSize
         local gridH       = 4 * cellSize
         local gridX       = ox + (W - gridW) / 2
-        local titleY      = 82 * sc
-        local btnY        = H * 0.70
-        local titleBottom = titleY + Fonts.large:getHeight()
-        local gridY       = math.floor(titleBottom + (btnY - titleBottom - gridH) / 2)
-
-        -- Title
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", ox, titleY, W, 'center')
+        local btnY        = H * 0.62
+        local contentTop  = 100 * sc
+        local gridY       = math.floor(contentTop + (btnY - contentTop - gridH) / 2)
 
         -- Checkerboard cells
         local CDARK  = Constants.COLORS.CHESS_DARK
@@ -489,37 +567,73 @@ function MenuScreen.new()
         end
 
         -- Buttons
-        local btnW = 240 * sc
-        local btnH = 56  * sc
-        local btnX = cx - btnW / 2
+        local btnW     = 240 * sc
+        local playH    = 112 * sc
+        local sbtnH    = 28  * sc   -- half height
+        local btnX     = cx - btnW / 2
+        local maxFloat = math.floor(6 * sc)
+        local shadowH  = math.floor(6 * sc)
 
+        -- PLAY button: Balatro float + shadow + idle bob/rotation
+        local t        = love.timer.getTime()
+        local idleBob  = math.sin(t * 1.8) * 2 * sc        -- gentle vertical drift
+        local idleRot  = math.sin(t * 1.3) * 0.012        -- ~0.7 deg, barely perceptible
+        local s        = self._playSpring.scale
+        local floatOff = math.floor(maxFloat * math.max(0, (s - 0.93) / 0.07))
+        local drawY    = btnY - floatOff + math.floor(idleBob)
+
+        -- Shadow (static at anchor — button floats above it)
+        lg.setColor(0.05, 0.14, 0.35, 1)
+        roundedRect(btnX + math.floor(2 * sc), btnY + shadowH, btnW, playH, 8, sc)
+
+        -- Button face: pivot at center, rotate then scale
+        local pivX = btnX + btnW / 2
+        local pivY = drawY + playH / 2
+        local bx   = -btnW  / 2   -- local-space left
+        local by   = -playH / 2   -- local-space top
+        lg.push()
+        lg.translate(pivX, pivY)
+        lg.rotate(idleRot)
+        lg.scale(s, s)
         lg.setColor(0.15, 0.32, 0.65, 1)
-        roundedRect(btnX, btnY, btnW, btnH, 8, sc)
-        lg.setColor(0.25, 0.45, 0.85, 1)
-        roundedRectLine(btnX, btnY, btnW, btnH, 8, sc, 2 * sc)
-        lg.setFont(Fonts.medium)
+        roundedRect(bx, by, btnW, playH, 8, sc)
+        lg.setColor(0.35, 0.55, 0.95, 1)
+        roundedRectLine(bx, by, btnW, playH, 8, sc, 2 * sc)
+        lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("PLAY ONLINE", btnX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
-        self._playBtnRect = { x = btnX + self.panelOffset, y = btnY, w = btnW, h = btnH }
+        lg.printf("PLAY", bx, textCY(Fonts.large, by, playH), btnW, 'center')
+        lg.pop()
+        -- Hit rect covers full float range
+        self._playBtnRect = { x = btnX + self.panelOffset, y = btnY - maxFloat, w = btnW, h = playH + maxFloat }
 
-        local sbtnY = btnY + btnH + 14 * sc
+        -- SANDBOX button (same float+shadow pattern, smaller)
+        local sbtnY  = btnY + playH + shadowH + 14 * sc
+        local ss     = self._sbtnSpring.scale
+        local sfloat = math.floor(maxFloat * math.max(0, (ss - 0.93) / 0.07))
+        local sdrawY = sbtnY - sfloat
+
+        lg.setColor(0.22, 0.12, 0.02, 1)
+        roundedRect(btnX + math.floor(2 * sc), sbtnY + shadowH, btnW, sbtnH, 8, sc)
+
+        local spivX = btnX + btnW / 2
+        local spivY = sdrawY + sbtnH / 2
+        lg.push()
+        lg.translate(spivX, spivY)
+        lg.scale(ss, ss)
+        lg.translate(-spivX, -spivY)
         lg.setColor(0.45, 0.28, 0.08, 1)
-        roundedRect(btnX, sbtnY, btnW, btnH, 8, sc)
+        roundedRect(btnX, sdrawY, btnW, sbtnH, 8, sc)
         lg.setColor(0.70, 0.48, 0.15, 1)
-        roundedRectLine(btnX, sbtnY, btnW, btnH, 8, sc, 2 * sc)
-        lg.setFont(Fonts.medium)
+        roundedRectLine(btnX, sdrawY, btnW, sbtnH, 8, sc, 2 * sc)
+        lg.setFont(Fonts.small)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("SANDBOX", btnX, textCY(Fonts.medium, sbtnY, btnH), btnW, 'center')
-        self._sandboxBtnRect = { x = btnX + self.panelOffset, y = sbtnY, w = btnW, h = btnH }
+        lg.printf("SANDBOX", btnX, textCY(Fonts.small, sdrawY, sbtnH), btnW, 'center')
+        lg.pop()
+        self._sandboxBtnRect = { x = btnX + self.panelOffset, y = sbtnY - maxFloat, w = btnW, h = sbtnH + maxFloat }
     end
 
     function self:drawDecksPanel(ox, W, H, sc)
         local lg = love.graphics
-
-        -- Title
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Decks", ox, 82 * sc, W, 'center')
 
         -- ── Deck slot tabs ────────────────────────────────────────────────────
         local tabAreaW  = W - 40 * sc
@@ -734,11 +848,8 @@ function MenuScreen.new()
         end
     end
 
-    function self:drawRankingPanel(ox, W, H, sc)
+    function self:drawRankingPanel(ox, W, H)
         local lg = love.graphics
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Ranking", ox, 82 * sc, W, 'center')
         lg.setFont(Fonts.medium)
         lg.setColor(0.4, 0.4, 0.45, 1)
         lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
@@ -746,11 +857,6 @@ function MenuScreen.new()
 
     function self:drawShopPanel(ox, W, H, sc)
         local lg = love.graphics
-
-        -- Title
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Shop", ox, 82 * sc, W, 'center')
 
         -- Layout constants
         local gapX    = 10 * sc
@@ -1104,10 +1210,13 @@ function MenuScreen.new()
         self:drawDecksPanel(     W,       W, H - barH, sc)
         self:drawPlayPanel(      2 * W,   W, H - barH, sc)
         self:drawShopPanel(      3 * W,   W, H - barH, sc)
-        self:drawRankingPanel(   4 * W,   W, H - barH, sc)
+        self:drawRankingPanel(   4 * W,   W, H - barH)
 
         lg.pop()
         lg.setScissor()
+
+        -- Scrolling ticker stripe (screen space, fixed above panel content)
+        self:drawTickerStripe(W, sc)
 
         -- Top-left header: player name + trophies, then gem/gold strips
         if _G.PlayerData then
@@ -1324,6 +1433,20 @@ function MenuScreen.new()
 
         -- Overlays absorb all presses
         if self.showDetail or self.showSettings then return end
+
+        -- Spring press: activate squish on button contact
+        if self.currentPanel == 3 then
+            local btn = self._playBtnRect
+            if btn and x >= btn.x and x <= btn.x + btn.w and
+                       y >= btn.y and y <= btn.y + btn.h then
+                self._playSpring.pressed = true
+            end
+            local sbtn = self._sandboxBtnRect
+            if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
+                        y >= sbtn.y and y <= sbtn.y + sbtn.h then
+                self._sbtnSpring.pressed = true
+            end
+        end
     end
 
     function self:handleMove(x, y)
@@ -1358,6 +1481,8 @@ function MenuScreen.new()
 
     function self:handleRelease(x, y)
         self.isPressed = false
+        self._playSpring.pressed = false
+        self._sbtnSpring.pressed = false
         local dx = x - self.pressX
 
         -- Settings overlay

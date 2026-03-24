@@ -145,9 +145,10 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.attackTargetCol = nil
     self.attackTargetRow = nil
 
-    -- Deferred melee damage (applied at 2/3 of lunge animation)
+    -- Deferred melee damage: integer tick countdown (0 = no pending attack)
     self.pendingAttackTarget = nil
     self.pendingAttackGrid   = nil
+    self.pendingAttackDelay  = 0
 
     -- Hit animation state
     self.hitAnimProgress = 0
@@ -617,6 +618,7 @@ function BaseUnit:resetCombatState()
     self.attackTargetRow     = nil
     self.pendingAttackTarget = nil
     self.pendingAttackGrid   = nil
+    self.pendingAttackDelay  = 0
 
     -- Reset directional sprite fields
     if self.hasDirectionalSprites then
@@ -641,11 +643,18 @@ function BaseUnit:update(dt, grid)
         end
     end
 
-    -- Fire deferred melee damage at the end-of-lunge threshold (2/3 of animation)
-    if self.pendingAttackTarget and self.attackAnimProgress >= 2/3 and not self.isDead then
-        self:attack(self.pendingAttackTarget, self.pendingAttackGrid)
-        self.pendingAttackTarget = nil
-        self.pendingAttackGrid   = nil
+    -- Fire deferred melee damage via integer tick countdown (immune to FP drift).
+    -- pendingAttackDelay is set once in startMeleeAnimation() using integer math;
+    -- decrementing an integer is bit-exact on every platform, unlike float comparisons.
+    if self.pendingAttackDelay > 0 then
+        self.pendingAttackDelay = self.pendingAttackDelay - 1
+        if self.pendingAttackDelay == 0 and self.pendingAttackTarget then
+            if not self.isDead then
+                self:attack(self.pendingAttackTarget, self.pendingAttackGrid)
+            end
+            self.pendingAttackTarget = nil
+            self.pendingAttackGrid   = nil
+        end
     end
 
     if self.hitAnimProgress < 1 and self.hitAnimIntensity > 0 then
@@ -908,17 +917,25 @@ function BaseUnit:attack(target, grid)
     end
 end
 
--- Queue deferred melee damage: starts the lunge animation and stores the target.
--- Damage is applied when attackAnimProgress reaches 2/3 (end of lunge phase).
--- attackAnimDuration is scaled to the unit's current attack speed so fast units
--- have proportionally shorter windup/lunge/impact cycles.
+-- Start the lunge animation and queue deferred melee damage.
+-- Damage fires after pendingAttackDelay ticks (≈ 2/3 of the animation).
+-- The delay is computed with integer arithmetic to guarantee bit-exact results
+-- on every platform — floating-point comparisons (e.g. progress >= 2/3) can
+-- fire one tick early or late on different Android FPUs, causing desync.
+--
+-- Math: totalTicks = round(animDuration * 60), delay = round(totalTicks * 2/3)
+-- attackSpeed=1 → animDuration=0.45 → totalTicks=27 → delay=18 ticks  ✓
+-- attackSpeed=1.5 → same animDuration (min clamp) → same delay=18 ticks ✓
+local _FIXED_DT = 1/60
 function BaseUnit:startMeleeAnimation(target, grid)
+    self.attackAnimDuration  = math.min(0.45, 1 / self.attackSpeed)
     self.attackAnimProgress  = 0
     self.attackTargetCol     = target.col
     self.attackTargetRow     = target.row
-    self.attackAnimDuration  = math.min(0.45, 1 / self.attackSpeed)
     self.pendingAttackTarget = target
     self.pendingAttackGrid   = grid
+    local totalTicks        = math.floor(self.attackAnimDuration / _FIXED_DT + 0.5)
+    self.pendingAttackDelay = math.max(1, math.floor(totalTicks * 2 / 3 + 0.5))
 end
 
 -- Move along the current path (with tween animation)

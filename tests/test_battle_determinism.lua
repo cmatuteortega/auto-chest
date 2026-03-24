@@ -285,6 +285,201 @@ check("t4_samurai_damage_reset",  samA.damageFromAlliedDeaths, 0)
 check("t4_samurai_observed_reset", next(samA.allyDeathsObserved) == nil and "empty" or "not_empty", "empty")
 
 -- ════════════════════════════════════════════════════════════════════════════
+-- TEST 5 — Exact damage timing: fires at tick pendingAttackDelay, not before
+--
+-- Regression guard for the float-comparison desync bug:
+--   OLD code: `attackAnimProgress >= 2/3`  → may fire tick 17 or 19 on some FPUs
+--   NEW code: integer countdown            → always fires at exactly tick 18
+--
+-- We verify THREE things:
+--   a) Damage NOT applied after (delay-1) ticks  → not too early
+--   b) Damage IS applied after delay ticks        → not too late
+--   c) Both independent sims agree on step count  → deterministic
+-- ════════════════════════════════════════════════════════════════════════════
+print("── Test 5: exact damage timing (integer tick countdown) ────────────────")
+
+local function buildTimingBoard()
+    local g = Grid()
+    -- Place P1 Knight directly above P2 Knight (adjacent, melee range).
+    -- Row 5 = P1 zone top; row 4 = P2 zone bottom.  colDiff=0, rowDiff=1 → in range.
+    local attacker = Knight(5, 3, 1, STUB_SPRITES)
+    local target   = Knight(4, 3, 2, STUB_SPRITES)
+    g:placeUnit(attacker.col, attacker.row, attacker)
+    g:placeUnit(target.col,   target.row,   target)
+    attacker:onBattleStart(g)
+    target:onBattleStart(g)
+    return g, attacker, target
+end
+
+-- Build two identical boards and run them in lockstep to detect any tick drift.
+local gT5a, att5a, tgt5a = buildTimingBoard()
+local gT5b, att5b, tgt5b = buildTimingBoard()
+
+-- Determine expected delay from the unit's own calculation (mirrors startMeleeAnimation).
+-- We expose it indirectly: run 1 tick so the attack is queued, then read the field.
+local units5a = gT5a:getAllUnits()
+local units5b = gT5b:getAllUnits()
+for _, u in ipairs(units5a) do u:update(FIXED_DT, gT5a) end
+for _, u in ipairs(units5b) do u:update(FIXED_DT, gT5b) end
+
+local delay5 = att5a.pendingAttackDelay  -- read after first tick; should be delay-1 now
+-- delay5 is (delay - 1) because one tick has already been consumed.
+-- We need to run delay5 more ticks to reach tick 0 (the firing tick).
+local hpBefore5a = tgt5a.health
+local hpBefore5b = tgt5b.health
+
+-- Run (delay5 - 1) more ticks: damage must NOT have fired yet.
+for _ = 1, delay5 - 1 do
+    for _, u in ipairs(units5a) do u:update(FIXED_DT, gT5a) end
+    for _, u in ipairs(units5b) do u:update(FIXED_DT, gT5b) end
+end
+check("t5_no_damage_before_delay", tgt5a.health, hpBefore5a)  -- not yet
+check("t5_both_boards_agree_pre",  tgt5a.health, tgt5b.health)
+
+-- Run the final 1 tick: damage MUST fire now.
+for _, u in ipairs(units5a) do u:update(FIXED_DT, gT5a) end
+for _, u in ipairs(units5b) do u:update(FIXED_DT, gT5b) end
+check("t5_damage_fires_at_delay",  tgt5a.health < hpBefore5a, true)  -- took damage
+check("t5_both_boards_agree_post", tgt5a.health, tgt5b.health)       -- in sync
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- TEST 6 — Concurrent melee attacks on the same target
+--
+-- Two P1 units are simultaneously in range of one P2 unit.  Both queue their
+-- deferred attacks in tick 1.  The attacks must fire in the same deterministic
+-- order on both simulations (board A and board B run independently).
+-- ════════════════════════════════════════════════════════════════════════════
+print("── Test 6: concurrent melee attacks on same target ─────────────────────")
+
+local function buildConcurrentBoard()
+    local g = Grid()
+    -- Two P1 Knights flanking one P2 Knight
+    local k1    = Knight(5, 2, 1, STUB_SPRITES)  -- row 5 col 2
+    local k2    = Knight(5, 4, 1, STUB_SPRITES)  -- row 5 col 4
+    local enemy = Knight(4, 3, 2, STUB_SPRITES)  -- row 4 col 3 (diagonal from both)
+    g:placeUnit(k1.col,    k1.row,    k1)
+    g:placeUnit(k2.col,    k2.row,    k2)
+    g:placeUnit(enemy.col, enemy.row, enemy)
+    k1:onBattleStart(g)
+    k2:onBattleStart(g)
+    enemy:onBattleStart(g)
+    return g
+end
+
+math.randomseed(200); local gC1 = buildConcurrentBoard()
+math.randomseed(200); local gC2 = buildConcurrentBoard()
+local wC1, sC1, uC1 = runBattle(gC1)
+local wC2, sC2, uC2 = runBattle(gC2)
+check("t6_winner",  wC1, wC2)
+check("t6_steps",   sC1, sC2)
+check("t6_health",  healthSnapshot(uC1), healthSnapshot(uC2))
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- TEST 7 — Boney Fury (attackSpeed changes mid-battle)
+--
+-- Boney with Fury upgrade starts above 50% HP, takes damage, crosses the
+-- threshold, and Fury kicks in (attackSpeed * 1.5).  The delay for the NEXT
+-- attack is recomputed by startMeleeAnimation using the new attackSpeed.
+-- Both simulations must produce identical outcomes.
+-- ════════════════════════════════════════════════════════════════════════════
+print("── Test 7: Boney Fury attackSpeed change determinism ───────────────────")
+
+local function buildFuryBoard()
+    local g = Grid()
+    -- Fury Boney (level 2 = Mend + Fury) vs a higher-HP Knight so the battle lasts long enough
+    -- for Fury to trigger.
+    local furyBoney = makeUnit(Boney,  5, 3, 1, 2)   -- level 2: Mend + Fury
+    local toughKnight = makeUnit(Knight, 4, 3, 2, 1)  -- level 1 Knight (more HP)
+    furyBoney.homeCol  = furyBoney.col;  furyBoney.homeRow  = furyBoney.row
+    toughKnight.homeCol = toughKnight.col; toughKnight.homeRow = toughKnight.row
+    g:placeUnit(furyBoney.col,   furyBoney.row,   furyBoney)
+    g:placeUnit(toughKnight.col, toughKnight.row, toughKnight)
+    furyBoney:onBattleStart(g)
+    toughKnight:onBattleStart(g)
+    return g
+end
+
+math.randomseed(301); local gF1 = buildFuryBoard()
+math.randomseed(301); local gF2 = buildFuryBoard()
+local wF1, sF1, uF1 = runBattle(gF1)
+local wF2, sF2, uF2 = runBattle(gF2)
+check("t7_fury_winner",  wF1, wF2)
+check("t7_fury_steps",   sF1, sF2)
+check("t7_fury_health",  healthSnapshot(uF1), healthSnapshot(uF2))
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- TEST 8 — 5-round match: accumulated drift detection
+--
+-- Runs a 5-round match (reset+battle loop).  Board A keeps original objects
+-- (like the local player's view); board B recreates units fresh each round
+-- (like the opponent's view via applyOpponentMsg).  Both must agree on every
+-- round's winner, step count, and surviving health.
+--
+-- This specifically targets bugs that only appear after multiple rounds of
+-- accumulated state (the reported desync occurred around round 3-4).
+-- ════════════════════════════════════════════════════════════════════════════
+print("── Test 8: 5-round accumulated drift detection ─────────────────────────")
+
+-- Unit composition for the 5-round test (richer than Test 2)
+local function makeRound8Units_A()
+    return {
+        makeUnit(Knight,  8, 2, 1, 2),  -- level-2 Knight
+        makeUnit(Boney,   7, 4, 1, 2),  -- level-2 Boney (Mend+Fury)
+        makeUnit(Samurai, 6, 1, 1, 1),  -- level-1 Samurai (Bloodthirst)
+        makeUnit(Knight,  1, 2, 2, 1),
+        makeUnit(Boney,   2, 4, 2, 1),
+        makeUnit(Samurai, 3, 3, 2, 0),
+    }
+end
+local function makeRound8Units_B()
+    return makeRound8Units_A()  -- same composition, fresh objects
+end
+
+local gridA8 = Grid()
+local gridB8 = Grid()
+local unitsA8 = makeRound8Units_A()
+local unitsB8 = makeRound8Units_B()
+
+for _, u in ipairs(unitsA8) do
+    u.homeCol = u.col; u.homeRow = u.row
+    gridA8:placeUnit(u.col, u.row, u)
+end
+for _, u in ipairs(unitsB8) do
+    u.homeCol = u.col; u.homeRow = u.row
+    gridB8:placeUnit(u.col, u.row, u)
+end
+
+for round = 1, 5 do
+    local seed8 = 400 + round * 17
+
+    math.randomseed(seed8)
+    for _, u in ipairs(gridA8:getAllUnits()) do u:onBattleStart(gridA8) end
+    math.randomseed(seed8)
+    for _, u in ipairs(gridB8:getAllUnits()) do u:onBattleStart(gridB8) end
+
+    math.randomseed(seed8); local wA8, sA8, uA8 = runBattle(gridA8)
+    math.randomseed(seed8); local wB8, sB8, uB8 = runBattle(gridB8)
+
+    local rStr = "t8_r" .. round
+    check(rStr .. "_winner", wA8, wB8)
+    check(rStr .. "_steps",  sA8, sB8)
+    check(rStr .. "_health", healthSnapshot(uA8), healthSnapshot(uB8))
+
+    if round < 5 then
+        -- Board A: reset existing objects (local player view)
+        resetBoard(gridA8, unitsA8)
+
+        -- Board B: recreate fresh objects (opponent applyOpponentMsg view)
+        gridB8 = Grid()
+        unitsB8 = makeRound8Units_B()
+        for _, u in ipairs(unitsB8) do
+            u.homeCol = u.col; u.homeRow = u.row
+            gridB8:placeUnit(u.col, u.row, u)
+        end
+    end
+end
+
+-- ════════════════════════════════════════════════════════════════════════════
 -- Result
 -- ════════════════════════════════════════════════════════════════════════════
 print("")
