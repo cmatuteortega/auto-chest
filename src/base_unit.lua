@@ -196,20 +196,37 @@ function BaseUnit:computeTargetAngle(dCol, dRow)
 end
 
 -- Returns the nearest available angle step from availableSteps to the given angle.
--- Uses prevFacingAngle as tiebreaker so 90° picks 45° or 135° based on origin direction.
-function BaseUnit:getNearestStep(angle, availableSteps)
+-- prevAngle (optional) is used as a tiebreaker so 90° picks 45° or 135° based on
+-- the incoming direction.  Pass already-converted visual-space angles for both.
+function BaseUnit:getNearestStep(angle, availableSteps, prevAngle)
+    prevAngle = prevAngle or self.prevFacingAngle
     local best, bestDist = availableSteps[1], 999
     for _, step in ipairs(availableSteps) do
         local d = math.abs(((angle - step + 180) % 360) - 180)
         local isBetter = d < bestDist
         if d == bestDist then
-            local dPrev = math.abs(((self.prevFacingAngle - step + 180) % 360) - 180)
-            local dBest = math.abs(((self.prevFacingAngle - best  + 180) % 360) - 180)
+            local dPrev = math.abs(((prevAngle - step + 180) % 360) - 180)
+            local dBest = math.abs(((prevAngle - best  + 180) % 360) - 180)
             isBetter = dPrev < dBest
         end
         if isBetter then best, bestDist = step, d end
     end
     return best
+end
+
+-- Convert a canonical facing angle to the local player's visual screen space.
+-- facingAngle is stored canonically (row 1 = top), but P2's grid is rendered
+-- row-flipped.  The flip negates the N/S component of direction while leaving
+-- E/W unchanged, which is a specular reflection: θ_visual = (180 - θ) mod 360.
+--   canonical 0°  (south) → visual 180° (north on P2's screen)  ✓
+--   canonical 90° (east)  → visual 90°  (east unchanged)         ✓
+--   canonical 45°         → visual 135°                          ✓
+--   canonical 315°        → visual 225°                          ✓
+function BaseUnit:visualAngle(a)
+    if (Constants.PERSPECTIVE or 1) == 2 then
+        return (180 - a + 360) % 360
+    end
+    return a
 end
 
 -- Returns the directional sprite image and trimBottom for the current animation state.
@@ -221,7 +238,8 @@ function BaseUnit:getDirectionalSprite()
     local d = self.sprites.directional
     local stateKey = self.animState == "attack" and "hit" or self.animState
     local availableSteps = (self.animState == "idle") and {0, 180} or {0, 45, 135, 180, 225, 315}
-    local step = self:getNearestStep(self.facingAngle, availableSteps)
+    local step = self:getNearestStep(self:visualAngle(self.facingAngle), availableSteps,
+                                     self:visualAngle(self.prevFacingAngle))
 
     local stateData = d[stateKey]
     local dirData   = stateData and stateData[step]
@@ -287,7 +305,9 @@ function BaseUnit:updateVisuals(dt, gameState)
         -- 3-phase attack: windup (0→⅓) / lunge (⅓→⅔) / impact (⅔→1)
         -- frame 1 = windup, frame 2 = lunge, frame 3 = impact
         local d = self.sprites.directional
-        local step = self:getNearestStep(self.facingAngle, {0, 45, 135, 180, 225, 315})
+        local step = self:getNearestStep(self:visualAngle(self.facingAngle),
+                                         {0, 45, 135, 180, 225, 315},
+                                         self:visualAngle(self.prevFacingAngle))
         local dirData = (d.hit and d.hit[step]) or (d.hit and d.hit[0])
         local count = dirData and #dirData.frames or 1
         local p = self.attackAnimProgress
@@ -313,7 +333,8 @@ function BaseUnit:updateVisuals(dt, gameState)
                 self.animFrameTimer = self.animFrameTimer - frameDur
                 local d = self.sprites.directional
                 local steps = (self.animState == "idle") and {0, 180} or {0, 45, 135, 180, 225, 315}
-                local step = self:getNearestStep(self.facingAngle, steps)
+                local step = self:getNearestStep(self:visualAngle(self.facingAngle), steps,
+                                                 self:visualAngle(self.prevFacingAngle))
                 local stateData = d[self.animState]
                 local dirData = (stateData and stateData[step]) or (stateData and stateData[0])
                 local count = dirData and #dirData.frames or 1
