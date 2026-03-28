@@ -215,7 +215,7 @@ When you make code changes:
 ```bash
 # On your local machine
 cd /Users/cmatute1/auto-chest/auto-chest
-rsync -avz --exclude 'server/players.db' . root@YOUR_SERVER_IP:/opt/autochest/
+rsync -avz --exclude 'server/players.db' . root@75.119.142.247:/opt/autochest/
 
 # On VPS
 ssh root@YOUR_SERVER_IP
