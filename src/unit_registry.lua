@@ -26,6 +26,12 @@ UnitRegistry.unitClasses = {
     clavicula = Clavicula
 }
 
+-- Unit groups for collection display
+UnitRegistry.groups = {
+    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula"} },
+    { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "samurai", "bull"} },
+}
+
 -- Map of unit type names to their sprite paths
 UnitRegistry.spritePaths = {
     boney = {
@@ -91,7 +97,7 @@ UnitRegistry.passiveDescriptions = {
     mage   = "Every 6 hits dealt or received, launches a fireball dealing AoE damage",
     amalgam  = "Cannot die to a single hit; surviving a lethal blow grants 1s invulnerability (10s cooldown)",
     humerus   = "Royal Command: allies attacking the same target gain +20% ATK",
-    clavicula = "Every 6 hits (given or taken), spawns a copy of itself at half HP"
+    clavicula = "Every 8 hits (given or taken), spawns a copy at 50% HP (max 4 on screen)"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy

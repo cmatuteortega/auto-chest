@@ -44,9 +44,9 @@ function MenuScreen.new()
         self.selectedDeckSlot = 1
         self._deckSlotRects   = {}
         self._deckCardRects   = {}
-        self._deckSaveRect    = nil
+        self._deckSortRect    = nil
         self._deckActiveRect  = nil
-        self._saveFeedback    = 0
+        self._deckSortByCost  = false
         self.previewLayout    = {}
 
         -- Load front sprites for collection display (sorted for stable ordering).
@@ -117,6 +117,7 @@ function MenuScreen.new()
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
         self._cb_disconnect     = nil
+        self._cb_decksSynced    = nil
 
         -- Register socket handlers
         self:registerSocketHandlers()
@@ -171,6 +172,10 @@ function MenuScreen.new()
         self._cb_disconnect = _G.GameSocket:on("disconnect", function()
             print("[MENU] Socket disconnected, will reconnect on next action")
         end)
+
+        self._cb_decksSynced = _G.GameSocket:on("decks_synced", function()
+            self:buildPreviewLayout()
+        end)
     end
 
     function self:removeSocketHandlers()
@@ -178,10 +183,12 @@ function MenuScreen.new()
             if self._cb_currencyUpdate then _G.GameSocket:removeCallback(self._cb_currencyUpdate) end
             if self._cb_shopError      then _G.GameSocket:removeCallback(self._cb_shopError) end
             if self._cb_disconnect     then _G.GameSocket:removeCallback(self._cb_disconnect) end
+            if self._cb_decksSynced    then _G.GameSocket:removeCallback(self._cb_decksSynced) end
         end
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
         self._cb_disconnect     = nil
+        self._cb_decksSynced    = nil
     end
 
     function self:startReconnect()
@@ -262,6 +269,7 @@ function MenuScreen.new()
     -- ── update ──────────────────────────────────────────────────────────────
 
     function self:update(dt)
+        dt = math.min(dt, 1/30)  -- cap spikes from app backgrounding
         -- Keep socket connection alive, or reconnect if dead
         if self._reconnecting and self._reconnectHandle then
             SocketManager.updateReconnect(self._reconnectHandle, dt)
@@ -271,11 +279,6 @@ function MenuScreen.new()
             elseif not self._reconnecting then
                 self:startReconnect()
             end
-        end
-
-        -- Save feedback timer
-        if self._saveFeedback > 0 then
-            self._saveFeedback = self._saveFeedback - dt
         end
 
         -- Shop notice timer
@@ -455,14 +458,18 @@ function MenuScreen.new()
         -- Background + border
         lg.setColor(0.18, 0.18, 0.26, 1)
         roundedRect(cx, cy, cardW, cardH, 6, sc)
-        lg.setColor(0.38, 0.38, 0.52, 1)
+        lg.setColor(0.45, 0.46, 0.64, 1)
         roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
+        -- Inner top bevel highlight
+        lg.setColor(0.55, 0.57, 0.78, 0.35)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(cx + 4 * sc, cy + 1, cx + cardW - 4 * sc, cy + 1)
 
         -- Unit name
         lg.setFont(Fonts.small)
-        lg.setColor(0.9, 0.9, 0.9, 1)
+        lg.setColor(1, 1, 1, 1)
         local name = utype:sub(1,1):upper() .. utype:sub(2)
-        lg.printf(name, cx, cy + 8 * sc, cardW, 'center')
+        lg.printf(name, cx, cy + 10 * sc, cardW, 'center')
 
         -- Front sprite (integer scale, bottom-anchored to card baseline)
         local img        = self.sprites[utype]
@@ -481,31 +488,86 @@ function MenuScreen.new()
         --lg.printf("tap for info", cx, cy + cardH - 18 * sc, cardW, 'center')
     end
 
+    function self:drawEmptyCard(cx, cy, cardW, cardH, sc)
+        local lg = love.graphics
+        lg.setColor(0.13, 0.13, 0.20, 1)
+        roundedRect(cx, cy, cardW, cardH, 6, sc)
+        lg.setColor(0.28, 0.28, 0.40, 0.6)
+        roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
+        lg.setFont(Fonts.medium)
+        lg.setColor(0.35, 0.35, 0.50, 1)
+        lg.printf("?", cx, textCY(Fonts.medium, cy, cardH), cardW, "center")
+    end
+
+    function self:drawGroupHeader(x, y, w, h, name, sc)
+        local lg = love.graphics
+        -- Base fill
+        lg.setColor(0.16, 0.16, 0.26, 1)
+        lg.rectangle("fill", x, y, w, h, 4 * sc, 4 * sc)
+        -- Left gold accent bar
+        lg.setColor(0.88, 0.74, 0.28, 1)
+        lg.rectangle("fill", x, y, 4 * sc, h, 2 * sc, 2 * sc)
+        -- Top bevel highlight
+        lg.setColor(0.55, 0.57, 0.78, 0.45)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(x, y + 1, x + w, y + 1)
+        -- Bottom shadow
+        lg.setColor(0.04, 0.04, 0.08, 0.65)
+        lg.line(x, y + h - 1, x + w, y + h - 1)
+        -- Group name
+        lg.setFont(Fonts.medium)
+        lg.setColor(0.96, 0.86, 0.42, 1)
+        lg.print(name, x + 14 * sc, textCY(Fonts.medium, y, h))
+    end
+
     function self:drawCollectionPanel(ox, W, H, sc)
         local cols   = 4
         local cardW  = 100 * sc
         local cardH  = 130 * sc
         local gapX   = 12  * sc
         local gapY   = 14  * sc
+        local headerH = 40 * sc
+        local groupGap = 10 * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
         local startY = 160 * sc
 
-        -- cards laid out in rows of 4
         self._collectionCards = {}
-        for i, utype in ipairs(self.unitOrder) do
-            local col = (i - 1) % cols
-            local row = math.floor((i - 1) / cols)
-            local cx  = startX + col * (cardW + gapX)
-            local cy  = startY + row * (cardH + gapY)
-            self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
-            self._collectionCards[i] = {
-                x = cx + self.panelOffset,
-                y = cy,
-                w = cardW,
-                h = cardH,
-                utype = utype
-            }
+        local currentY = startY
+        local cardIndex = 0
+
+        for _, group in ipairs(UnitRegistry.groups) do
+            self:drawGroupHeader(startX, currentY, totalW, headerH, group.name, sc)
+            currentY = currentY + headerH + 6 * sc
+
+            for j, utype in ipairs(group.units) do
+                local col = (j - 1) % cols
+                local row = math.floor((j - 1) / cols)
+                local cx  = startX + col * (cardW + gapX)
+                local cy  = currentY + row * (cardH + gapY)
+                self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
+                cardIndex = cardIndex + 1
+                self._collectionCards[cardIndex] = {
+                    x = cx + self.panelOffset,
+                    y = cy,
+                    w = cardW,
+                    h = cardH,
+                    utype = utype
+                }
+            end
+
+            local numRows = math.ceil(#group.units / cols)
+            local remainder = #group.units % cols
+            if remainder ~= 0 then
+                for k = remainder + 1, cols do
+                    local col = k - 1
+                    local row = numRows - 1
+                    local cx  = startX + col * (cardW + gapX)
+                    local cy  = currentY + row * (cardH + gapY)
+                    self:drawEmptyCard(cx, cy, cardW, cardH, sc)
+                end
+            end
+            currentY = currentY + numRows * (cardH + gapY) + groupGap
         end
     end
 
@@ -680,26 +742,26 @@ function MenuScreen.new()
         local barW     = W - 40 * sc
         local btnW     = 90 * sc
 
-        -- SAVE button
-        local saveX = barX
-        if self._saveFeedback > 0 then
-            lg.setColor(0.10, 0.36, 0.16, 1)
-            roundedRect(saveX, barY, btnW, barH, 5, sc)
-            lg.setColor(0.22, 0.68, 0.34, 1)
-            roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
+        -- SORT toggle button
+        local sortX = barX
+        if self._deckSortByCost then
+            lg.setColor(0.20, 0.14, 0.38, 1)
+            roundedRect(sortX, barY, btnW, barH, 5, sc)
+            lg.setColor(0.50, 0.35, 0.80, 1)
+            roundedRectLine(sortX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
-            lg.setColor(0.6, 1, 0.7, 1)
-            lg.printf("Saved!", saveX, textCY(Fonts.small, barY, barH), btnW, 'center')
+            lg.setColor(0.85, 0.75, 1.0, 1)
+            lg.printf("Cost", sortX, textCY(Fonts.small, barY, barH), btnW, 'center')
         else
             lg.setColor(0.16, 0.16, 0.24, 1)
-            roundedRect(saveX, barY, btnW, barH, 5, sc)
+            roundedRect(sortX, barY, btnW, barH, 5, sc)
             lg.setColor(0.32, 0.32, 0.48, 1)
-            roundedRectLine(saveX, barY, btnW, barH, 5, sc, 2 * sc)
+            roundedRectLine(sortX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.85, 0.85, 0.90, 1)
-            lg.printf("Save", saveX, textCY(Fonts.small, barY, barH), btnW, 'center')
+            lg.printf("Default", sortX, textCY(Fonts.small, barY, barH), btnW, 'center')
         end
-        self._deckSaveRect = { x = saveX + self.panelOffset, y = barY, w = btnW, h = barH }
+        self._deckSortRect = { x = sortX + self.panelOffset, y = barY, w = btnW, h = barH }
 
         -- Total counter (center)
         local counterX = barX + btnW + 4 * sc
@@ -752,15 +814,21 @@ function MenuScreen.new()
 
         local deck = DeckManager.getDeck(self.selectedDeckSlot)
 
-        -- Build sorted unit list: count>0 first (desc), then alpha
+        -- Build unit list in collection order, then optionally sort by cost
         local sortedUnits = {}
-        for _, utype in ipairs(self.unitOrder) do
-            table.insert(sortedUnits, { utype = utype, count = deck.counts[utype] or 0 })
+        for _, group in ipairs(UnitRegistry.groups) do
+            for _, utype in ipairs(group.units) do
+                table.insert(sortedUnits, { utype = utype, count = deck.counts[utype] or 0 })
+            end
         end
-        table.sort(sortedUnits, function(a, b)
-            if a.count ~= b.count then return a.count > b.count end
-            return a.utype < b.utype
-        end)
+        if self._deckSortByCost then
+            table.sort(sortedUnits, function(a, b)
+                local ca = UnitRegistry.unitCosts[a.utype] or 99
+                local cb = UnitRegistry.unitCosts[b.utype] or 99
+                if ca ~= cb then return ca < cb end
+                return a.utype < b.utype
+            end)
+        end
 
         self._deckCardRects = {}
 
@@ -1600,14 +1668,12 @@ function MenuScreen.new()
                     return
                 end
             end
-            -- Save button
-            local sv = self._deckSaveRect
-            if sv and x >= sv.x and x <= sv.x + sv.w and
-                      y >= sv.y and y <= sv.y + sv.h then
+            -- Sort toggle button
+            local sr = self._deckSortRect
+            if sr and x >= sr.x and x <= sr.x + sr.w and
+                      y >= sr.y and y <= sr.y + sr.h then
                 AudioManager.playTap()
-                DeckManager.save()
-                self._saveFeedback = 1.5
-                self:buildPreviewLayout()
+                self._deckSortByCost = not self._deckSortByCost
                 return
             end
             -- Equip button
@@ -1625,10 +1691,16 @@ function MenuScreen.new()
                     if x >= cr.minusX and x <= cr.minusX + cr.minusW then
                         AudioManager.playTap()
                         DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, -1)
+                        if self.selectedDeckSlot == DeckManager._data.activeDeckIndex then
+                            self:buildPreviewLayout()
+                        end
                         return
                     elseif x >= cr.plusX and x <= cr.plusX + cr.plusW then
                         AudioManager.playTap()
                         DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, 1)
+                        if self.selectedDeckSlot == DeckManager._data.activeDeckIndex then
+                            self:buildPreviewLayout()
+                        end
                         return
                     end
                 end

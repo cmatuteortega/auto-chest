@@ -9,10 +9,10 @@ local EXPLOSION_DAMAGE = 3
 
 function Clavicula:new(row, col, owner, sprites)
     local stats = {
-        health          = 10,
-        maxHealth       = 10,
+        health          = 8,
+        maxHealth       = 8,
         damage          = 1,
-        attackSpeed     = 0.7,        -- 1 attack per ~1.43s
+        attackSpeed     = 0.6,        -- 1 attack per ~1.67s
         moveSpeed       = 1,
         attackRange     = 3,
         projectileSpeed = 0.22,
@@ -38,7 +38,7 @@ function Clavicula:new(row, col, owner, sprites)
     self.upgradeTree = {
         {
             name        = "Twin Spirits",
-            description = "Copies spawn at 75% HP instead of 50%",
+            description = "Copies spawn at 65% HP instead of 50%",
             onApply     = function(unit) end
         },
         {
@@ -83,7 +83,7 @@ function Clavicula:takeDamage(amount)
 
     -- Spectral Mitosis
     self.hitCounter = self.hitCounter + 1
-    if self.hitCounter >= 6 then
+    if self.hitCounter >= 8 then
         self.hitCounter  = 0
         self.mitosisFlag = true
     end
@@ -94,7 +94,7 @@ function Clavicula:attack(target, grid)
     Clavicula.super.attack(self, target, grid)
 
     self.hitCounter = self.hitCounter + 1
-    if self.hitCounter >= 6 then
+    if self.hitCounter >= 8 then
         self.hitCounter  = 0
         self.mitosisFlag = true
     end
@@ -134,6 +134,15 @@ end
 function Clavicula:spawnClone(grid)
     if self.isDead then return end
 
+    -- Replication cap: max 4 Claviculas per owner on the board
+    local count = 0
+    for _, unit in ipairs(grid:getAllUnits()) do
+        if unit.owner == self.owner and unit.unitType == "clavicula" and not unit.isDead then
+            count = count + 1
+        end
+    end
+    if count >= 4 then return end
+
     local spawnCol, spawnRow = self:findFreeCell(grid)
     if not spawnCol then return end  -- No free cell found
 
@@ -150,8 +159,8 @@ function Clavicula:spawnClone(grid)
     clone.maxHealth = math.floor(clone.baseHealth * mult)
     clone.damage    = math.floor(clone.baseDamage  * mult)
 
-    -- Set spawn HP: 75% with Twin Spirits (upgrade 1), else 50%
-    local hpFraction = self:hasUpgrade(1) and 0.5 or 0.25
+    -- Set spawn HP: 65% with Twin Spirits (upgrade 1), else 50%
+    local hpFraction = self:hasUpgrade(1) and 0.65 or 0.5
     clone.health    = math.max(1, math.floor(clone.maxHealth * hpFraction))
 
     grid:placeUnit(spawnCol, spawnRow, clone)
