@@ -18,12 +18,13 @@ function GameScreen.new()
     --   isOnline   (boolean) – true when playing over the network
     --   playerRole (number)  – 1 (host/P1) or 2 (guest/P2)
     --   socket     (table)   – sock.lua Client already connected to the relay server
-    function self:init(isOnline, playerRole, socket, isSandbox)
+    function self:init(isOnline, playerRole, socket, isSandbox, isTutorial)
         -- Online mode setup
         self.isOnline   = isOnline   or false
         self.playerRole = playerRole or 1   -- 1 = local is P1, 2 = local is P2
         self.socket     = socket
         self.isSandbox  = isSandbox  or false
+        self.isTutorial = isTutorial or false
 
         -- Set rendering perspective so the local player always appears at the bottom
         Constants.PERSPECTIVE = self.playerRole
@@ -31,8 +32,10 @@ function GameScreen.new()
         -- Player & opponent info (for trophy display)
         self.playerName = _G.PlayerData and _G.PlayerData.username or "You"
         self.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
-        self.opponentName = _G.OpponentData and _G.OpponentData.name or "Foe"
-        self.opponentTrophies = _G.OpponentData and _G.OpponentData.trophies or 0
+        self.opponentName = self.isTutorial and "Skeleton AI"
+                         or (_G.OpponentData and _G.OpponentData.name or "Foe")
+        self.opponentTrophies = self.isTutorial and 0
+                             or (_G.OpponentData and _G.OpponentData.trophies or 0)
 
         -- Trophy and gold changes (calculated when match ends)
         self.trophyChange = nil
@@ -127,6 +130,13 @@ function GameScreen.new()
 
         -- Touch tracking (to prevent double-handling on mobile)
         self.activeTouchId = nil
+
+        -- Tutorial: set up the tutorial manager (must be before dealSetupCards)
+        self.tutorialManager = nil
+        if self.isTutorial then
+            local TutorialManager = require('src.tutorial_manager')
+            self.tutorialManager = TutorialManager.new(self)
+        end
 
         self:dealSetupCards()
 
@@ -425,7 +435,14 @@ function GameScreen.new()
         end
 
         local unitTypes
-        if self.usingDeck then
+        if self.isTutorial then
+            -- Tutorial: draw from a restricted pool so the player sees relevant units
+            local pool = {"boney", "marrow", "knight", "mage"}
+            unitTypes = {}
+            for _ = 1, 3 do
+                table.insert(unitTypes, pool[math.random(#pool)])
+            end
+        elseif self.usingDeck then
             unitTypes = DeckManager.drawCards(3)
             -- In sandbox, loop the deck when the pile runs out
             if self.isSandbox then
@@ -478,6 +495,11 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- Tutorial manager update (AI placement, step auto-advancement)
+        if self.isTutorial and self.tutorialManager then
+            self.tutorialManager:update(dt)
+        end
+
         -- Poll network (must happen every frame)
         if self.isOnline and self.socket then
             self.socket:update()
@@ -494,20 +516,27 @@ function GameScreen.new()
         if self.state == "intermission" then
             self.intermissionTimer = self.intermissionTimer - dt
             if self.intermissionTimer <= 0 then
-                local w = self.pendingWinner
-                self.pendingWinner = nil
-                if w == 1 then
-                    self.p2Lives = self.p2Lives - 1
-                    if self.p2Lives <= 0 then
-                        if self.isSandbox then self.p2Lives = 3; self:resetRound() else self:enterFinishedState(1) end
-                    else self:resetRound() end
-                elseif w == 2 then
-                    self.p1Lives = self.p1Lives - 1
-                    if self.p1Lives <= 0 then
-                        if self.isSandbox then self.p1Lives = 3; self:resetRound() else self:enterFinishedState(2) end
-                    else self:resetRound() end
+                if self.isTutorial then
+                    -- Tutorial ends after the first round regardless of who won
+                    local w = self.pendingWinner or 1
+                    self.pendingWinner = nil
+                    self:enterFinishedState(w)
                 else
-                    self.state = "setup"
+                    local w = self.pendingWinner
+                    self.pendingWinner = nil
+                    if w == 1 then
+                        self.p2Lives = self.p2Lives - 1
+                        if self.p2Lives <= 0 then
+                            if self.isSandbox then self.p2Lives = 3; self:resetRound() else self:enterFinishedState(1) end
+                        else self:resetRound() end
+                    elseif w == 2 then
+                        self.p1Lives = self.p1Lives - 1
+                        if self.p1Lives <= 0 then
+                            if self.isSandbox then self.p1Lives = 3; self:resetRound() else self:enterFinishedState(2) end
+                        else self:resetRound() end
+                    else
+                        self.state = "setup"
+                    end
                 end
             end
         end
@@ -521,7 +550,8 @@ function GameScreen.new()
         end
 
         -- Update timer (always counts down for display; only P1 auto-triggers battle in online mode)
-        if self.state == "setup" then
+        -- In tutorial mode the timer is disabled so the player can take their time.
+        if self.state == "setup" and not self.isTutorial then
             self.timer = self.timer - dt
             if self.timer <= 0 then
                 self.timer = 0
@@ -657,6 +687,11 @@ function GameScreen.new()
 
         -- Draw tooltip on top of everything
         self.tooltip:draw()
+
+        -- Draw tutorial bubble overlay on top of everything (tutorial mode only)
+        if self.isTutorial and self.tutorialManager then
+            self.tutorialManager:draw()
+        end
     end
 
     function self:drawUI()
@@ -667,7 +702,9 @@ function GameScreen.new()
         lg.setColor(0.9, 0.9, 0.9, 1)
         local stateText = self.state:upper()
         if self.state == "setup" then
-            stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
+            if not self.isTutorial then
+                stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
+            end
         elseif self.state == "intermission" then
             stateText = "ROUND " .. self.roundNumber
         elseif self.state == "pre_battle" then
@@ -827,25 +864,42 @@ function GameScreen.new()
                 end
             end
         elseif self.state == "finished" then
-            local buttonText = self.isOnline and "IR AL MENÚ" or "RESTART"
-            local buttonPadding = 20 * Constants.SCALE
-            local textWidth = Fonts.medium:getWidth(buttonText)
-            local buttonWidth = textWidth + buttonPadding * 2
-            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-
-            local restartButton = self.suit:Button(buttonText, {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
-
-            if restartButton.hit then
-                AudioManager.playTap()
-                if self.isOnline then
-                    -- Keep socket alive so player can re-queue without re-logging in
-                    _G.GameSocket = self.socket
+            if self.isTutorial then
+                -- Tutorial end: invite player to create an account
+                local btnText = "Play Online!"
+                local buttonPadding = 20 * Constants.SCALE
+                local textWidth = Fonts.medium:getWidth(btnText)
+                local buttonWidth = textWidth + buttonPadding * 2
+                local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+                local playBtn = self.suit:Button(btnText, {id="play_online_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
+                if playBtn.hit then
+                    AudioManager.playTap()
+                    love.filesystem.write("tutorial_done.dat", "1")
                     Constants.PERSPECTIVE = 1
                     local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('menu')
-                else
-                    print("Restart button clicked!")
-                    self:init()
+                    ScreenManager.switch('login')
+                end
+            else
+                local buttonText = self.isOnline and "IR AL MENÚ" or "RESTART"
+                local buttonPadding = 20 * Constants.SCALE
+                local textWidth = Fonts.medium:getWidth(buttonText)
+                local buttonWidth = textWidth + buttonPadding * 2
+                local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
+
+                local restartButton = self.suit:Button(buttonText, {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
+
+                if restartButton.hit then
+                    AudioManager.playTap()
+                    if self.isOnline then
+                        -- Keep socket alive so player can re-queue without re-logging in
+                        _G.GameSocket = self.socket
+                        Constants.PERSPECTIVE = 1
+                        local ScreenManager = require('lib.screen_manager')
+                        ScreenManager.switch('menu')
+                    else
+                        print("Restart button clicked!")
+                        self:init()
+                    end
                 end
             end
         end
@@ -985,6 +1039,11 @@ function GameScreen.new()
 
     -- Shared release logic (called from both mousereleased and touchreleased)
     function self:handleRelease(x, y)
+        -- Tutorial bubble tap-to-advance (does not consume the event)
+        if self.isTutorial and self.tutorialManager then
+            self.tutorialManager:handleTap(x, y)
+        end
+
         -- ── Tooltip upgrade button ────────────────────────────────────────────
         if self.tooltip:isVisible() then
             local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
