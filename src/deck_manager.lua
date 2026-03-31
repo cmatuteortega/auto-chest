@@ -146,6 +146,7 @@ end
 -- Returns true if a valid deck was loaded, false for fallback-to-random.
 function DeckManager.initDrawPile()
     DeckManager._drawPile = {}
+    if not DeckManager._data then DeckManager.reset() end
     local idx = DeckManager._data.activeDeckIndex
     if not idx then return false end
     local deck  = DeckManager._data.decks[idx]

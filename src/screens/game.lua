@@ -32,7 +32,7 @@ function GameScreen.new()
         -- Player & opponent info (for trophy display)
         self.playerName = _G.PlayerData and _G.PlayerData.username or "You"
         self.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
-        self.opponentName = self.isTutorial and "Skeleton AI"
+        self.opponentName = self.isTutorial and "evil"
                          or (_G.OpponentData and _G.OpponentData.name or "Foe")
         self.opponentTrophies = self.isTutorial and 0
                              or (_G.OpponentData and _G.OpponentData.trophies or 0)
@@ -98,7 +98,7 @@ function GameScreen.new()
         self.p2Lives = 3
 
         -- Economy
-        self.playerCoins = 6
+        self.playerCoins = self.isTutorial and 10 or 6
         self.rerollCost = 1
 
         -- Card drafting
