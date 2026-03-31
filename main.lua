@@ -85,9 +85,16 @@ function love.load()
         game    = GameScreen,
         lobby   = LobbyScreen,
     }
-    local savedToken = love.filesystem.read("session.dat")
-    local startScreen = (savedToken and #savedToken > 0) and 'loading' or 'login'
-    ScreenManager.init(screens, startScreen)
+    -- First-time detection: if tutorial_done.dat doesn't exist, show tutorial before login.
+    local tutorialDone = love.filesystem.getInfo("tutorial_done.dat")
+    if not tutorialDone then
+        -- Start game in tutorial mode (isOnline=false, playerRole=1, socket=nil, isSandbox=false, isTutorial=true)
+        ScreenManager.init(screens, 'game', false, 1, false, false, true)
+    else
+        local savedToken = love.filesystem.read("session.dat")
+        local startScreen = (savedToken and #savedToken > 0) and 'loading' or 'login'
+        ScreenManager.init(screens, startScreen)
+    end
 
     -- Track initial size
     lastWidth = windowWidth
