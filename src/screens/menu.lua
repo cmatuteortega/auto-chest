@@ -148,6 +148,10 @@ function MenuScreen.new()
         -- Button spring physics (Balatro squish/bounce)
         self._playSpring = { scale = 1.0, vel = 0.0, pressed = false }
         self._sbtnSpring = { scale = 1.0, vel = 0.0, pressed = false }
+
+        -- Online player count
+        self._onlineCount     = nil  -- nil until first response
+        self._onlinePollTimer = 30   -- start at max so first poll fires immediately
     end
 
     function self:registerSocketHandlers()
@@ -176,6 +180,10 @@ function MenuScreen.new()
         self._cb_decksSynced = _G.GameSocket:on("decks_synced", function()
             self:buildPreviewLayout()
         end)
+
+        self._cb_onlineCount = _G.GameSocket:on("online_count", function(data)
+            self._onlineCount = data.count
+        end)
     end
 
     function self:removeSocketHandlers()
@@ -184,11 +192,13 @@ function MenuScreen.new()
             if self._cb_shopError      then _G.GameSocket:removeCallback(self._cb_shopError) end
             if self._cb_disconnect     then _G.GameSocket:removeCallback(self._cb_disconnect) end
             if self._cb_decksSynced    then _G.GameSocket:removeCallback(self._cb_decksSynced) end
+            if self._cb_onlineCount    then _G.GameSocket:removeCallback(self._cb_onlineCount) end
         end
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
         self._cb_disconnect     = nil
         self._cb_decksSynced    = nil
+        self._cb_onlineCount    = nil
     end
 
     function self:startReconnect()
@@ -278,6 +288,15 @@ function MenuScreen.new()
                 _G.GameSocket:update()
             elseif not self._reconnecting then
                 self:startReconnect()
+            end
+        end
+
+        -- Online count polling (every 30s)
+        if _G.GameSocket and _G.GameSocket:isConnected() then
+            self._onlinePollTimer = self._onlinePollTimer + dt
+            if self._onlinePollTimer >= 30 then
+                self._onlinePollTimer = 0
+                _G.GameSocket:send("get_online_count", {})
             end
         end
 
@@ -635,6 +654,12 @@ function MenuScreen.new()
         local btnX     = cx - btnW / 2
         local maxFloat = math.floor(6 * sc)
         local shadowH  = math.floor(6 * sc)
+
+        -- Online count label above PLAY button
+        local countLabel = self._onlineCount and ("Players online: " .. self._onlineCount) or "Players online: ..."
+        lg.setFont(Fonts.small)
+        lg.setColor(0.55, 0.80, 1.0, 0.85)
+        lg.printf(countLabel, btnX, btnY - Fonts.small:getHeight() - 8 * sc, btnW, 'center')
 
         -- PLAY button: Balatro float + shadow + idle bob/rotation
         local t        = love.timer.getTime()
