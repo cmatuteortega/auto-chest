@@ -299,6 +299,11 @@ local function handleMessage(peer, eventName, msgData)
             peer:send(encode("error", {reason = err or "Failed to sync decks"}))
         end
 
+    elseif eventName == "get_online_count" then
+        local count = 0
+        for _ in pairs(sessions) do count = count + 1 end
+        peer:send(encode("online_count", {count = count}))
+
     elseif eventName == "match_result" then
         local winnerId = msgData.winner_id
         local session = sessions[tostring(peer)]
