@@ -11,7 +11,7 @@ UPGRADE SYSTEM DOCUMENTATION (Clash Mini Style)
 OVERVIEW:
 ---------
 Each unit can be upgraded up to level 3 (from base level 0). Upgrades provide:
-1. STAT BOOST: 1.5x multiplier to HP and damage per level (automatic for all units)
+1. STAT BOOST: 1.3x multiplier to HP and damage per level (automatic for all units)
 2. ABILITY UPGRADES: Units with upgrade trees get to choose special abilities
 
 UPGRADE TREE STRUCTURE:
@@ -67,9 +67,9 @@ IMPLEMENTING UPGRADE EFFECTS:
 STAT SCALING:
 -------------
 - Level 0: Base stats (e.g., 10 HP, 1 damage)
-- Level 1: 1.5x stats (15 HP, 1 damage)
-- Level 2: 2.25x stats (22 HP, 2 damage)
-- Level 3: 3.375x stats (33 HP, 3 damage)
+- Level 1: 1.3x stats (13 HP, 1 damage)
+- Level 2: 1.69x stats (16 HP, 1 damage)
+- Level 3: 2.197x stats (21 HP, 2 damage)
 
 Note: damage uses math.floor, so low base damage may not increase until level 2.
 
@@ -580,7 +580,7 @@ function BaseUnit:upgrade(upgradeIndex)
     end
 
     -- Always apply stat multiplier on upgrade (for all units)
-    local multiplier = 1.5 ^ self.level
+    local multiplier = 1.3 ^ self.level
     self.maxHealth = math.floor(self.baseHealth * multiplier)
     self.damage = math.floor(self.baseDamage * multiplier)
 

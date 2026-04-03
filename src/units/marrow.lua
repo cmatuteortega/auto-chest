@@ -5,10 +5,10 @@ local Marrow = BaseUnitRanged:extend()
 function Marrow:new(row, col, owner, sprites)
     -- Marrow stats: ranged archer
     local stats = {
-        health = 7,
-        maxHealth = 7,
+        health = 9,
+        maxHealth = 9,
         damage = 1,
-        attackSpeed = 0.7,      -- 1 attack per second
+        attackSpeed = 0.85,      -- 1 attack per second
         moveSpeed = 1,        -- 1 cell per second
         attackRange = 3,      -- 3 cells range
         projectileSpeed = 0.2, -- Arrow flight time
@@ -71,7 +71,7 @@ end
 -- Passive: Gain attack speed on kill
 function Marrow:onKill(target)
     -- Increase attack speed by 0.2 per kill (stacks permanently for the battle)
-    self.attackSpeed = self.attackSpeed + 0.2
+    self.attackSpeed = self.attackSpeed + 0.25
 
     -- Upgrade 2: 2s damage boost
     if self:hasUpgrade(2) then

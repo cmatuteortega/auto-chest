@@ -435,11 +435,11 @@ function MenuScreen.new()
         local stripeH = math.floor(36 * sc)
 
         -- Background
-        lg.setColor(0.08, 0.10, 0.16, 1)
+        lg.setColor(0.031, 0.078, 0.118, 1)
         lg.rectangle('fill', 0, stripeY, W, stripeH)
 
         -- Separator lines
-        lg.setColor(0.22, 0.28, 0.42, 1)
+        lg.setColor(0.125, 0.224, 0.310, 1)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.line(0, stripeY, W, stripeY)
         lg.line(0, stripeY + stripeH, W, stripeY + stripeH)
@@ -448,7 +448,7 @@ function MenuScreen.new()
         if self._tickerCurrentMsg and self._tickerState == "scrolling" then
             lg.setScissor(0, stripeY, W, stripeH)
             lg.setFont(Fonts.small)
-            lg.setColor(0.72, 0.82, 1.0, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             local textY = math.floor(stripeY + (stripeH - (Fonts.small:getAscent() - Fonts.small:getDescent())) / 2)
             lg.print(self._tickerCurrentMsg, math.floor(W - self._tickerOffset), textY)
             lg.setScissor()
@@ -475,12 +475,12 @@ function MenuScreen.new()
         local lg = love.graphics
 
         -- Background + border
-        lg.setColor(0.18, 0.18, 0.26, 1)
+        lg.setColor(0.059, 0.165, 0.247, 1)
         roundedRect(cx, cy, cardW, cardH, 6, sc)
-        lg.setColor(0.45, 0.46, 0.64, 1)
+        lg.setColor(0.125, 0.224, 0.310, 1)
         roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
         -- Inner top bevel highlight
-        lg.setColor(0.55, 0.57, 0.78, 0.35)
+        lg.setColor(0.125, 0.224, 0.310, 0.5)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.line(cx + 4 * sc, cy + 1, cx + cardW - 4 * sc, cy + 1)
 
@@ -489,6 +489,21 @@ function MenuScreen.new()
         lg.setColor(1, 1, 1, 1)
         local name = utype:sub(1,1):upper() .. utype:sub(2)
         lg.printf(name, cx, cy + 10 * sc, cardW, 'center')
+
+        -- Cost badge (bottom-right, inside card)
+        local cost = UnitRegistry.unitCosts[utype] or "?"
+        local costStr = tostring(cost)
+        local badgeW = 20 * sc
+        local badgeH = 18 * sc
+        local badgeX = cx + cardW - badgeW - 5 * sc
+        local badgeY = cy + cardH - badgeH - 5 * sc
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        roundedRect(badgeX, badgeY, badgeW, badgeH, 4, sc)
+        lg.setColor(0.765, 0.639, 0.541, 1)
+        roundedRectLine(badgeX, badgeY, badgeW, badgeH, 4, sc, math.max(1, math.floor(1.5 * sc)))
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.965, 0.839, 0.741, 1)
+        lg.printf(costStr, badgeX, badgeY + (badgeH - Fonts.tiny:getHeight()) / 2, badgeW, 'center')
 
         -- Front sprite (integer scale, bottom-anchored to card baseline)
         local img        = self.sprites[utype]
@@ -509,33 +524,33 @@ function MenuScreen.new()
 
     function self:drawEmptyCard(cx, cy, cardW, cardH, sc)
         local lg = love.graphics
-        lg.setColor(0.13, 0.13, 0.20, 1)
+        lg.setColor(0.031, 0.078, 0.118, 1)
         roundedRect(cx, cy, cardW, cardH, 6, sc)
-        lg.setColor(0.28, 0.28, 0.40, 0.6)
+        lg.setColor(0.306, 0.286, 0.373, 0.6)
         roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
         lg.setFont(Fonts.medium)
-        lg.setColor(0.35, 0.35, 0.50, 1)
+        lg.setColor(0.306, 0.286, 0.373, 1)
         lg.printf("?", cx, textCY(Fonts.medium, cy, cardH), cardW, "center")
     end
 
     function self:drawGroupHeader(x, y, w, h, name, sc)
         local lg = love.graphics
         -- Base fill
-        lg.setColor(0.16, 0.16, 0.26, 1)
+        lg.setColor(0.059, 0.165, 0.247, 1)
         lg.rectangle("fill", x, y, w, h, 4 * sc, 4 * sc)
-        -- Left gold accent bar
-        lg.setColor(0.88, 0.74, 0.28, 1)
+        -- Left accent bar
+        lg.setColor(0.765, 0.639, 0.541, 1)
         lg.rectangle("fill", x, y, 4 * sc, h, 2 * sc, 2 * sc)
         -- Top bevel highlight
-        lg.setColor(0.55, 0.57, 0.78, 0.45)
+        lg.setColor(0.125, 0.224, 0.310, 0.5)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.line(x, y + 1, x + w, y + 1)
         -- Bottom shadow
-        lg.setColor(0.04, 0.04, 0.08, 0.65)
+        lg.setColor(0.031, 0.078, 0.118, 0.8)
         lg.line(x, y + h - 1, x + w, y + h - 1)
         -- Group name
         lg.setFont(Fonts.medium)
-        lg.setColor(0.96, 0.86, 0.42, 1)
+        lg.setColor(0.965, 0.839, 0.741, 1)
         lg.print(name, x + 14 * sc, textCY(Fonts.medium, y, h))
     end
 
@@ -614,7 +629,7 @@ function MenuScreen.new()
         end
 
         -- Grid border
-        lg.setColor(0.22, 0.35, 0.50, 1)
+        lg.setColor(0.125, 0.224, 0.310, 1)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.rectangle('line', gridX, gridY, gridW, gridH)
 
@@ -642,7 +657,7 @@ function MenuScreen.new()
         -- Empty deck hint
         if #self.previewLayout == 0 then
             lg.setFont(Fonts.small)
-            lg.setColor(0.45, 0.50, 0.60, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             lg.printf("Equip a deck to preview", gridX,
                 gridY + gridH / 2 - Fonts.small:getHeight() / 2, gridW, 'center')
         end
@@ -658,7 +673,7 @@ function MenuScreen.new()
         -- Online count label above PLAY button
         local countLabel = self._onlineCount and ("Players online: " .. self._onlineCount) or "Players online: ..."
         lg.setFont(Fonts.small)
-        lg.setColor(0.55, 0.80, 1.0, 0.85)
+        lg.setColor(0.965, 0.839, 0.741, 0.85)
         lg.printf(countLabel, btnX, btnY - Fonts.small:getHeight() - 8 * sc, btnW, 'center')
 
         -- PLAY button: Balatro float + shadow + idle bob/rotation
@@ -670,7 +685,7 @@ function MenuScreen.new()
         local drawY    = btnY - floatOff + math.floor(idleBob)
 
         -- Shadow (static at anchor — button floats above it)
-        lg.setColor(0.05, 0.14, 0.35, 1)
+        lg.setColor(0.031, 0.078, 0.118, 1)
         roundedRect(btnX + math.floor(2 * sc), btnY + shadowH, btnW, playH, 8, sc)
 
         -- Button face: pivot at center, rotate then scale
@@ -682,9 +697,9 @@ function MenuScreen.new()
         lg.translate(pivX, pivY)
         lg.rotate(idleRot)
         lg.scale(s, s)
-        lg.setColor(0.15, 0.32, 0.65, 1)
+        lg.setColor(0.765, 0.639, 0.541, 1)
         roundedRect(bx, by, btnW, playH, 8, sc)
-        lg.setColor(0.35, 0.55, 0.95, 1)
+        lg.setColor(0.965, 0.839, 0.741, 1)
         roundedRectLine(bx, by, btnW, playH, 8, sc, 2 * sc)
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
@@ -699,7 +714,7 @@ function MenuScreen.new()
         local sfloat = math.floor(maxFloat * math.max(0, (ss - 0.93) / 0.07))
         local sdrawY = sbtnY - sfloat
 
-        lg.setColor(0.22, 0.12, 0.02, 1)
+        lg.setColor(0.031, 0.078, 0.118, 1)
         roundedRect(btnX + math.floor(2 * sc), sbtnY + shadowH, btnW, sbtnH, 8, sc)
 
         local spivX = btnX + btnW / 2
@@ -708,9 +723,9 @@ function MenuScreen.new()
         lg.translate(spivX, spivY)
         lg.scale(ss, ss)
         lg.translate(-spivX, -spivY)
-        lg.setColor(0.45, 0.28, 0.08, 1)
+        lg.setColor(0.600, 0.459, 0.467, 1)
         roundedRect(btnX, sdrawY, btnW, sbtnH, 8, sc)
-        lg.setColor(0.70, 0.48, 0.15, 1)
+        lg.setColor(0.600, 0.459, 0.467, 1)
         roundedRectLine(btnX, sdrawY, btnW, sbtnH, 8, sc, 2 * sc)
         lg.setFont(Fonts.small)
         lg.setColor(1, 1, 1, 1)
@@ -733,21 +748,21 @@ function MenuScreen.new()
         for i = 1, 5 do
             local tx = tabStartX + (i - 1) * tabW
             if i == self.selectedDeckSlot then
-                lg.setColor(0.18, 0.20, 0.30, 1)
+                lg.setColor(0.059, 0.165, 0.247, 1)
                 roundedRect(tx, tabY, tabW - 4 * sc, tabH, 5, sc)
-                lg.setColor(0.45, 0.48, 0.70, 1)
+                lg.setColor(0.125, 0.224, 0.310, 1)
                 roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 2 * sc)
             else
-                lg.setColor(0.12, 0.12, 0.18, 1)
+                lg.setColor(0.031, 0.078, 0.118, 1)
                 roundedRect(tx, tabY, tabW - 4 * sc, tabH, 5, sc)
-                lg.setColor(0.28, 0.28, 0.40, 1)
+                lg.setColor(0.306, 0.286, 0.373, 1)
                 roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 1 * sc)
             end
             lg.setFont(Fonts.small)
-            lg.setColor(0.85, 0.85, 0.90, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("D" .. i, tx, textCY(Fonts.small, tabY, tabH), tabW - 4 * sc, 'center')
             if DeckManager._data.activeDeckIndex == i then
-                lg.setColor(0.9, 0.85, 0.2, 1)
+                lg.setColor(0.765, 0.639, 0.541, 1)
                 love.graphics.circle('fill', tx + tabW - 10 * sc, tabY + 8 * sc, 5 * sc)
             end
             self._deckSlotRects[i] = {
@@ -770,20 +785,20 @@ function MenuScreen.new()
         -- SORT toggle button
         local sortX = barX
         if self._deckSortByCost then
-            lg.setColor(0.20, 0.14, 0.38, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             roundedRect(sortX, barY, btnW, barH, 5, sc)
-            lg.setColor(0.50, 0.35, 0.80, 1)
+            lg.setColor(0.506, 0.384, 0.443, 1)
             roundedRectLine(sortX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
-            lg.setColor(0.85, 0.75, 1.0, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("Cost", sortX, textCY(Fonts.small, barY, barH), btnW, 'center')
         else
-            lg.setColor(0.16, 0.16, 0.24, 1)
+            lg.setColor(0.059, 0.165, 0.247, 1)
             roundedRect(sortX, barY, btnW, barH, 5, sc)
-            lg.setColor(0.32, 0.32, 0.48, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             roundedRectLine(sortX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
-            lg.setColor(0.85, 0.85, 0.90, 1)
+            lg.setColor(0.765, 0.639, 0.541, 1)
             lg.printf("Default", sortX, textCY(Fonts.small, barY, barH), btnW, 'center')
         end
         self._deckSortRect = { x = sortX + self.panelOffset, y = barY, w = btnW, h = barH }
@@ -792,36 +807,36 @@ function MenuScreen.new()
         local counterX = barX + btnW + 4 * sc
         local counterW = barW - 2 * (btnW + 4 * sc)
         lg.setFont(Fonts.small)
-        lg.setColor(total >= 20 and {1, 0.4, 0.4, 1} or {0.7, 0.7, 0.75, 1})
+        lg.setColor(total >= 20 and {0.600, 0.459, 0.467, 1} or {0.765, 0.639, 0.541, 1})
         lg.printf(total .. " / 20", counterX, textCY(Fonts.small, barY, barH), counterW, 'center')
 
         -- EQUIP button
         local equipX = barX + barW - btnW
         if total == 0 then
-            lg.setColor(0.16, 0.16, 0.22, 1)
+            lg.setColor(0.031, 0.078, 0.118, 1)
             roundedRect(equipX, barY, btnW, barH, 5, sc)
-            lg.setColor(0.26, 0.26, 0.36, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
-            lg.setColor(0.38, 0.38, 0.44, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             lg.printf("Equip", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = nil
         elseif isActive then
-            lg.setColor(0.10, 0.38, 0.18, 1)
+            lg.setColor(0.059, 0.165, 0.247, 1)
             roundedRect(equipX, barY, btnW, barH, 5, sc)
-            lg.setColor(0.22, 0.68, 0.36, 1)
+            lg.setColor(0.765, 0.639, 0.541, 1)
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
-            lg.setColor(0.7, 1, 0.75, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("Equip ✓", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
         else
-            lg.setColor(0.10, 0.22, 0.50, 1)
+            lg.setColor(0.059, 0.165, 0.247, 1)
             roundedRect(equipX, barY, btnW, barH, 5, sc)
-            lg.setColor(0.22, 0.42, 0.82, 1)
+            lg.setColor(0.125, 0.224, 0.310, 1)
             roundedRectLine(equipX, barY, btnW, barH, 5, sc, 2 * sc)
             lg.setFont(Fonts.small)
-            lg.setColor(1, 1, 1, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("Equip", equipX, textCY(Fonts.small, barY, barH), btnW, 'center')
             self._deckActiveRect = { x = equipX + self.panelOffset, y = barY, w = btnW, h = barH }
         end
@@ -866,13 +881,13 @@ function MenuScreen.new()
             local cy    = startY + row * (cardH + gapY)
 
             -- Card background
-            lg.setColor(0.14, 0.14, 0.20, 1)
+            lg.setColor(0.059, 0.165, 0.247, 1)
             roundedRect(cx, cy, cardW, cardH, 6, sc)
-            -- Border: gold if selected, dim if not
+            -- Border: tan if has cards, dim if not
             if count > 0 then
-                lg.setColor(0.75, 0.65, 0.15, 1)
+                lg.setColor(0.765, 0.639, 0.541, 1)
             else
-                lg.setColor(0.26, 0.26, 0.38, 1)
+                lg.setColor(0.306, 0.286, 0.373, 1)
             end
             roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
 
@@ -881,6 +896,21 @@ function MenuScreen.new()
             lg.setColor(0.9, 0.9, 0.9, 1)
             local name = utype:sub(1,1):upper() .. utype:sub(2)
             lg.printf(name, cx, cy + 6 * sc, cardW, 'center')
+
+            -- Cost badge (bottom-right, inside card above strip)
+            local cost = UnitRegistry.unitCosts[utype] or "?"
+            local costStr = tostring(cost)
+            local badgeW = 20 * sc
+            local badgeH = 18 * sc
+            local badgeX = cx + cardW - badgeW - 5 * sc
+            local badgeY = cy + cardH - stripH - badgeH - 5 * sc
+            lg.setColor(0.031, 0.078, 0.118, 1)
+            roundedRect(badgeX, badgeY, badgeW, badgeH, 4, sc)
+            lg.setColor(0.765, 0.639, 0.541, 1)
+            roundedRectLine(badgeX, badgeY, badgeW, badgeH, 4, sc, math.max(1, math.floor(1.5 * sc)))
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.965, 0.839, 0.741, 1)
+            lg.printf(costStr, badgeX, badgeY + (badgeH - Fonts.tiny:getHeight()) / 2, badgeW, 'center')
 
             -- Sprite (bottom-anchored above bottom strip)
             local img = self.sprites[utype]
@@ -898,16 +928,16 @@ function MenuScreen.new()
 
             -- Bottom strip background
             local stripY = cy + cardH - stripH
-            lg.setColor(0.10, 0.10, 0.16, 1)
+            lg.setColor(0.031, 0.078, 0.118, 1)
             love.graphics.rectangle('fill', cx + 2 * sc, stripY, cardW - 4 * sc, stripH - 2 * sc)
 
             -- [-] label (left 30%)
             local minusW = math.floor(cardW * 0.30)
             lg.setFont(Fonts.medium)
             if count > 0 then
-                lg.setColor(0.9, 0.9, 0.9, 1)
+                lg.setColor(0.965, 0.839, 0.741, 1)
             else
-                lg.setColor(0.35, 0.35, 0.40, 1)
+                lg.setColor(0.306, 0.286, 0.373, 1)
             end
             lg.printf("-", cx, textCY(Fonts.medium, stripY, stripH), minusW, 'center')
 
@@ -922,9 +952,9 @@ function MenuScreen.new()
             local plusW = cardW - minusW - centerW
             local plusX = cx + minusW + centerW
             if total < 20 then
-                lg.setColor(0.9, 0.9, 0.9, 1)
+                lg.setColor(0.965, 0.839, 0.741, 1)
             else
-                lg.setColor(0.35, 0.35, 0.40, 1)
+                lg.setColor(0.306, 0.286, 0.373, 1)
             end
             lg.printf("+", plusX, textCY(Fonts.medium, stripY, stripH), plusW, 'center')
 
@@ -1004,12 +1034,12 @@ function MenuScreen.new()
                 lg.setFont(Fonts.small)
                 lg.setColor(1, 1, 1, 1)
             else
-                lg.setColor(0.14, 0.14, 0.18, 1)
+                lg.setColor(0.031, 0.078, 0.118, 1)
                 roundedRect(bx, yBtn, bw, btnH, 5, sc)
-                lg.setColor(0.28, 0.28, 0.36, 1)
+                lg.setColor(0.306, 0.286, 0.373, 1)
                 roundedRectLine(bx, yBtn, bw, btnH, 5, sc, 2 * sc)
                 lg.setFont(Fonts.small)
-                lg.setColor(0.40, 0.40, 0.45, 1)
+                lg.setColor(0.306, 0.286, 0.373, 1)
             end
             lg.printf("Buy", bx, textCY(Fonts.small, yBtn, btnH), bw, 'center')
 
@@ -1018,7 +1048,7 @@ function MenuScreen.new()
 
         -- ── Section: Buy Gems ────────────────────────────────────────────────
         lg.setFont(Fonts.small)
-        lg.setColor(0.65, 0.55, 1.0, 1)
+        lg.setColor(0.506, 0.384, 0.443, 1)
         lg.printf("Buy Gems  (real money – coming soon)", ox, curY, W, 'center')
         curY = curY + subH + 8 * sc
 
@@ -1045,7 +1075,7 @@ function MenuScreen.new()
 
         -- ── Section: Buy Gold ────────────────────────────────────────────────
         lg.setFont(Fonts.small)
-        lg.setColor(0.90, 0.75, 0.20, 1)
+        lg.setColor(0.765, 0.639, 0.541, 1)
         lg.printf("Buy Gold  (spend gems)", ox, curY, W, 'center')
         curY = curY + subH + 8 * sc
 
@@ -1074,7 +1104,7 @@ function MenuScreen.new()
         -- ── Notice ────────────────────────────────────────────────────────────
         if self.shopNotice then
             lg.setFont(Fonts.small)
-            lg.setColor(1, 0.85, 0.3, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf(self.shopNotice, ox, curY + cardH + 8 * sc, W, 'center')
         end
     end
@@ -1087,10 +1117,10 @@ function MenuScreen.new()
         local labels = { "Collection", "Decks", "Battle", "Shop", "Ranking" }
 
         -- Bar background
-        lg.setColor(0.10, 0.10, 0.15, 1)
+        lg.setColor(0.031, 0.078, 0.118, 1)
         lg.rectangle('fill', 0, barY, W, BAR_H)
         -- Top border line (2px, pixel-art crisp)
-        lg.setColor(0.32, 0.32, 0.45, 1)
+        lg.setColor(0.306, 0.286, 0.373, 1)
         lg.setLineWidth(2)
         lg.line(0, barY, W, barY)
 
@@ -1112,17 +1142,17 @@ function MenuScreen.new()
                 local brd   = math.max(2, math.floor(3 * sc))
 
                 -- Fill
-                lg.setColor(0.18, 0.20, 0.30, 1)
+                lg.setColor(0.059, 0.165, 0.247, 1)
                 lg.rectangle('fill', cardX, cardY, cardW, cardH)
 
                 -- Outer border (bright, pixel-art frame)
-                lg.setColor(0.45, 0.48, 0.70, 1)
+                lg.setColor(0.125, 0.224, 0.310, 1)
                 lg.setLineWidth(brd)
                 lg.rectangle('line', cardX + brd/2, cardY + brd/2,
                              cardW - brd, cardH - brd)
 
                 -- Inner top-left highlight (bevel light)
-                lg.setColor(0.60, 0.62, 0.85, 1)
+                lg.setColor(0.125, 0.224, 0.310, 0.5)
                 lg.setLineWidth(math.max(1, math.floor(sc)))
                 local b1 = brd + math.max(1, math.floor(sc))
                 lg.line(cardX + b1, cardY + cardH - b1,
@@ -1130,7 +1160,7 @@ function MenuScreen.new()
                         cardX + cardW - b1, cardY + b1)
 
                 -- Inner bottom-right shadow (bevel dark)
-                lg.setColor(0.08, 0.08, 0.14, 1)
+                lg.setColor(0.031, 0.078, 0.118, 1)
                 lg.line(cardX + b1, cardY + cardH - b1,
                         cardX + cardW - b1, cardY + cardH - b1,
                         cardX + cardW - b1, cardY + b1)
@@ -1145,7 +1175,7 @@ function MenuScreen.new()
                 local ix = math.floor(tabCx - iw * pixSc / 2)
                 -- Icon pops above the card when active (intentionally overflows card top)
                 local iy = math.floor(barY + 6 * sc - 56 * sc * raise)
-                lg.setColor(isActive and {1, 1, 1, 1} or {0.38, 0.38, 0.46, 1})
+                lg.setColor(isActive and {1, 1, 1, 1} or {0.306, 0.286, 0.373, 1})
                 lg.draw(img, ix, iy, 0, pixSc, pixSc)
             end
 
@@ -1208,22 +1238,22 @@ function MenuScreen.new()
         lg.rectangle('fill', 0, 0, W, H)
 
         -- Panel fill
-        lg.setColor(0.14, 0.15, 0.22, 1)
+        lg.setColor(0.059, 0.165, 0.247, 1)
         roundedRect(panX, panY, panW, panH, 5, sc)
 
         -- Outer border
-        lg.setColor(0.42, 0.44, 0.62, 1)
+        lg.setColor(0.125, 0.224, 0.310, 1)
         roundedRectLine(panX, panY, panW, panH, 5, sc, brd)
 
         -- Bevel: top-left highlight
         local hl = brd + math.max(1, math.floor(sc))
-        lg.setColor(0.55, 0.57, 0.78, 0.45)
+        lg.setColor(0.125, 0.224, 0.310, 0.5)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.line(panX + hl, panY + panH - hl,
                 panX + hl, panY + hl,
                 panX + panW - hl, panY + hl)
         -- Bevel: bottom-right shadow
-        lg.setColor(0.04, 0.04, 0.08, 0.6)
+        lg.setColor(0.031, 0.078, 0.118, 0.8)
         lg.line(panX + hl, panY + panH - hl,
                 panX + panW - hl, panY + panH - hl,
                 panX + panW - hl, panY + hl)
@@ -1247,37 +1277,37 @@ function MenuScreen.new()
         -- Stats row
         local info2 = info  -- already fetched above
         lg.setFont(Fonts.tiny)
-        lg.setColor(0.65, 0.78, 1, 1)
+        lg.setColor(0.965, 0.839, 0.741, 1)
         local s = string.format("HP %d  ATK %d  SPD %.1f  RNG %d  [%s]",
             info2.hp, info2.atk, info2.spd, info2.rng, info2.unitClass)
         lg.printf(s, textX, curY, textW, 'center')
         curY = curY + Fonts.tiny:getHeight() + math.floor(7 * sc)
 
         -- Separator
-        lg.setColor(0.30, 0.32, 0.48, 1)
+        lg.setColor(0.306, 0.286, 0.373, 1)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.line(textX, curY, panX + panW - math.floor(16 * sc), curY)
         curY = curY + math.floor(7 * sc)
 
         -- Passive description
         lg.setFont(Fonts.tiny)
-        lg.setColor(0.72, 0.74, 0.80, 1)
+        lg.setColor(0.765, 0.639, 0.541, 1)
         lg.printf(passive, textX, curY, textW, 'left')
         curY = curY + math.max(1, #pLines) * Fonts.tiny:getHeight() + math.floor(8 * sc)
 
         -- Upgrades header
         lg.setFont(Fonts.small)
-        lg.setColor(1, 0.85, 0.38, 1)
+        lg.setColor(0.965, 0.839, 0.741, 1)
         lg.printf("Upgrades", textX, curY, textW, 'left')
         curY = curY + Fonts.small:getHeight() + math.floor(4 * sc)
 
         -- Upgrade rows
         lg.setFont(Fonts.tiny)
         for i, upg in ipairs(info2.upgrades) do
-            lg.setColor(1, 0.85, 0.38, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf(i .. ". " .. upg.name, textX + math.floor(6 * sc), curY, textW, 'left')
             curY = curY + Fonts.tiny:getHeight() + math.floor(2 * sc)
-            lg.setColor(0.72, 0.74, 0.80, 1)
+            lg.setColor(0.765, 0.639, 0.541, 1)
             lg.printf("   " .. upg.description, textX + math.floor(6 * sc), curY, textW, 'left')
             curY = curY + Fonts.tiny:getHeight() + math.floor(4 * sc)
         end
@@ -1381,13 +1411,13 @@ function MenuScreen.new()
             local sbX = W - sbW - math.floor(8 * sc)
             local sbY = stripY
             local sbR = math.max(1, math.floor(3 * sc))
-            lg.setColor(0.22, 0.22, 0.26, 1)
+            lg.setColor(0.059, 0.165, 0.247, 1)
             lg.rectangle('fill', sbX, sbY, sbW, sbW, sbR, sbR)
-            lg.setColor(0.55, 0.55, 0.60, 1)
+            lg.setColor(0.125, 0.224, 0.310, 1)
             lg.setLineWidth(math.max(1, math.floor(sc)))
             lg.rectangle('line', sbX, sbY, sbW, sbW, sbR, sbR)
             lg.setFont(Fonts.small)
-            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("+", sbX, textCY(Fonts.small, sbY, sbW), sbW, 'center')
             self._settingsBtnRect = { x = sbX, y = sbY, w = sbW, h = sbW }
         end
@@ -1414,23 +1444,23 @@ function MenuScreen.new()
             local brd   = math.max(1, math.floor(2 * sc))
 
             -- Panel fill
-            lg.setColor(0.14, 0.15, 0.22, 1)
+            lg.setColor(0.059, 0.165, 0.247, 1)
             roundedRect(panX, panY, panW, panH, 5, sc)
 
-            -- Outer border (blue-grey, matches active tab)
-            lg.setColor(0.42, 0.44, 0.62, 1)
+            -- Outer border
+            lg.setColor(0.125, 0.224, 0.310, 1)
             roundedRectLine(panX, panY, panW, panH, 5, sc, brd)
 
             -- Bevel: top-left highlight
             local hl = brd + math.max(1, math.floor(sc))
-            lg.setColor(0.55, 0.57, 0.78, 0.45)
+            lg.setColor(0.125, 0.224, 0.310, 0.5)
             lg.setLineWidth(math.max(1, math.floor(sc)))
             lg.line(panX + hl, panY + panH - hl,
                     panX + hl, panY + hl,
                     panX + panW - hl, panY + hl)
 
             -- Bevel: bottom-right shadow
-            lg.setColor(0.04, 0.04, 0.08, 0.6)
+            lg.setColor(0.031, 0.078, 0.118, 0.8)
             lg.line(panX + hl, panY + panH - hl,
                     panX + panW - hl, panY + panH - hl,
                     panX + panW - hl, panY + hl)
@@ -1442,11 +1472,11 @@ function MenuScreen.new()
             -- Title (medium font, same weight as panel headers elsewhere)
             local hdrH = math.floor(40 * sc)
             lg.setFont(Fonts.medium)
-            lg.setColor(0.88, 0.90, 1.0, 1)
+            lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("SETTINGS", panX, textCY(Fonts.medium, panY + offY, hdrH), panW, 'center')
 
             -- Divider under title
-            lg.setColor(0.35, 0.37, 0.55, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             lg.setLineWidth(math.max(1, math.floor(sc)))
             lg.line(panX + math.floor(12 * sc), panY + offY + hdrH,
                     panX + panW - math.floor(12 * sc), panY + offY + hdrH)
@@ -1460,28 +1490,28 @@ function MenuScreen.new()
                 local btnY  = rowY + math.floor((rowH - btnH) / 2)
                 -- Label
                 lg.setFont(Fonts.small)
-                lg.setColor(0.78, 0.80, 0.90, 1)
+                lg.setColor(0.765, 0.639, 0.541, 1)
                 lg.print(label, panX + math.floor(16 * sc), textCY(Fonts.small, rowY, rowH))
                 -- Button fill
                 if enabled then
-                    lg.setColor(0.17, 0.21, 0.40, 1)
+                    lg.setColor(0.059, 0.165, 0.247, 1)
                 else
-                    lg.setColor(0.10, 0.10, 0.14, 1)
+                    lg.setColor(0.031, 0.078, 0.118, 1)
                 end
                 roundedRect(btnX, btnY, btnW, btnH, 4, sc)
                 -- Button border
                 if enabled then
-                    lg.setColor(0.45, 0.48, 0.72, 1)
+                    lg.setColor(0.125, 0.224, 0.310, 1)
                 else
-                    lg.setColor(0.26, 0.26, 0.34, 1)
+                    lg.setColor(0.306, 0.286, 0.373, 1)
                 end
                 roundedRectLine(btnX, btnY, btnW, btnH, 4, sc, math.max(1, math.floor(sc)))
                 -- Button text
                 lg.setFont(Fonts.small)
                 if enabled then
-                    lg.setColor(0.72, 0.78, 1.0, 1)
+                    lg.setColor(0.965, 0.839, 0.741, 1)
                 else
-                    lg.setColor(0.32, 0.32, 0.40, 1)
+                    lg.setColor(0.306, 0.286, 0.373, 1)
                 end
                 lg.printf(enabled and "ON" or "OFF", btnX, textCY(Fonts.small, btnY, btnH), btnW, 'center')
                 return { x = btnX, y = btnY, w = btnW, h = btnH }
@@ -1494,7 +1524,7 @@ function MenuScreen.new()
 
             -- Divider above logout
             local divY = panY + offY + math.floor(138 * sc)
-            lg.setColor(0.28, 0.30, 0.44, 1)
+            lg.setColor(0.306, 0.286, 0.373, 1)
             lg.setLineWidth(math.max(1, math.floor(sc)))
             lg.line(panX + math.floor(12 * sc), divY,
                     panX + panW - math.floor(12 * sc), divY)
@@ -1504,12 +1534,12 @@ function MenuScreen.new()
             local lbH = math.floor(34 * sc)
             local lbX = panX + math.floor(16 * sc)
             local lbY = divY + math.floor(8 * sc)
-            lg.setColor(0.20, 0.09, 0.09, 1)
+            lg.setColor(0.031, 0.078, 0.118, 1)
             roundedRect(lbX, lbY, lbW, lbH, 4, sc)
-            lg.setColor(0.52, 0.20, 0.20, 1)
+            lg.setColor(0.600, 0.459, 0.467, 1)
             roundedRectLine(lbX, lbY, lbW, lbH, 4, sc, math.max(1, math.floor(sc)))
             lg.setFont(Fonts.small)
-            lg.setColor(0.88, 0.52, 0.52, 1)
+            lg.setColor(0.765, 0.639, 0.541, 1)
             lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
             self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
         end

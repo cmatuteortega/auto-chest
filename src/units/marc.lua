@@ -9,7 +9,7 @@ function Marc:new(row, col, owner, sprites)
         health          = 10,
         maxHealth       = 10,
         damage          = 1,
-        attackSpeed     = 0.6,
+        attackSpeed     = 0.75,
         moveSpeed       = 1,
         attackRange     = 6,
         projectileSpeed = 0.3,

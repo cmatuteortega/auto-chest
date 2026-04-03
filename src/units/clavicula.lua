@@ -9,10 +9,10 @@ local EXPLOSION_DAMAGE = 3
 
 function Clavicula:new(row, col, owner, sprites)
     local stats = {
-        health          = 8,
-        maxHealth       = 8,
+        health          = 9,
+        maxHealth       = 9,
         damage          = 1,
-        attackSpeed     = 0.6,        -- 1 attack per ~1.67s
+        attackSpeed     = 0.65,        -- 1 attack per ~1.54s
         moveSpeed       = 1,
         attackRange     = 3,
         projectileSpeed = 0.22,
@@ -155,7 +155,7 @@ function Clavicula:spawnClone(grid)
     end
     clone.level    = self.level
     -- Apply scaled stats matching the original's level
-    local mult     = 1.5 ^ self.level
+    local mult     = 1.3 ^ self.level
     clone.maxHealth = math.floor(clone.baseHealth * mult)
     clone.damage    = math.floor(clone.baseDamage  * mult)
 

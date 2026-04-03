@@ -5,8 +5,8 @@ local Boney = BaseUnit:extend()
 function Boney:new(row, col, owner, sprites)
     -- Boney stats: melee fighter
     local stats = {
-        health = 8,
-        maxHealth = 8,
+        health = 7,
+        maxHealth = 7,
         damage = 1,
         attackSpeed = 1,  -- 1 attack per second
         moveSpeed = 1,    -- 1 cell per second

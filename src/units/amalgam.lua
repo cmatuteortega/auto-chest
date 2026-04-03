@@ -4,13 +4,13 @@ local Constants = require('src.constants')
 local Amalgam = BaseUnit:extend()
 
 local INVULN_DURATION  = 1    -- seconds of invulnerability after surviving a lethal hit
-local INVULN_COOLDOWN  = 10   -- default cooldown before the passive can trigger again
+local INVULN_COOLDOWN  = 7    -- default cooldown before the passive can trigger again
 local INVULN_COOLDOWN_RELENTLESS = 6  -- cooldown with upgrade 3
 
 function Amalgam:new(row, col, owner, sprites)
     local stats = {
-        health      = 16,
-        maxHealth   = 16,
+        health      = 13,
+        maxHealth   = 13,
         damage      = 3,
         attackSpeed = 0.45,
         moveSpeed   = 1,

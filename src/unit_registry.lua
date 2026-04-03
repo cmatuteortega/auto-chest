@@ -90,7 +90,7 @@ UnitRegistry.spritePaths = {
 UnitRegistry.passiveDescriptions = {
     knight = "Taunt all enemies within 3 cells for 3 seconds at battle start",
     boney = "Deal 2x damage when below 50% HP",
-    samurai = "Deal 1.5x damage when no allies are within 2 cells",
+    samurai = "Deal 2x damage when no allies are within 2 cells",
     marrow = "Gain +0.2 attack speed per kill",
     marc = "Target furthest enemy in range (Sniper Focus)",
     bull = "Charges forward 4 tiles at battle start, stunning the first enemy hit",
@@ -132,12 +132,12 @@ end
 -- Map of unit type names to their costs
 UnitRegistry.unitCosts = {
     boney = 2,
-    marrow = 3,
+    marrow = 2,
     samurai = 3,
     knight = 3,
     marc = 3,
     bull    = 4,
-    mage    = 3,
+    mage    = 4,
     amalgam = 4,
     humerus   = 5,
     clavicula = 4
