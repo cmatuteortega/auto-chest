@@ -65,6 +65,7 @@ local TARGET_WIN = 0.50 -- ideal win rate
 local UnitCosts = {
     boney=2, marrow=2, samurai=3, knight=3,
     marc=3,  bull=4,  mage=4,   amalgam=4, humerus=5, clavicula=4,
+    bonk=3,  tomb=3,
 }
 
 -- Role: "tank" = high-hp melee, "melee" = standard melee, "ranged" = ranged attacker
@@ -80,6 +81,8 @@ local UnitRole = {
     marc      = "ranged",
     mage      = "ranged",
     clavicula = "ranged",
+    bonk      = "melee",
+    tomb      = "support",
 }
 
 -- Base stats for tweak suggestions (mirrors unit constructors)
@@ -94,6 +97,8 @@ local UnitBaseStats = {
     amalgam   = { health=13, damage=3,  attackSpeed=0.45 },
     humerus   = { health=22, damage=4,  attackSpeed=0.35 },
     clavicula = { health=9,  damage=1,  attackSpeed=0.65 },
+    bonk      = { health=11, damage=1,  attackSpeed=0.70 },
+    tomb      = { health=15, damage=0,  attackSpeed=0.00 },
 }
 
 -- ── Load modules ─────────────────────────────────────────────────────────────
@@ -110,6 +115,8 @@ local UnitClasses = {
     amalgam   = require('src.units.amalgam'),
     humerus   = require('src.units.humerus'),
     clavicula = require('src.units.clavicula'),
+    bonk      = require('src.units.bonk'),
+    tomb      = require('src.units.tomb'),
 }
 
 local STUB_SPRITES = { front = {}, back = {}, dead = {} }

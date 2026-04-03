@@ -641,6 +641,8 @@ function BaseUnit:resetCombatState()
     self.pendingAttackGrid   = nil
     self.pendingAttackDelay  = 0
 
+    self.tombMartyrdombuffTimer = nil
+
     -- Reset directional sprite fields
     if self.hasDirectionalSprites then
         local defaultAngle = (self.owner == 1) and 180 or 0
@@ -690,6 +692,16 @@ function BaseUnit:update(dt, grid)
     if self.isDead then
         self.state = "dead"
         return
+    end
+
+    -- Tomb Martyrdom buff: +25% ATK SPD for a duration
+    if self.tombMartyrdombuffTimer and self.tombMartyrdombuffTimer > 0 then
+        self.tombMartyrdombuffTimer = self.tombMartyrdombuffTimer - dt
+        self.attackSpeed = self.baseAttackSpeed * 1.25
+        if self.tombMartyrdombuffTimer <= 0 then
+            self.tombMartyrdombuffTimer = nil
+            self.attackSpeed = self.baseAttackSpeed
+        end
     end
 
     -- Wait for ACTION moves to resolve before acting
@@ -934,6 +946,11 @@ function BaseUnit:attack(target, grid)
     if target.isDead then
         local cell = grid:getCell(target.col, target.row)
         if cell then cell.occupied = false end
+        -- Invalidate all cached paths so units recompute around the freed cell next frame
+        local allUnits = grid:getAllUnits()
+        for _, u in ipairs(allUnits) do
+            if not u.isDead then u.path = nil end
+        end
         self:onKill(target)
     end
 end
