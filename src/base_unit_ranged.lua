@@ -78,6 +78,8 @@ function BaseUnitRanged:new(row, col, owner, sprites, stats)
     self.arrows = {}  -- Array of active projectiles
     self.projectileSpeed = stats.projectileSpeed or 0.2  -- Flight time in seconds
     self.baseProjectileSpeed = stats.projectileSpeed or 0.2  -- Store base for upgrades
+    self.projectileSprite      = sprites and sprites.projectile or nil
+    self.projectileAngleOffset = sprites and sprites.projectileAngleOffset or 0
 end
 
 function BaseUnitRanged:resetCombatState()
@@ -231,49 +233,41 @@ end
 function BaseUnitRanged:drawProjectile(projectile)
     local lg = love.graphics
 
-    -- Use easing for smooth projectile flight
     local easedProgress = tween.easing.linear(projectile.progress, 0, 1, 1)
 
-    -- Calculate projectile position (apply perspective flip for visual rows)
     local startVisualRow  = Constants.toVisualRow(projectile.startRow)
     local targetVisualRow = Constants.toVisualRow(projectile.targetRow)
     local startX = Constants.GRID_OFFSET_X + (projectile.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
     local startY = Constants.GRID_OFFSET_Y + (startVisualRow - 1)  * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local endX = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local endY = Constants.GRID_OFFSET_Y + (targetVisualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local endX   = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local endY   = Constants.GRID_OFFSET_Y + (targetVisualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
 
     local currentX = startX + (endX - startX) * easedProgress
     local currentY = startY + (endY - startY) * easedProgress
+    local angle    = math.atan2(endY - startY, endX - startX)
 
-    -- Default projectile: arrow shape (scaled)
-    lg.setColor(0.8, 0.6, 0.3, 1)  -- Brown/tan color
-    lg.setLineWidth(2 * Constants.SCALE)
+    if self.projectileSprite then
+        local sw    = self.projectileSprite:getWidth()
+        local sh    = self.projectileSprite:getHeight()
+        local scale = Constants.SCALE * 3
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(self.projectileSprite, currentX, currentY, angle + self.projectileAngleOffset, scale, scale, sw / 2, sh / 2)
+    else
+        -- Fallback: procedural arrow
+        lg.setColor(0.8, 0.6, 0.3, 1)
+        lg.setLineWidth(2 * Constants.SCALE)
+        local arrowLength = 12 * Constants.SCALE
+        lg.line(currentX - math.cos(angle) * arrowLength, currentY - math.sin(angle) * arrowLength, currentX, currentY)
+        local headSize  = 6 * Constants.SCALE
+        local tip1X = currentX + math.cos(angle + math.pi * 0.75) * headSize
+        local tip1Y = currentY + math.sin(angle + math.pi * 0.75) * headSize
+        local tip2X = currentX + math.cos(angle - math.pi * 0.75) * headSize
+        local tip2Y = currentY + math.sin(angle - math.pi * 0.75) * headSize
+        lg.polygon('fill', currentX, currentY, tip1X, tip1Y, tip2X, tip2Y)
+        lg.setLineWidth(1)
+    end
 
-    -- Arrow shaft
-    local dx = endX - startX
-    local dy = endY - startY
-    local angle = math.atan2(dy, dx)
-
-    -- Draw line from start toward current position (scaled)
-    local arrowLength = 12 * Constants.SCALE
-    local backX = currentX - math.cos(angle) * arrowLength
-    local backY = currentY - math.sin(angle) * arrowLength
-
-    lg.line(backX, backY, currentX, currentY)
-
-    -- Draw arrowhead (simple triangle, scaled)
-    local headSize = 6 * Constants.SCALE
-    local perpAngle1 = angle + math.pi * 0.75
-    local perpAngle2 = angle - math.pi * 0.75
-
-    local tip1X = currentX + math.cos(perpAngle1) * headSize
-    local tip1Y = currentY + math.sin(perpAngle1) * headSize
-    local tip2X = currentX + math.cos(perpAngle2) * headSize
-    local tip2Y = currentY + math.sin(perpAngle2) * headSize
-
-    lg.polygon('fill', currentX, currentY, tip1X, tip1Y, tip2X, tip2Y)
-
-    lg.setLineWidth(1)
+    lg.setColor(1, 1, 1, 1)
 end
 
 return BaseUnitRanged

@@ -1,6 +1,28 @@
 local BaseUnit  = require('src.base_unit')
 local Constants = require('src.constants')
 
+-- Sprite-pixel burst: 12 particles fly outward, sized to one sprite pixel (CELL_SIZE/16)
+local function drawPixelBurst(col, row, timer, duration, r, g, b)
+    local lg      = love.graphics
+    local t       = timer / duration
+    local vr      = Constants.toVisualRow(row)
+    local cx      = Constants.GRID_OFFSET_X + (col - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local cy      = Constants.GRID_OFFSET_Y + (vr   - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local ps      = math.max(1, math.floor(Constants.CELL_SIZE / 16))
+    local maxDist = Constants.CELL_SIZE * 1.2
+    local expand  = 1 - t
+    for i = 0, 11 do
+        local angle   = (i / 12) * math.pi * 2
+        local isOuter = (i % 2 == 0)
+        local dist    = maxDist * expand * (isOuter and 1.0 or 0.55)
+        local px      = math.floor(cx + math.cos(angle) * dist - ps / 2)
+        local py      = math.floor(cy + math.sin(angle) * dist - ps / 2)
+        lg.setColor(r, g, b, t * (isOuter and 1.0 or 0.7))
+        lg.rectangle('fill', px, py, ps, ps)
+    end
+    lg.setColor(1, 1, 1, 1)
+end
+
 local Amalgam = BaseUnit:extend()
 
 local INVULN_DURATION  = 1    -- seconds of invulnerability after surviving a lethal hit
@@ -140,28 +162,7 @@ end
 
 function Amalgam:drawAttackVisuals()
     if not (self.invulnTimer > 0) then return end
-
-    local visualRow = Constants.toVisualRow(self.row)
-    local px = Constants.GRID_OFFSET_X + (self.col - 1) * Constants.CELL_SIZE
-    local py = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
-
-    local t     = love.timer.getTime()
-    local pulse = math.abs(math.sin(t * 8)) * 0.25 + 0.45
-    local pad   = 2 * Constants.SCALE
-    local inner = Constants.CELL_SIZE - 2 * Constants.SCALE
-
-    -- LuaLS cannot infer love.graphics method signatures here (no ranged super chain
-    -- to anchor the type). The calls are correct; suppress the false-positive check.
-    ---@diagnostic disable: redundant-parameter
-    local lg = love.graphics
-    lg.setColor(0.6, 0.85, 1, pulse * 0.4)
-    lg.rectangle('fill', px - pad, py - pad, Constants.CELL_SIZE + 2 * pad, Constants.CELL_SIZE + 2 * pad)
-    lg.setColor(0.75, 0.95, 1, pulse)
-    lg.setLineWidth(2 * Constants.SCALE)
-    lg.rectangle('line', px + Constants.SCALE, py + Constants.SCALE, inner, inner)
-    lg.setLineWidth(1)
-    lg.setColor(1, 1, 1, 1)
-    ---@diagnostic enable: redundant-parameter
+    drawPixelBurst(self.col, self.row, self.invulnTimer, INVULN_DURATION, 0.6, 0.9, 1)
 end
 
 return Amalgam

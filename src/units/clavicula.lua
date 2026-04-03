@@ -1,6 +1,28 @@
 local BaseUnitRanged = require('src.base_unit_ranged')
 local Constants      = require('src.constants')
 
+-- Sprite-pixel burst: 12 particles fly outward, sized to one sprite pixel (CELL_SIZE/16)
+local function drawPixelBurst(col, row, timer, duration, r, g, b)
+    local lg      = love.graphics
+    local t       = timer / duration
+    local vr      = Constants.toVisualRow(row)
+    local cx      = Constants.GRID_OFFSET_X + (col - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local cy      = Constants.GRID_OFFSET_Y + (vr   - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local ps      = math.max(1, math.floor(Constants.CELL_SIZE / 16))
+    local maxDist = Constants.CELL_SIZE * 1.2
+    local expand  = 1 - t
+    for i = 0, 11 do
+        local angle   = (i / 12) * math.pi * 2
+        local isOuter = (i % 2 == 0)
+        local dist    = maxDist * expand * (isOuter and 1.0 or 0.55)
+        local px      = math.floor(cx + math.cos(angle) * dist - ps / 2)
+        local py      = math.floor(cy + math.sin(angle) * dist - ps / 2)
+        lg.setColor(r, g, b, t * (isOuter and 1.0 or 0.7))
+        lg.rectangle('fill', px, py, ps, ps)
+    end
+    lg.setColor(1, 1, 1, 1)
+end
+
 local Clavicula = BaseUnitRanged:extend()
 
 -- AoE explosion radius for Cursed Ground (upgrade 3), in cell units
@@ -195,6 +217,7 @@ function Clavicula:doSoulDrain(grid, healAmount)
     for _, unit in ipairs(allUnits) do
         if unit.owner == self.owner and unit.unitType == "clavicula" and not unit.isDead then
             unit.health = math.min(unit.maxHealth, unit.health + healAmount)
+            unit:triggerBuffAnim()
         end
     end
 end
@@ -235,47 +258,9 @@ function Clavicula:drawAttackVisuals()
     -- Draw explosion flash (Cursed Ground)
     if self.explosionFlash then
         local flash = self.explosionFlash
-        local t     = flash.timer / 0.4   -- 1 → 0 as it fades
-        local alpha = t * 0.7
-
-        local lg        = love.graphics
-        local centerX   = Constants.GRID_OFFSET_X + (flash.col - 0.5) * Constants.CELL_SIZE
-        local centerY   = Constants.GRID_OFFSET_Y + (Constants.toVisualRow(flash.row) - 0.5) * Constants.CELL_SIZE
-        local radius    = EXPLOSION_RADIUS * Constants.CELL_SIZE * (1.1 - t * 0.5)
-
-        ---@diagnostic disable: redundant-parameter
-        lg.setColor(0.7, 0.2, 1, alpha)
-        lg.circle('fill', centerX, centerY, radius)
-        lg.setColor(1, 0.8, 1, alpha * 0.6)
-        lg.circle('fill', centerX, centerY, radius * 0.5)
-        lg.setColor(1, 1, 1, 1)
-        ---@diagnostic enable: redundant-parameter
+        drawPixelBurst(flash.col, flash.row, flash.timer, 0.4, 0.7, 0.2, 1)
     end
 end
 
--- Draw a spectral/purple projectile instead of the default arrow
-function Clavicula:drawProjectile(projectile)
-    local lg = love.graphics
-
-    local startVR  = Constants.toVisualRow(projectile.startRow)
-    local targetVR = Constants.toVisualRow(projectile.targetRow)
-    local sx = Constants.GRID_OFFSET_X + (projectile.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local sy = Constants.GRID_OFFSET_Y + (startVR - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local ex = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local ey = Constants.GRID_OFFSET_Y + (targetVR - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-
-    local t  = projectile.progress
-    local cx = sx + (ex - sx) * t
-    local cy = sy + (ey - sy) * t
-
-    -- Spectral orb: glowing purple
-    ---@diagnostic disable: redundant-parameter
-    lg.setColor(0.6, 0.1, 0.9, 0.4)
-    lg.circle('fill', cx, cy, 7 * Constants.SCALE)
-    lg.setColor(0.85, 0.5, 1, 1)
-    lg.circle('fill', cx, cy, 3 * Constants.SCALE)
-    lg.setColor(1, 1, 1, 1)
-    ---@diagnostic enable: redundant-parameter
-end
 
 return Clavicula

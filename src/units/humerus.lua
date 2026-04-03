@@ -59,6 +59,9 @@ function Humerus:update(dt, grid)
     for _, unit in ipairs(allUnits) do
         if unit.owner == self.owner and unit ~= self and not unit.isDead then
             if self.target and not self.target.isDead and unit.target == self.target then
+                if unit.royalCommandBonus ~= 1.2 then
+                    unit:triggerBuffAnim()
+                end
                 unit.royalCommandBonus = 1.2
             else
                 unit.royalCommandBonus = 1.0
@@ -126,6 +129,7 @@ function Humerus:onKill(target)
     if self:hasUpgrade(1) then
         local heal = math.floor(self.maxHealth * 0.15)
         self.health = math.min(self.health + heal, self.maxHealth)
+        self:triggerBuffAnim()
     end
 end
 

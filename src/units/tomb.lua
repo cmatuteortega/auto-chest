@@ -89,6 +89,7 @@ function Tomb:update(dt, grid)
                 for _, u in ipairs(allUnits) do
                     if u.owner == self.owner and not u.isDead then
                         u.tombMartyrdombuffTimer = 4.0
+                        u:triggerBuffAnim()
                     end
                 end
             end
@@ -121,6 +122,7 @@ function Tomb:update(dt, grid)
                 if not self.healedUnits[u][key] then
                     self.healedUnits[u][key] = true
                     u.health = math.min(u.health + 2, u.maxHealth)
+                    u:triggerBuffAnim()
                 end
                 -- Upgrade 1 (Rot): 1 HP/s while standing on a corpse cell
                 if self:hasUpgrade(1) then
@@ -128,6 +130,7 @@ function Tomb:update(dt, grid)
                     if u.tombRegenAccum >= 1.0 then
                         u.tombRegenAccum = u.tombRegenAccum - 1.0
                         u.health = math.min(u.health + 1, u.maxHealth)
+                        u:triggerBuffAnim()
                     end
                 end
             else

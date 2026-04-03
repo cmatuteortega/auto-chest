@@ -84,6 +84,7 @@ function Knight:onBattleStart(grid)
         self.maxHealth = self.maxHealth + hpBonus
         self.health = self.health + hpBonus
         self.hpBonusApplied = true
+        self:triggerBuffAnim()
     end
 end
 
@@ -99,6 +100,7 @@ function Knight:update(dt, grid)
             local healAmount = math.floor(self.maxHealth * 0.25)
             self.health = math.min(self.health + healAmount, self.maxHealth)
             self.hasHealed = true
+            self:triggerBuffAnim()
         end
 
         -- Update threshold tracker

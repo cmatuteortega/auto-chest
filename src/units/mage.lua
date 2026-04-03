@@ -2,6 +2,33 @@ local BaseUnit        = require('src.base_unit')
 local BaseUnitRanged  = require('src.base_unit_ranged')
 local Constants       = require('src.constants')
 
+-- Draws one fire patch clipped to [clipTop, clipTop+clipH] in screen Y
+local function drawFirePatch(patch, sprites, clipTop, clipH)
+    local lg        = love.graphics
+    local visualRow = Constants.toVisualRow(patch.row)
+    local cx    = Constants.GRID_OFFSET_X + (patch.col - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local cy    = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local alpha = math.min(1, patch.timer / 4) * 0.8 + 0.2
+    local fireFrames = sprites and sprites.fireFrames
+
+    lg.setScissor(cx - Constants.CELL_SIZE / 2, clipTop, Constants.CELL_SIZE, clipH)
+    if fireFrames then
+        local fps      = 8
+        local elapsed  = 4 - patch.timer
+        local frameIdx = math.floor(elapsed * fps) % #fireFrames + 1
+        local img      = fireFrames[frameIdx]
+        local sw, sh   = img:getWidth(), img:getHeight()
+        local scale    = Constants.CELL_SIZE / sw
+        lg.setColor(1, 1, 1, alpha)
+        lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+    else
+        lg.setColor(1, 0.35, 0, alpha)
+        lg.rectangle('fill', cx - Constants.CELL_SIZE / 2, cy - Constants.CELL_SIZE / 2, Constants.CELL_SIZE, Constants.CELL_SIZE)
+    end
+    lg.setScissor()
+    lg.setColor(1, 1, 1, 1)
+end
+
 local Mage = BaseUnitRanged:extend()
 
 function Mage:new(row, col, owner, sprites)
@@ -98,7 +125,9 @@ function Mage:fireFireball(grid)
         targetRow = target.row,
         progress  = 0,
         duration  = 0.5,
-        damage    = math.max(1, math.floor(self.damage * 2))
+        damage    = math.max(1, math.floor(self.damage * 2)),
+        animTime  = 0,
+        rotation  = 0,
     }
 
     -- Arcane Surge: +50% attack speed for 3s
@@ -107,6 +136,7 @@ function Mage:fireFireball(grid)
             self.preArcaneSpeed = self.attackSpeed
             self.attackSpeed    = self.attackSpeed * 1.5
             self.arcaneActive   = true
+            self:triggerBuffAnim()
         end
         self.arcaneTimer = 3
     end
@@ -196,6 +226,8 @@ function Mage:update(dt, grid)
     -- Advance fireball flight
     if self.fireball then
         self.fireball.progress = self.fireball.progress + (dt / self.fireball.duration)
+        self.fireball.animTime = self.fireball.animTime + dt
+        self.fireball.rotation = self.fireball.rotation + dt * math.pi * 2
         if self.fireball.progress >= 1.0 then
             self:explodeFireball(grid)
             self.fireball = nil
@@ -206,21 +238,28 @@ function Mage:update(dt, grid)
     Mage.super.update(self, dt, grid)
 end
 
+function Mage:drawGroundEffects()
+    for _, patch in ipairs(self.firePatches) do
+        local visualRow = Constants.toVisualRow(patch.row)
+        local cy    = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+        local topY  = cy - Constants.CELL_SIZE / 2
+        drawFirePatch(patch, self.sprites, topY, Constants.CELL_SIZE * 3 / 4)
+    end
+end
+
 function Mage:drawAttackVisuals()
     -- Draw regular arrows via parent
     Mage.super.drawAttackVisuals(self)
 
-    local lg = love.graphics
-
-    -- Draw fire patches
+    -- Draw bottom quarter of fire patches on top of units
     for _, patch in ipairs(self.firePatches) do
         local visualRow = Constants.toVisualRow(patch.row)
-        local px = Constants.GRID_OFFSET_X + (patch.col - 1) * Constants.CELL_SIZE
-        local py = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
-        local alpha = math.min(1, patch.timer / 4) * 0.5 + 0.2  -- fade as timer expires
-        lg.setColor(1, 0.35, 0, alpha)
-        lg.rectangle('fill', px, py, Constants.CELL_SIZE, Constants.CELL_SIZE)
+        local cy     = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+        local bottomY = cy + Constants.CELL_SIZE / 4
+        drawFirePatch(patch, self.sprites, bottomY, Constants.CELL_SIZE / 4)
     end
+
+    local lg = love.graphics
 
     -- Draw active fireball
     if self.fireball then
@@ -236,12 +275,22 @@ function Mage:drawAttackVisuals()
         local cx = sx + (ex - sx) * t
         local cy = sy + (ey - sy) * t - math.sin(t * math.pi) * 12 * Constants.SCALE  -- slight arc
 
-        -- Glow halo
-        lg.setColor(1, 0.5, 0.1, 0.35)
-        lg.circle('fill', cx, cy, 10 * Constants.SCALE)
-        -- Core
-        lg.setColor(1, 0.85, 0.2, 1)
-        lg.circle('fill', cx, cy, 5 * Constants.SCALE)
+        local frames = self.sprites and self.sprites.fireballFrames
+        if frames then
+            local fps      = 12
+            local frameIdx = math.floor(fb.animTime * fps) % #frames + 1
+            local img      = frames[frameIdx]
+            local sw, sh   = img:getWidth(), img:getHeight()
+            local scale    = Constants.SCALE * 3
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(img, cx, cy, fb.rotation, scale, scale, sw / 2, sh / 2)
+        else
+            -- Fallback: procedural circles
+            lg.setColor(1, 0.5, 0.1, 0.35)
+            lg.circle('fill', cx, cy, 10 * Constants.SCALE)
+            lg.setColor(1, 0.85, 0.2, 1)
+            lg.circle('fill', cx, cy, 5 * Constants.SCALE)
+        end
     end
 
     lg.setColor(1, 1, 1, 1)

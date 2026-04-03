@@ -75,6 +75,7 @@ function Boney:update(dt, grid)
             local healAmount = math.floor(self.maxHealth * 0.25)
             self.health = math.min(self.health + healAmount, self.maxHealth)
             self.hasHealed = true
+            self:triggerBuffAnim()
         end
 
         -- Update threshold tracker
@@ -85,6 +86,9 @@ function Boney:update(dt, grid)
     if self:hasUpgrade(2) and not self.isDead then
         if self.health < self.maxHealth * 0.5 then
             -- Apply 50% attack speed boost
+            if self.attackSpeed ~= self.baseAttackSpeed * 1.5 then
+                self:triggerBuffAnim()
+            end
             self.attackSpeed = self.baseAttackSpeed * 1.5
         else
             -- Reset to base attack speed

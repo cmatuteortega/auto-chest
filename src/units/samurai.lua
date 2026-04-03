@@ -97,6 +97,7 @@ function Samurai:update(dt, grid)
                     if not self.allyDeathsObserved[unit] then
                         self.allyDeathsObserved[unit] = true
                         self.damageFromAlliedDeaths = self.damageFromAlliedDeaths + 1
+                        self:triggerBuffAnim()
                     end
                 end
             end
@@ -119,6 +120,7 @@ function Samurai:onKill(target)
     if self:hasUpgrade(1) then
         local healAmount = math.floor(self.maxHealth * 0.3)
         self.health = math.min(self.health + healAmount, self.maxHealth)
+        self:triggerBuffAnim()
     end
 end
 

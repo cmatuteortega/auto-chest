@@ -45,7 +45,7 @@ function MenuScreen.new()
 
         -- Deck builder state
         DeckManager.load()
-        self.selectedDeckSlot = 1
+        self.selectedDeckSlot = DeckManager._data.activeDeckIndex or 1
         self._deckSlotRects   = {}
         self._deckCardRects   = {}
         self._deckSortRect    = nil
