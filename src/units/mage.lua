@@ -6,10 +6,10 @@ local Mage = BaseUnitRanged:extend()
 
 function Mage:new(row, col, owner, sprites)
     local stats = {
-        health          = 11,
-        maxHealth       = 11,
+        health          = 9,
+        maxHealth       = 9,
         damage          = 1,
-        attackSpeed     = 0.65,
+        attackSpeed     = 0.55,
         moveSpeed       = 1,
         attackRange     = 3,
         projectileSpeed = 0.25,
@@ -68,7 +68,7 @@ function Mage:takeDamage(amount)
     Mage.super.takeDamage(self, amount)
     if not self.isDead then
         self.hitCounter = self.hitCounter + 1
-        if self.hitCounter >= 6 then
+        if self.hitCounter >= 8 then
             self.hitCounter      = 0
             self.fireballPending = true
         end
@@ -79,7 +79,7 @@ end
 function Mage:attack(target, grid)
     Mage.super.attack(self, target, grid)
     self.hitCounter = self.hitCounter + 1
-    if self.hitCounter >= 6 then
+    if self.hitCounter >= 8 then
         self.hitCounter = 0
         self:fireFireball(grid)
     end
@@ -98,7 +98,7 @@ function Mage:fireFireball(grid)
         targetRow = target.row,
         progress  = 0,
         duration  = 0.5,
-        damage    = math.max(1, math.floor(self.damage * 3))
+        damage    = math.max(1, math.floor(self.damage * 2))
     }
 
     -- Arcane Surge: +50% attack speed for 3s

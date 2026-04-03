@@ -8,7 +8,7 @@ function Samurai:new(row, col, owner, sprites)
         health = 10,
         maxHealth = 10,
         damage = 1,
-        attackSpeed = 1,  -- 1 attack per second
+        attackSpeed = 1.1,
         moveSpeed = 1,    -- 1 cell per second
         attackRange = 0,  -- Melee (adjacent cells only)
         unitType = "samurai"
@@ -72,7 +72,7 @@ function Samurai:getDamage(grid)
         if self:hasUpgrade(3) then
             baseDamage = baseDamage * 1.75  -- Lone Wolf: 75% boost
         else
-            baseDamage = baseDamage * 1.5  -- Base: 50% boost
+            baseDamage = baseDamage * 2.0  -- Base: 100% boost when isolated
         end
     end
 

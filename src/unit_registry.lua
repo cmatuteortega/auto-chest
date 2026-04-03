@@ -9,6 +9,9 @@ local Mage   = require('src.units.mage')
 local Amalgam = require('src.units.amalgam')
 local Humerus   = require('src.units.humerus')
 local Clavicula = require('src.units.clavicula')
+local Bonk   = require('src.units.bonk')
+local Sinner = require('src.units.sinner')
+local Tomb   = require('src.units.tomb')
 
 local UnitRegistry = {}
 
@@ -23,13 +26,16 @@ UnitRegistry.unitClasses = {
     mage   = Mage,
     amalgam = Amalgam,
     humerus   = Humerus,
-    clavicula = Clavicula
+    clavicula = Clavicula,
+    bonk   = Bonk,
+    sinner = Sinner,
+    tomb   = Tomb
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula"} },
-    { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "samurai", "bull"} },
+    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula", "tomb"} },
+    { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "samurai", "bull", "bonk", "sinner"} },
 }
 
 -- Map of unit type names to their sprite paths
@@ -83,6 +89,26 @@ UnitRegistry.spritePaths = {
         front = "src/assets/clavicula/front.png",
         back  = "src/assets/clavicula/back.png",
         dead  = "src/assets/clavicula/dead.png"
+    },
+    bonk = {
+        front = "src/assets/bonk/front.png",
+        back  = "src/assets/bonk/back.png",
+        dead  = "src/assets/bonk/dead.png"
+    },
+    sinner = {
+        front = "src/assets/sinner/sinner/front.png",
+        back  = "src/assets/sinner/sinner/back.png",
+        dead  = "src/assets/sinner/sinner/dead.png"
+    },
+    ["sinner-free"] = {
+        front = "src/assets/sinner/sinner-free/front.png",
+        back  = "src/assets/sinner/sinner-free/back.png",
+        dead  = "src/assets/sinner/sinner-free/dead.png"
+    },
+    tomb = {
+        front = "src/assets/tomb/front.png",
+        back  = "src/assets/tomb/back.png",
+        dead  = "src/assets/tomb/front.png"  -- no dead sprite; tomb stays upright
     }
 }
 
@@ -90,14 +116,17 @@ UnitRegistry.spritePaths = {
 UnitRegistry.passiveDescriptions = {
     knight = "Taunt all enemies within 3 cells for 3 seconds at battle start",
     boney = "Deal 2x damage when below 50% HP",
-    samurai = "Deal 1.5x damage when no allies are within 2 cells",
+    samurai = "Deal 2x damage when no allies are within 2 cells",
     marrow = "Gain +0.2 attack speed per kill",
     marc = "Target furthest enemy in range (Sniper Focus)",
     bull = "Charges forward 4 tiles at battle start, stunning the first enemy hit",
     mage   = "Every 6 hits dealt or received, launches a fireball dealing AoE damage",
     amalgam  = "Cannot die to a single hit; surviving a lethal blow grants 1s invulnerability (10s cooldown)",
     humerus   = "Royal Command: allies attacking the same target gain +20% ATK",
-    clavicula = "Every 8 hits (given or taken), spawns a copy at 50% HP (max 4 on screen)"
+    clavicula = "Every 8 hits (given or taken), spawns a copy at 50% HP (max 4 on screen)",
+    bonk   = "Every 3rd hit deals triple damage.",
+    sinner = "Every 20 hits (given or taken), breaks free: +ATK SPD and becomes stun immune",
+    tomb   = "Friendly units stepping onto a corpse cell heal 2 HP"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -132,15 +161,18 @@ end
 -- Map of unit type names to their costs
 UnitRegistry.unitCosts = {
     boney = 2,
-    marrow = 3,
+    marrow = 2,
     samurai = 3,
     knight = 3,
     marc = 3,
     bull    = 4,
-    mage    = 3,
+    mage    = 4,
     amalgam = 4,
     humerus   = 5,
-    clavicula = 4
+    clavicula = 4,
+    bonk   = 3,
+    sinner = 4,
+    tomb   = 3
 }
 
 -- Count fully-transparent rows at the bottom of a sprite file.
@@ -241,6 +273,8 @@ function UnitRegistry.loadAllSprites()
     for unitType, _ in pairs(UnitRegistry.unitClasses) do
         allSprites[unitType] = UnitRegistry.loadDirectionalSprites(unitType)
     end
+    -- Attach sinner's free-form sprites so the unit can swap at form-change time
+    allSprites["sinner"].freeForm = UnitRegistry.loadSprites("sinner-free")
     return allSprites
 end
 

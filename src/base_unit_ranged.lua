@@ -197,6 +197,12 @@ function BaseUnitRanged:update(dt, grid)
                         cell.occupied = false
                     end
 
+                    -- Invalidate all cached paths so units recompute around the freed cell next frame
+                    local allUnits = grid:getAllUnits()
+                    for _, u in ipairs(allUnits) do
+                        if not u.isDead then u.path = nil end
+                    end
+
                     -- Trigger onKill hook for passive abilities
                     if projectile.shooter then
                         projectile.shooter:onKill(projectile.target)
