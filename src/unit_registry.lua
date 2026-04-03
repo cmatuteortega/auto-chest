@@ -12,6 +12,7 @@ local Clavicula = require('src.units.clavicula')
 local Bonk   = require('src.units.bonk')
 local Sinner = require('src.units.sinner')
 local Tomb   = require('src.units.tomb')
+local Lancer = require('src.units.lancer')
 
 local UnitRegistry = {}
 
@@ -29,12 +30,13 @@ UnitRegistry.unitClasses = {
     clavicula = Clavicula,
     bonk   = Bonk,
     sinner = Sinner,
-    tomb   = Tomb
+    tomb   = Tomb,
+    lancer = Lancer
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula", "tomb"} },
+    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula", "tomb", "lancer"} },
     { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "samurai", "bull", "bonk", "sinner"} },
 }
 
@@ -109,6 +111,11 @@ UnitRegistry.spritePaths = {
         front = "src/assets/tomb/front.png",
         back  = "src/assets/tomb/back.png",
         dead  = "src/assets/tomb/front.png"  -- no dead sprite; tomb stays upright
+    },
+    lancer = {
+        front = "src/assets/lancer/front.png",
+        back  = "src/assets/lancer/back.png",
+        dead  = "src/assets/lancer/dead.png"
     }
 }
 
@@ -126,7 +133,8 @@ UnitRegistry.passiveDescriptions = {
     clavicula = "Every 8 hits (given or taken), spawns a copy at 50% HP (max 4 on screen)",
     bonk   = "Every 3rd hit deals triple damage.",
     sinner = "Every 20 hits (given or taken), breaks free: +ATK SPD and becomes stun immune",
-    tomb   = "Friendly units stepping onto a corpse cell heal 2 HP"
+    tomb   = "Friendly units stepping onto a corpse cell heal 2 HP",
+    lancer = "At battle start, fires a bone lance down the column hitting the first enemy for 5 damage"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -172,7 +180,8 @@ UnitRegistry.unitCosts = {
     clavicula = 4,
     bonk   = 3,
     sinner = 4,
-    tomb   = 3
+    tomb   = 3,
+    lancer = 3
 }
 
 -- Count fully-transparent rows at the bottom of a sprite file.
@@ -230,8 +239,8 @@ function UnitRegistry.loadDirectionalSprites(unitType)
         loadFrames("idle", angle)
     end
 
-    -- Walk and hit (attack windup): 6 directions
-    for _, angle in ipairs({0, 45, 135, 180, 225, 315}) do
+    -- Walk and hit (attack windup): 8 directions
+    for _, angle in ipairs({0, 45, 90, 135, 180, 225, 270, 315}) do
         loadFrames("walk", angle)
         loadFrames("hit", angle)
     end

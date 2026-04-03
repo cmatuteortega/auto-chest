@@ -104,6 +104,9 @@ function Tooltip:draw()
     local passiveHeight = #passiveLines * Fonts.tiny:getHeight()
     local passiveMargin = 6 * Constants.SCALE
 
+    local statsHeight = Fonts.tiny:getHeight()
+    local statsMargin = 4 * Constants.SCALE
+
     local upgradeButtonHeight = 0
     local upgradeSpacing = 4 * Constants.SCALE
 
@@ -119,7 +122,7 @@ function Tooltip:draw()
         end
     end
 
-    height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + upgradeButtonHeight + hintHeight + hintMargin + padding
+    height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + statsHeight + statsMargin + upgradeButtonHeight + hintHeight + hintMargin + padding
 
     -- Get unit's screen position
     local unitX = Constants.GRID_OFFSET_X + (self.unit.col - 1) * Constants.CELL_SIZE
@@ -198,6 +201,13 @@ function Tooltip:draw()
     love.graphics.setFont(Fonts.tiny)
     love.graphics.printf(passiveDescription, x + padding, contentY, textWidth, "left")
     contentY = contentY + passiveHeight + passiveMargin
+
+    -- Draw stats row
+    local statsText = "HP " .. self.unit.maxHealth .. "  ATK " .. self.unit.damage .. "  SPD " .. string.format("%.1f", self.unit.attackSpeed)
+    love.graphics.setColor(0.75, 0.85, 1, 1)
+    love.graphics.setFont(Fonts.tiny)
+    love.graphics.printf(statsText, x + padding, contentY, textWidth, "left")
+    contentY = contentY + statsHeight + statsMargin
 
     -- Draw upgrade options (always show, but grayed out when no matching card)
     if hasUpgradeTree then
@@ -305,6 +315,11 @@ function Tooltip:getPassiveDescription(unitType)
     return UnitRegistry.passiveDescriptions[unitType] or "No passive ability"
 end
 
+function Tooltip:getUnitBaseStats(unitType)
+    local UnitRegistry = require("src.unit_registry")
+    return UnitRegistry.getUnitDisplayInfo(unitType)
+end
+
 -- Check if a click position hits an upgrade button
 -- Returns the upgrade index (1, 2, or 3) if clicked, nil otherwise
 function Tooltip:checkUpgradeClick(x, y)
@@ -346,8 +361,11 @@ function Tooltip:drawCardTooltip()
     local passiveHeight = #passiveLines * Fonts.tiny:getHeight()
     local passiveMargin = 6 * Constants.SCALE
 
+    local statsHeight = Fonts.tiny:getHeight()
+    local statsMargin = 4 * Constants.SCALE
+
     -- Calculate total height
-    local height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + hintHeight + hintMargin + padding
+    local height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + statsHeight + statsMargin + hintHeight + hintMargin + padding
 
     -- Get card's screen position (center of card)
     local cardCenterX = self.card.x + (80 * Constants.SCALE) / 2
@@ -405,6 +423,13 @@ function Tooltip:drawCardTooltip()
     love.graphics.setFont(Fonts.tiny)
     love.graphics.printf(passiveDescription, x + padding, contentY, textWidth, "left")
     contentY = contentY + passiveHeight + passiveMargin
+
+    -- Draw base stats row
+    local info = self:getUnitBaseStats(self.card.unitType)
+    local statsText = "HP " .. info.hp .. "  ATK " .. info.atk .. "  SPD " .. string.format("%.1f", info.spd)
+    love.graphics.setColor(0.75, 0.85, 1, 1)
+    love.graphics.setFont(Fonts.tiny)
+    love.graphics.printf(statsText, x + padding, contentY, textWidth, "left")
 
     -- Draw placement hint at bottom
     love.graphics.setFont(Fonts.tiny)

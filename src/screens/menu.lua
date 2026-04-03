@@ -635,7 +635,7 @@ function MenuScreen.new()
         local d = self.dirSprites[utype]
         if d and d.hasDirectionalSprites then
             -- ── Animated unit: single rotatable sprite ──
-            local ROTATION_ANGLES = {0, 45, 315, 135, 225, 180}
+            local ROTATION_ANGLES = {0, 45, 90, 135, 180, 225, 270, 315}
             local angle = ROTATION_ANGLES[self._detailRotAngle]
             local img, trimBottom
             if angle == 0 then
@@ -1725,13 +1725,12 @@ function MenuScreen.new()
 
         -- Collection detail: sprite rotation drag
         if self._detailDragX ~= nil then
-            local STEP_PX = math.max(1, math.floor(40 * Constants.SCALE))
+            local STEP_PX = math.max(1, math.floor(60 * Constants.SCALE))
             local delta = x - self._detailDragX
-            local steps = math.floor(math.abs(delta) / STEP_PX)
-            if steps > 0 then
+            if math.abs(delta) >= STEP_PX then
                 local dir = delta < 0 and 1 or -1  -- swipe left = rotate right (next angle)
-                self._detailRotAngle = ((self._detailRotAngle + dir * steps - 1) % 6) + 1
-                self._detailDragX = self._detailDragX + dir * steps * STEP_PX
+                self._detailRotAngle = ((self._detailRotAngle + dir - 1) % 8) + 1
+                self._detailDragX = x  -- reset anchor to current position so every step costs STEP_PX
             end
             return
         end
