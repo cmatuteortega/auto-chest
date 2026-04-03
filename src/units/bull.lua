@@ -167,6 +167,9 @@ function Bull:update(dt, grid)
     if self:hasUpgrade(2) then
         if self.ragingBullTimer > 0 then
             self.ragingBullTimer = self.ragingBullTimer - dt
+            if self.attackSpeed ~= self.baseAttackSpeed * 1.3 then
+                self:triggerBuffAnim()
+            end
             self.attackSpeed = self.baseAttackSpeed * 1.3
             if self.ragingBullTimer <= 0 then
                 self.attackSpeed = self.baseAttackSpeed

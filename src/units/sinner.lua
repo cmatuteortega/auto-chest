@@ -76,6 +76,7 @@ end
 function Sinner:doFormChange(grid)
     self.isFree      = true
     self.attackSpeed = 1.3
+    self:triggerBuffAnim()
     self.stunTimer   = 0  -- clear any active stun on transformation
     if self.freeSprites then self.sprites = self.freeSprites end
 
@@ -83,6 +84,7 @@ function Sinner:doFormChange(grid)
     if self:hasUpgrade(2) then
         local heal = math.floor(self.maxHealth * 0.4)
         self.health = math.min(self.health + heal, self.maxHealth)
+        self:triggerBuffAnim()
     end
 
     -- Shattered Chains (upgrade 3): stun nearby enemies for 0.5s

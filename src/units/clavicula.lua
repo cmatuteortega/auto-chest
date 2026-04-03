@@ -195,6 +195,7 @@ function Clavicula:doSoulDrain(grid, healAmount)
     for _, unit in ipairs(allUnits) do
         if unit.owner == self.owner and unit.unitType == "clavicula" and not unit.isDead then
             unit.health = math.min(unit.maxHealth, unit.health + healAmount)
+            unit:triggerBuffAnim()
         end
     end
 end
@@ -253,29 +254,5 @@ function Clavicula:drawAttackVisuals()
     end
 end
 
--- Draw a spectral/purple projectile instead of the default arrow
-function Clavicula:drawProjectile(projectile)
-    local lg = love.graphics
-
-    local startVR  = Constants.toVisualRow(projectile.startRow)
-    local targetVR = Constants.toVisualRow(projectile.targetRow)
-    local sx = Constants.GRID_OFFSET_X + (projectile.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local sy = Constants.GRID_OFFSET_Y + (startVR - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local ex = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local ey = Constants.GRID_OFFSET_Y + (targetVR - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-
-    local t  = projectile.progress
-    local cx = sx + (ex - sx) * t
-    local cy = sy + (ey - sy) * t
-
-    -- Spectral orb: glowing purple
-    ---@diagnostic disable: redundant-parameter
-    lg.setColor(0.6, 0.1, 0.9, 0.4)
-    lg.circle('fill', cx, cy, 7 * Constants.SCALE)
-    lg.setColor(0.85, 0.5, 1, 1)
-    lg.circle('fill', cx, cy, 3 * Constants.SCALE)
-    lg.setColor(1, 1, 1, 1)
-    ---@diagnostic enable: redundant-parameter
-end
 
 return Clavicula

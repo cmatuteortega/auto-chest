@@ -72,10 +72,12 @@ end
 function Marrow:onKill(target)
     -- Increase attack speed by 0.2 per kill (stacks permanently for the battle)
     self.attackSpeed = self.attackSpeed + 0.25
+    self:triggerBuffAnim()
 
     -- Upgrade 2: 2s damage boost
     if self:hasUpgrade(2) then
         self.damageBoostTimer = 2
+        self:triggerBuffAnim()
     end
 end
 

@@ -123,6 +123,8 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.actionDelayTimer = 0      -- delay before this unit starts acting (set by startBattle)
     -- Stun system
     self.stunTimer        = 0      -- seconds remaining stunned (cannot move or attack)
+    -- Buff animation
+    self.buffAnimTimer    = 0
 
     -- AI state
     self.target = nil
@@ -229,10 +231,10 @@ function BaseUnit:visualAngle(a)
     return a
 end
 
--- Returns the directional sprite image and trimBottom for the current animation state.
+-- Returns the directional sprite image, trimBottom, and trimTop for the current animation state.
 function BaseUnit:getDirectionalSprite()
     if self.isDead then
-        return self.sprites.dead, self.sprites.deadTrimBottom or 0
+        return self.sprites.dead, self.sprites.deadTrimBottom or 0, self.sprites.deadTrimTop or 0
     end
 
     local d = self.sprites.directional
@@ -252,11 +254,11 @@ function BaseUnit:getDirectionalSprite()
         local sprite = self:getSprite()
         local spriteKey = self.isDead and "dead"
             or (self.owner == (Constants.PERSPECTIVE or 1) and "back" or "front")
-        return sprite, self.sprites[spriteKey .. "TrimBottom"] or 0
+        return sprite, self.sprites[spriteKey .. "TrimBottom"] or 0, self.sprites[spriteKey .. "TrimTop"] or 0
     end
 
     local frameIdx = math.min(self.animFrameIndex, #dirData.frames)
-    return dirData.frames[frameIdx], dirData.trimBottom[frameIdx]
+    return dirData.frames[frameIdx], dirData.trimBottom[frameIdx], dirData.trimTop[frameIdx]
 end
 
 -- Visual-only update: smooth rotation and animation frame cycling.
@@ -344,6 +346,14 @@ function BaseUnit:updateVisuals(dt, gameState)
     end
 end
 
+local BUFF_ANIM_FPS      = 8
+local BUFF_ANIM_FRAMES   = 6
+local BUFF_ANIM_DURATION = BUFF_ANIM_FRAMES / BUFF_ANIM_FPS  -- 0.75s
+
+function BaseUnit:triggerBuffAnim()
+    self.buffAnimTimer = BUFF_ANIM_DURATION
+end
+
 function BaseUnit:draw()
     local lg = love.graphics
 
@@ -406,10 +416,10 @@ function BaseUnit:draw()
         x = x + shakeAmount
     end
 
-    -- Get current sprite and trimBottom
-    local sprite, trimBottom
+    -- Get current sprite, trimBottom, and trimTop
+    local sprite, trimBottom, trimTop
     if self.hasDirectionalSprites then
-        sprite, trimBottom = self:getDirectionalSprite()
+        sprite, trimBottom, trimTop = self:getDirectionalSprite()
     else
         sprite = self:getSprite()
         local spriteKey
@@ -421,6 +431,7 @@ function BaseUnit:draw()
             spriteKey = "front"
         end
         trimBottom = self.sprites[spriteKey .. "TrimBottom"] or 0
+        trimTop    = self.sprites[spriteKey .. "TrimTop"]    or 0
     end
 
     -- Draw sprite centered in cell
@@ -481,22 +492,52 @@ function BaseUnit:draw()
     -- Let subclasses draw additional things (like arrows)
     self:drawAttackVisuals()
 
-    -- Draw taunt indicator if taunted (scaled)
+    -- Draw taunt indicator if taunted
     if self.tauntedBy and not self.tauntedBy.isDead and self.tauntTimer > 0 then
-        -- Draw exclamation mark above unit
-        lg.setColor(1, 0.8, 0, 1)  -- Yellow/orange color
-
-        local centerX = x + Constants.CELL_SIZE / 2
-        local iconY = y - (8 * Constants.SCALE)  -- Above the unit
-
-        -- Draw exclamation mark (simple shape, scaled)
-        -- Vertical line
-        lg.setLineWidth(2 * Constants.SCALE)
-        lg.line(centerX, iconY, centerX, iconY + (6 * Constants.SCALE))
-        -- Dot at bottom
-        lg.circle('fill', centerX, iconY + (8 * Constants.SCALE), 1.5 * Constants.SCALE)
-        lg.setLineWidth(1)
+        local tauntImg = self.sprites and self.sprites.tauntImg
+        if tauntImg then
+            local sw, sh      = tauntImg:getWidth(), tauntImg:getHeight()
+            local cx          = x + Constants.CELL_SIZE / 2
+            local visTopY     = y + offsetY + trimTop * scale
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(tauntImg, cx, visTopY, 0, scale, scale, sw / 2, sh)
+        end
     end
+
+    -- Draw stun particles above the unit's head
+    if self.stunTimer > 0 then
+        local stunFrames = self.sprites and self.sprites.stunFrames
+        if stunFrames then
+            local frameIdx   = math.floor(love.timer.getTime() * 6) % #stunFrames + 1
+            local img        = stunFrames[frameIdx]
+            local sw, sh     = img:getWidth(), img:getHeight()
+            local cx             = x + Constants.CELL_SIZE / 2
+            local visibleTopY    = y + offsetY + trimTop * scale
+            lg.setColor(1, 1, 1, 1)
+            -- origin at bottom-center of stun sprite → sits flush on the unit's first visible pixel
+            lg.draw(img, cx, visibleTopY, 0, scale, scale, sw / 2, sh)
+        end
+    end
+
+    -- Draw buff "up" animation to the left of the unit
+    if self.buffAnimTimer > 0 then
+        local upFrames = self.sprites and self.sprites.upFrames
+        if upFrames then
+            local elapsed  = BUFF_ANIM_DURATION - self.buffAnimTimer
+            local frameIdx = math.min(#upFrames, math.floor(elapsed * BUFF_ANIM_FPS) + 1)
+            local img      = upFrames[frameIdx]
+            local sw, sh   = img:getWidth(), img:getHeight()
+            local cx = x - sw * scale / 2
+            local cy = y + offsetY + (spriteHeight - trimTop - trimBottom) * scale / 2 + trimTop * scale
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+        end
+    end
+end
+
+-- Override this in subclasses for ground-level effects drawn before units
+function BaseUnit:drawGroundEffects()
+    -- Base implementation does nothing
 end
 
 -- Override this in subclasses for custom attack visuals
@@ -628,6 +669,7 @@ function BaseUnit:resetCombatState()
     self.tauntedBy          = nil
     self.tauntTimer         = 0
     self.stunTimer          = 0
+    self.buffAnimTimer      = 0
     self.actionDelayTimer   = 0
     self.isMoving           = false
     self.startCol           = self.col
@@ -708,6 +750,11 @@ function BaseUnit:update(dt, grid)
     if self.actionDelayTimer > 0 then
         self.actionDelayTimer = self.actionDelayTimer - dt
         return
+    end
+
+    -- Buff animation timer
+    if self.buffAnimTimer > 0 then
+        self.buffAnimTimer = math.max(0, self.buffAnimTimer - dt)
     end
 
     -- Cannot move or attack while stunned

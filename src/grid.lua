@@ -254,6 +254,16 @@ function Grid:draw(draggedUnit, hideOwner)
     lg.line(self.offsetX, centerY, self.offsetX + Constants.GRID_WIDTH, centerY)
     lg.setLineWidth(1)
 
+    -- Draw ground effects (fire patches etc.) before any units
+    for row = 1, self.rows do
+        for col = 1, self.cols do
+            local cell = self.cells[row][col]
+            if cell.unit then
+                cell.unit:drawGroundEffects()
+            end
+        end
+    end
+
     -- Draw dead units first so alive units render on top
     for row = 1, self.rows do
         for col = 1, self.cols do

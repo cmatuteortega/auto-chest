@@ -135,6 +135,7 @@ function Lancer:onKill(target)
     if self:hasUpgrade(3) then
         self.bloodRushTimer = 3
         self.attackSpeed    = self.baseAttackSpeed * 1.25
+        self:triggerBuffAnim()
     end
 end
 
@@ -165,33 +166,19 @@ function Lancer:drawAttackVisuals()
     local endY    = Constants.GRID_OFFSET_Y + (endVR   - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
     local tipY    = startY + (endY - startY) * lance.progress
 
-    -- Shaft (cream/bone colour)
-    lg.setColor(0.92, 0.88, 0.78, 1)
-    lg.setLineWidth(3 * Constants.SCALE)
-    lg.line(cx, startY, cx, tipY)
+    local dir         = (startY > endY) and -1 or 1
+    local lanceSprite = self.sprites and self.sprites.lance
 
-    -- Bone cross-marks along the shaft
-    local shaftLen = math.abs(tipY - startY)
-    local count    = math.floor(shaftLen / Constants.CELL_SIZE)
-    local cw       = 4 * Constants.SCALE
-    lg.setLineWidth(2 * Constants.SCALE)
-    for i = 1, count do
-        local sy = startY + (tipY - startY) * (i / (count + 1))
-        lg.line(cx - cw, sy, cx + cw, sy)
+    if lanceSprite then
+        local sw    = lanceSprite:getWidth()
+        local sh    = lanceSprite:getHeight()
+        local angle = (dir == -1) and (-math.pi / 2) or (math.pi / 2)
+        local scale = Constants.SCALE * 3
+
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(lanceSprite, cx, tipY, angle, scale, scale, sw / 2, sh / 2)
     end
 
-    -- Spearhead tip
-    local dir     = (startY > endY) and -1 or 1   -- visual direction of travel
-    local headLen = 8 * Constants.SCALE
-    local headW   = 5 * Constants.SCALE
-    lg.setColor(1, 1, 0.9, 1)
-    lg.polygon('fill',
-        cx,          tipY,
-        cx - headW,  tipY - dir * headLen,
-        cx + headW,  tipY - dir * headLen
-    )
-
-    lg.setLineWidth(1)
     lg.setColor(1, 1, 1, 1)
 end
 
