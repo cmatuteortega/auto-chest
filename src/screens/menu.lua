@@ -35,9 +35,13 @@ function MenuScreen.new()
 
         -- (IP input removed - now using authentication)
 
-        -- Unit detail overlay
-        self.showDetail = false
-        self.detailUnit = nil   -- unitType string
+        -- Collection sub-view ("grid" or "detail")
+        self.collectionView    = "grid"
+        self.detailUnit        = nil   -- unitType string when in detail view
+        self._backButtonRect   = nil
+        self._detailSpriteRect = nil
+        self._detailRotAngle   = 1    -- 1-6 index into ROTATION_ANGLES
+        self._detailDragX      = nil  -- non-nil while dragging sprite
 
         -- Deck builder state
         DeckManager.load()
@@ -554,7 +558,145 @@ function MenuScreen.new()
         lg.print(name, x + 14 * sc, textCY(Fonts.medium, y, h))
     end
 
+    function self:drawCollectionDetailPage(ox, W, H, sc)
+        local lg    = love.graphics
+        local utype = self.detailUnit
+        if not utype then return end
+
+        local info    = UnitRegistry.getUnitDisplayInfo(utype)
+        local passive = UnitRegistry.passiveDescriptions[utype] or ""
+        local textW   = W - math.floor(64 * sc)
+        local textX   = ox + math.floor(32 * sc)
+
+        -- ── Back button (below ticker stripe bottom at 111*sc) ──
+        local btnH = math.floor(40 * sc)
+        local btnY = math.floor(118 * sc)
+        local btnX = ox + math.floor(16 * sc)
+        lg.setFont(Fonts.small)
+        lg.setColor(0.965, 0.839, 0.741, 1)
+        lg.print("\xe2\x86\x90 Back", btnX, textCY(Fonts.small, btnY, btnH))
+        self._backButtonRect = { x = btnX, y = btnY, w = math.floor(100 * sc), h = btnH }
+
+        -- ── Text content (top to bottom, starting below back button) ──
+        local curY = btnY + btnH + math.floor(8 * sc)
+
+        -- Unit name
+        local name = utype:sub(1,1):upper() .. utype:sub(2)
+        lg.setFont(Fonts.medium)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf(name, ox, curY, W, 'center')
+        curY = curY + Fonts.medium:getHeight() + math.floor(5 * sc)
+
+        -- Stats row
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.965, 0.839, 0.741, 1)
+        local s = string.format("HP %d  ATK %d  SPD %.1f  RNG %d  [%s]",
+            info.hp, info.atk, info.spd, info.rng, info.unitClass)
+        lg.printf(s, textX, curY, textW, 'center')
+        curY = curY + Fonts.tiny:getHeight() + math.floor(7 * sc)
+
+        -- Separator
+        lg.setColor(0.306, 0.286, 0.373, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(textX, curY, ox + W - math.floor(32 * sc), curY)
+        curY = curY + math.floor(7 * sc)
+
+        -- Passive description
+        local _, pLines = Fonts.tiny:getWrap(passive, textW)
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.765, 0.639, 0.541, 1)
+        lg.printf(passive, textX, curY, textW, 'left')
+        curY = curY + math.max(1, #pLines) * Fonts.tiny:getHeight() + math.floor(8 * sc)
+
+        -- Upgrades header
+        lg.setFont(Fonts.small)
+        lg.setColor(0.965, 0.839, 0.741, 1)
+        lg.printf("Upgrades", textX, curY, textW, 'left')
+        curY = curY + Fonts.small:getHeight() + math.floor(4 * sc)
+
+        -- Upgrade rows
+        lg.setFont(Fonts.tiny)
+        for i, upg in ipairs(info.upgrades) do
+            lg.setColor(0.965, 0.839, 0.741, 1)
+            lg.printf(i .. ". " .. upg.name, textX + math.floor(6 * sc), curY, textW, 'left')
+            curY = curY + Fonts.tiny:getHeight() + math.floor(2 * sc)
+            lg.setColor(0.765, 0.639, 0.541, 1)
+            lg.printf("   " .. upg.description, textX + math.floor(6 * sc), curY, textW, 'left')
+            curY = curY + Fonts.tiny:getHeight() + math.floor(4 * sc)
+        end
+
+        -- ── Bottom sprite zone ──
+        local barH        = math.floor(90 * sc)
+        local spriteZoneH = math.floor(160 * sc)
+        local spriteZoneY = H - barH - spriteZoneH
+
+        local sprSc = math.max(1, math.floor(12 * sc))
+
+        local d = self.dirSprites[utype]
+        if d and d.hasDirectionalSprites then
+            -- ── Animated unit: single rotatable sprite ──
+            local ROTATION_ANGLES = {0, 45, 315, 135, 225, 180}
+            local angle = ROTATION_ANGLES[self._detailRotAngle]
+            local img, trimBottom
+            if angle == 0 then
+                -- Front: use animated idle frames
+                local idleData = d.directional.idle[0]
+                local frameIdx = self.idleAnim[utype].frameIndex
+                frameIdx = math.min(frameIdx, #idleData.frames)
+                img        = idleData.frames[frameIdx]
+                trimBottom = idleData.trimBottom[frameIdx] or 0
+            else
+                -- Other angles: use first walk frame
+                local walkData = d.directional.walk[angle] or d.directional.walk[0]
+                img        = walkData.frames[1]
+                trimBottom = walkData.trimBottom[1] or 0
+            end
+            local iw, ih    = img:getDimensions()
+            local baselineY = spriteZoneY + spriteZoneH - math.floor(24 * sc)
+            local imgX      = math.floor(ox + (W - iw * sprSc) / 2)
+            local imgY      = math.floor(baselineY - (ih - trimBottom) * sprSc)
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
+
+            -- Store sprite zone as drag rect
+            self._detailSpriteRect = { x = ox, y = spriteZoneY, w = W, h = spriteZoneH }
+        else
+            -- ── Legacy unit: front + back side by side ──
+            local frontImg   = self.sprites[utype]
+            local frontTrim  = self.spriteTrimBottoms[utype] or 0
+            local backImg    = d and d.back or frontImg
+            local backTrim   = (d and d.backTrimBottom) or frontTrim
+            local fw, fh     = frontImg:getDimensions()
+            local bw, bh     = backImg:getDimensions()
+
+            local gap    = math.floor(20 * sc)
+            local totalW = fw * sprSc + gap + bw * sprSc
+            local startX = math.floor(ox + (W - totalW) / 2)
+
+            -- Baseline: bottom of the zone minus small margin
+            local baselineY = spriteZoneY + spriteZoneH - math.floor(24 * sc)
+
+            -- Front sprite (bottom-aligned)
+            local fImgX = startX
+            local fImgY = baselineY - (fh - frontTrim) * sprSc
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(frontImg, fImgX, fImgY, 0, sprSc, sprSc)
+
+            -- Back sprite (bottom-aligned)
+            local bImgX = startX + fw * sprSc + gap
+            local bImgY = baselineY - (bh - backTrim) * sprSc
+            lg.draw(backImg, bImgX, bImgY, 0, sprSc, sprSc)
+
+            self._detailSpriteRect = nil
+        end
+    end
+
     function self:drawCollectionPanel(ox, W, H, sc)
+        if self.collectionView == "detail" then
+            self:drawCollectionDetailPage(ox, W, H, sc)
+            return
+        end
+
         local cols   = 4
         local cardW  = 100 * sc
         local cardH  = 130 * sc
@@ -1425,10 +1567,7 @@ function MenuScreen.new()
         -- Bottom tab bar (screen space)
         self:drawBottomBar(W, H, sc)
 
-        -- Detail overlay (screen space, topmost)
-        if self.showDetail then
-            self:drawDetailOverlay(W, H, sc)
-        end
+        -- (detail view is now drawn inline within drawCollectionPanel)
 
         -- Settings overlay
         if self.showSettings then
@@ -1557,6 +1696,14 @@ function MenuScreen.new()
         -- Overlays absorb all presses
         if self.showDetail or self.showSettings then return end
 
+        -- Collection detail: start sprite rotation drag
+        if self.currentPanel == 1 and self.collectionView == "detail" then
+            local r = self._detailSpriteRect
+            if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._detailDragX = x
+            end
+        end
+
         -- Spring press: activate squish on button contact
         if self.currentPanel == 3 then
             local btn = self._playBtnRect
@@ -1575,6 +1722,19 @@ function MenuScreen.new()
     function self:handleMove(x, y)
         if not self.isPressed then return end
         if self.showDetail or self.showSettings then return end
+
+        -- Collection detail: sprite rotation drag
+        if self._detailDragX ~= nil then
+            local STEP_PX = math.max(1, math.floor(40 * Constants.SCALE))
+            local delta = x - self._detailDragX
+            local steps = math.floor(math.abs(delta) / STEP_PX)
+            if steps > 0 then
+                local dir = delta < 0 and 1 or -1  -- swipe left = rotate right (next angle)
+                self._detailRotAngle = ((self._detailRotAngle + dir * steps - 1) % 6) + 1
+                self._detailDragX = self._detailDragX + dir * steps * STEP_PX
+            end
+            return
+        end
 
         local dx = x - self.pressX
         local dy = y - self.pressY
@@ -1606,6 +1766,7 @@ function MenuScreen.new()
         self.isPressed = false
         self._playSpring.pressed = false
         self._sbtnSpring.pressed = false
+        self._detailDragX = nil
         local dx = x - self.pressX
 
         -- Settings overlay
@@ -1656,13 +1817,6 @@ function MenuScreen.new()
             end
         end
 
-        -- Detail overlay: tap anywhere to close
-        if self.showDetail then
-            self.showDetail = false
-            self.detailUnit = nil
-            return
-        end
-
         -- Swipe committed
         if self.isDragging then
             local W = Constants.GAME_WIDTH
@@ -1673,6 +1827,12 @@ function MenuScreen.new()
             end
             self.targetOffset = -(self.currentPanel - 1) * W
             self.isDragging   = false
+            -- Leaving Collection panel: reset sub-view to grid
+            if self.currentPanel ~= 1 then
+                self.collectionView = "grid"
+                self._detailRotAngle = 1
+                self._detailDragX = nil
+            end
             return
         end
 
@@ -1680,12 +1840,36 @@ function MenuScreen.new()
         for i, rect in ipairs(self._tabRects) do
             if x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h then
                 AudioManager.playTap()
-                if i ~= self.currentPanel then
+                if i == 1 and self.currentPanel == 1 then
+                    -- Re-tap Collection tab: return to grid view
+                    self.collectionView = "grid"
+                    self.detailUnit = nil
+                    self._detailRotAngle = 1
+                    self._detailDragX = nil
+                elseif i ~= self.currentPanel then
                     self.currentPanel = i
                     self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
+                    -- Leaving Collection: reset its sub-view
+                    if i ~= 1 then
+                        self.collectionView = "grid"
+                        self._detailRotAngle = 1
+                        self._detailDragX = nil
+                    end
                 end
                 return
             end
+        end
+
+        -- Collection detail view: back button tap (swallow all other taps in detail view)
+        if self.currentPanel == 1 and self.collectionView == "detail" then
+            local b = self._backButtonRect
+            if b and x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
+                self.collectionView = "grid"
+                self.detailUnit = nil
+                self._detailRotAngle = 1
+                self._detailDragX = nil
+            end
+            return
         end
 
         -- Tap: play-panel preview units → trigger attack animation
@@ -1707,7 +1891,7 @@ function MenuScreen.new()
                 if x >= card.x and x <= card.x + card.w and
                    y >= card.y and y <= card.y + card.h then
                     self.detailUnit = card.utype
-                    self.showDetail = true
+                    self.collectionView = "detail"
                     return
                 end
             end
