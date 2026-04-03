@@ -1,10 +1,32 @@
 local BaseUnit  = require('src.base_unit')
 local Constants = require('src.constants')
 
+-- Sprite-pixel burst: 12 particles fly outward, sized to one sprite pixel (CELL_SIZE/16)
+local function drawPixelBurst(col, row, timer, duration, r, g, b)
+    local lg      = love.graphics
+    local t       = timer / duration
+    local vr      = Constants.toVisualRow(row)
+    local cx      = Constants.GRID_OFFSET_X + (col - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local cy      = Constants.GRID_OFFSET_Y + (vr   - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local ps      = math.max(1, math.floor(Constants.CELL_SIZE / 16))
+    local maxDist = Constants.CELL_SIZE * 1.2
+    local expand  = 1 - t
+    for i = 0, 11 do
+        local angle   = (i / 12) * math.pi * 2
+        local isOuter = (i % 2 == 0)
+        local dist    = maxDist * expand * (isOuter and 1.0 or 0.55)
+        local px      = math.floor(cx + math.cos(angle) * dist - ps / 2)
+        local py      = math.floor(cy + math.sin(angle) * dist - ps / 2)
+        lg.setColor(r, g, b, t * (isOuter and 1.0 or 0.7))
+        lg.rectangle('fill', px, py, ps, ps)
+    end
+    lg.setColor(1, 1, 1, 1)
+end
+
 local Sinner = BaseUnit:extend()
 
-local FORM_CHANGE_THRESHOLD_DEFAULT = 20
-local FORM_CHANGE_THRESHOLD_UPGRADE = 14  -- upgrade 1: Early Release
+local FORM_CHANGE_THRESHOLD_DEFAULT = 15
+local FORM_CHANGE_THRESHOLD_UPGRADE = 10  -- upgrade 1: Early Release
 local AOE_RADIUS = 2
 
 function Sinner:new(row, col, owner, sprites)
@@ -135,19 +157,7 @@ function Sinner:drawAttackVisuals()
 
     if self.burstFlash then
         local flash = self.burstFlash
-        local t     = flash.timer / 0.5
-        local lg    = love.graphics
-        local cx    = Constants.GRID_OFFSET_X + (flash.col - 0.5) * Constants.CELL_SIZE
-        local cy    = Constants.GRID_OFFSET_Y + (Constants.toVisualRow(flash.row) - 0.5) * Constants.CELL_SIZE
-        local r     = AOE_RADIUS * Constants.CELL_SIZE * (1.1 - t * 0.5)
-
-        ---@diagnostic disable: redundant-parameter
-        lg.setColor(0.9, 0.3, 0.1, t * 0.65)
-        lg.circle('fill', cx, cy, r)
-        lg.setColor(1.0, 0.8, 0.4, t * 0.4)
-        lg.circle('fill', cx, cy, r * 0.4)
-        lg.setColor(1, 1, 1, 1)
-        ---@diagnostic enable: redundant-parameter
+        drawPixelBurst(flash.col, flash.row, flash.timer, 0.5, 0.9, 0.3, 0.1)
     end
 end
 
