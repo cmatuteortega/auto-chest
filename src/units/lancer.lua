@@ -7,7 +7,7 @@ function Lancer:new(row, col, owner, sprites)
     local stats = {
         health          = 8,
         maxHealth       = 8,
-        damage          = 2,
+        damage          = 1,
         attackSpeed     = 0.8,
         moveSpeed       = 1,
         attackRange     = 3,

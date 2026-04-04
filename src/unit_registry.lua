@@ -13,6 +13,7 @@ local Bonk   = require('src.units.bonk')
 local Sinner = require('src.units.sinner')
 local Tomb   = require('src.units.tomb')
 local Lancer = require('src.units.lancer')
+local Burrow = require('src.units.burrow')
 
 local UnitRegistry = {}
 
@@ -31,12 +32,13 @@ UnitRegistry.unitClasses = {
     bonk   = Bonk,
     sinner = Sinner,
     tomb   = Tomb,
-    lancer = Lancer
+    lancer = Lancer,
+    burrow = Burrow
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula", "tomb", "lancer"} },
+    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "amalgam", "humerus", "clavicula", "tomb", "lancer", "burrow"} },
     { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "samurai", "bull", "bonk", "sinner"} },
 }
 
@@ -116,6 +118,11 @@ UnitRegistry.spritePaths = {
         front = "src/assets/lancer/front.png",
         back  = "src/assets/lancer/back.png",
         dead  = "src/assets/lancer/dead.png"
+    },
+    burrow = {
+        front = "src/assets/burrow/front.png",
+        back  = "src/assets/burrow/back.png",
+        dead  = "src/assets/burrow/dead.png"
     }
 }
 
@@ -134,7 +141,8 @@ UnitRegistry.passiveDescriptions = {
     bonk   = "Every 3rd hit deals triple damage.",
     sinner = "Every 20 hits (given or taken), breaks free: +ATK SPD and becomes stun immune",
     tomb   = "Friendly units stepping onto a corpse cell heal 2 HP",
-    lancer = "At battle start, fires a bone lance down the column hitting the first enemy for 5 damage"
+    lancer = "At battle start, fires a bone lance down the column hitting the first enemy for 5 damage",
+    burrow = "Burrows underground at battle start, reappearing 1s later at the mirrored cell across the field"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -181,7 +189,8 @@ UnitRegistry.unitCosts = {
     bonk   = 3,
     sinner = 4,
     tomb   = 3,
-    lancer = 3
+    lancer = 3,
+    burrow = 3
 }
 
 -- Count fully-transparent rows at the top of a sprite file.
