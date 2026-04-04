@@ -686,6 +686,18 @@ function MenuScreen.new()
             local baselineY = spriteZoneY + spriteZoneH - math.floor(24 * sc)
             local imgX      = math.floor(ox + (W - iw * sprSc) / 2)
             local imgY      = math.floor(baselineY - (ih - trimBottom) * sprSc)
+            -- Draw bg animation behind the unit sprite (same baseline, same trimBottom)
+            local bgFrames = d.bgAnimFrames
+            if bgFrames then
+                local fps      = 8
+                local frameIdx = math.floor(love.timer.getTime() * fps) % #bgFrames + 1
+                local bgImg    = bgFrames[frameIdx]
+                local bw, bh   = bgImg:getDimensions()
+                local bgX = math.floor(ox + (W - bw * sprSc) / 2)
+                local bgY = math.floor(baselineY - (bh - trimBottom) * sprSc)
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(bgImg, bgX, bgY, 0, sprSc, sprSc)
+            end
             lg.setColor(1, 1, 1, 1)
             lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
 
@@ -815,6 +827,20 @@ function MenuScreen.new()
                 local iw, ih = img:getDimensions()
                 local cx2 = gridX + (entry.col - 1) * cellSize
                 local cy2 = gridY + (entry.row - 1) * cellSize
+                -- Draw persistent bg animation (e.g. clavicula fire) behind the unit sprite
+                local bgFrames = self.dirSprites[entry.unitType] and self.dirSprites[entry.unitType].bgAnimFrames
+                if bgFrames then
+                    local fps      = 8
+                    local frameIdx = math.floor(love.timer.getTime() * fps) % #bgFrames + 1
+                    local bgImg    = bgFrames[frameIdx]
+                    local bw, bh   = bgImg:getDimensions()
+                    -- Same formula as the unit sprite: use the sprite's trimBottom so bottoms align
+                    local BOTTOM_MARGIN = 3
+                    local bgOffX = math.floor(cx2 + (cellSize - bw * sprSc) / 2)
+                    local bgOffY = math.floor(cy2 + cellSize - (bh - trimBottom + BOTTOM_MARGIN) * sprSc)
+                    lg.setColor(1, 1, 1, 1)
+                    lg.draw(bgImg, bgOffX, bgOffY, 0, sprSc, sprSc)
+                end
                 local BOTTOM_MARGIN = 3
                 local sx = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
                 local sy = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)

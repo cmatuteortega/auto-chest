@@ -330,6 +330,34 @@ function Clavicula:update(dt, grid)
 end
 
 function Clavicula:drawGroundEffects()
+    -- Persistent fire background animation (always on while alive)
+    if not self.isDead and self.sprites and self.sprites.bgAnimFrames then
+        local frames   = self.sprites.bgAnimFrames
+        local fps      = 8
+        local frameIdx = math.floor(love.timer.getTime() * fps) % #frames + 1
+        local img      = frames[frameIdx]
+        local sw, sh   = img:getWidth(), img:getHeight()
+        local scale    = math.max(1, math.floor(Constants.CELL_SIZE / 16))
+
+        -- Follow drag if active, otherwise use interpolated tween position
+        local x, y
+        if self.dragX and self.dragY then
+            x = self.dragX
+            y = self.dragY
+        else
+            x, y = self:getDrawPos()
+        end
+
+        -- Use the same trimBottom as the current directional sprite so the bg
+        -- is positioned with the identical offsetY formula as draw(), guaranteeing overlap.
+        local _, trimBottom = self:getDirectionalSprite()
+        local BOTTOM_MARGIN = 3
+        local offsetX = math.floor((Constants.CELL_SIZE - sw * scale) / 2)
+        local offsetY = math.floor(Constants.CELL_SIZE - (sh - trimBottom + BOTTOM_MARGIN) * scale)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.draw(img, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
+    end
+
     for _, patch in ipairs(self.firePatches) do
         local visualRow = Constants.toVisualRow(patch.row)
         local cy    = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2

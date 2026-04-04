@@ -717,6 +717,7 @@ function GameScreen.new()
 
         -- Draw dragged unit on top (if repositioning during setup)
         if self.draggedUnit then
+            self.draggedUnit:drawGroundEffects()
             self.draggedUnit:draw()
         end
 

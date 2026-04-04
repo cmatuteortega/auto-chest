@@ -58,6 +58,8 @@ function SocketManager.reconnect(onSuccess, onFailure)
             _G.PlayerData.trophies        = data.trophies
             _G.PlayerData.gold            = data.gold or _G.PlayerData.gold
             _G.PlayerData.gems            = data.gems or _G.PlayerData.gems
+            _G.PlayerData.xp              = data.xp    or _G.PlayerData.xp or 0
+            _G.PlayerData.level           = data.level or _G.PlayerData.level or 1
             _G.PlayerData.activeDeckIndex = data.active_deck_index
             _G.PlayerData.decks           = data.decks
             _G.PlayerData.token           = data.token

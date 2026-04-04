@@ -302,6 +302,21 @@ function UnitRegistry.loadDirectionalSprites(unitType)
         loadFrames("hit", angle)
     end
 
+    -- Load background animation frames if a background-anim/ folder exists
+    local bgFrames = {}
+    local i = 1
+    while true do
+        local path = basePath .. "background-anim/background-" .. i .. ".png"
+        if not love.filesystem.getInfo(path) then break end
+        local img = love.graphics.newImage(path)
+        img:setFilter('nearest', 'nearest')
+        table.insert(bgFrames, img)
+        i = i + 1
+    end
+    if #bgFrames > 0 then
+        result.bgAnimFrames = bgFrames
+    end
+
     return result
 end
 
@@ -442,6 +457,20 @@ function UnitRegistry.loadAllSprites()
         allSprites["catapult"].fireFrames  = fireFrames
         allSprites["clavicula"].fireFrames = fireFrames
         allSprites["bull"].fireFrames      = fireFrames
+    end
+
+    -- Load clavicula background fire animation frames
+    local clavBgFrames = {}
+    for i = 1, 8 do
+        local path = "src/assets/clavicula/background-anim/background-" .. i .. ".png"
+        if love.filesystem.getInfo(path) then
+            local img = love.graphics.newImage(path)
+            img:setFilter('nearest', 'nearest')
+            table.insert(clavBgFrames, img)
+        end
+    end
+    if #clavBgFrames > 0 then
+        allSprites["clavicula"].bgAnimFrames = clavBgFrames
     end
 
     -- Load catapult projectile sprite

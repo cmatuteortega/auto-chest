@@ -152,6 +152,10 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.pendingAttackGrid   = nil
     self.pendingAttackDelay  = 0
 
+    -- Deferred ranged shot: fired when attack animation completes
+    self.pendingRangedTarget = nil
+    self.pendingRangedGrid   = nil
+
     -- Hit animation state
     self.hitAnimProgress = 0
     self.hitAnimDuration = 0.1  -- Quick hit reaction
@@ -354,6 +358,23 @@ function BaseUnit:triggerBuffAnim()
     self.buffAnimTimer = BUFF_ANIM_DURATION
 end
 
+-- Returns the interpolated cell top-left (x, y) in screen pixels, accounting for
+-- movement tween. Does not include drag offset (dragged units are drawn separately).
+function BaseUnit:getDrawPos()
+    local drawCol, drawRow = self.col, self.row
+
+    if self.isMoving and self.targetCol and self.targetRow then
+        local easedProgress = tween.easing.inOutQuad(self.tweenProgress, 0, 1, 1)
+        drawCol = self.startCol + (self.targetCol - self.startCol) * easedProgress
+        drawRow = self.startRow + (self.targetRow - self.startRow) * easedProgress
+    end
+
+    local visualRow = Constants.toVisualRow(drawRow)
+    local x = Constants.GRID_OFFSET_X + (drawCol - 1) * Constants.CELL_SIZE
+    local y = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
+    return x, y
+end
+
 function BaseUnit:draw()
     local lg = love.graphics
 
@@ -363,24 +384,7 @@ function BaseUnit:draw()
         x = self.dragX
         y = self.dragY
     else
-        -- Calculate base position (with tween interpolation if moving)
-        local drawCol, drawRow = self.col, self.row
-
-        if self.isMoving and self.targetCol and self.targetRow then
-            -- Use inOutQuad easing for smooth acceleration/deceleration
-            local easedProgress = tween.easing.inOutQuad(self.tweenProgress, 0, 1, 1)
-
-            local colDiff = self.targetCol - self.startCol
-            local rowDiff = self.targetRow - self.startRow
-
-            drawCol = self.startCol + colDiff * easedProgress
-            drawRow = self.startRow + rowDiff * easedProgress
-        end
-
-        -- Apply perspective: convert canonical row to visual (screen) row
-        local visualRow = Constants.toVisualRow(drawRow)
-        x = Constants.GRID_OFFSET_X + (drawCol - 1) * Constants.CELL_SIZE
-        y = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE
+        x, y = self:getDrawPos()
     end
 
     -- Apply attack animation (lunge with outBack for punch effect) — melee only
@@ -724,6 +728,12 @@ function BaseUnit:update(dt, grid)
             self.attackAnimProgress = 1
             self.attackTargetCol = nil
             self.attackTargetRow = nil
+            -- Fire ranged projectile at animation end (deferred from attack trigger)
+            if self.pendingRangedTarget and not self.isDead then
+                self:attack(self.pendingRangedTarget, self.pendingRangedGrid)
+                self.pendingRangedTarget = nil
+                self.pendingRangedGrid   = nil
+            end
         end
     end
 
@@ -837,14 +847,18 @@ function BaseUnit:update(dt, grid)
             if self.attackRange == 0 then
                 self:startMeleeAnimation(self.target, grid)
             else
-                -- Ranged: fire projectile immediately; also trigger hit_* windup sprites
+                -- Ranged: start windup animation; projectile fires when animation completes
                 if self.hasDirectionalSprites then
-                    self.attackAnimProgress = 0
-                    self.attackTargetCol    = self.target.col
-                    self.attackTargetRow    = self.target.row
-                    self.attackAnimDuration = math.min(0.45, 1 / self.attackSpeed)
+                    self.attackAnimProgress  = 0
+                    self.attackTargetCol     = self.target.col
+                    self.attackTargetRow     = self.target.row
+                    self.attackAnimDuration  = math.min(0.45, 1 / self.attackSpeed)
+                    self.pendingRangedTarget = self.target
+                    self.pendingRangedGrid   = grid
+                else
+                    -- No directional sprites: fire immediately (no animation to wait for)
+                    self:attack(self.target, grid)
                 end
-                self:attack(self.target, grid)
             end
             self.attackCooldown = 1 / self.attackSpeed
         end
