@@ -456,26 +456,44 @@ function BaseUnit:draw()
 
     lg.draw(sprite, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
 
-    -- Draw health bar if damaged (scaled)
-    if self.health < self.maxHealth and not self.isDead then
+    -- Bars above the sprite: anchor to the unit's visible top (same reference as stun particles)
+    if not self.isDead then
         local barPadding = 4 * Constants.SCALE
-        local barHeight = 3 * Constants.SCALE
-        local barWidth = Constants.CELL_SIZE - barPadding
-        local barX = x + (barPadding / 2)
-        local barY = y + Constants.CELL_SIZE - barHeight - (barPadding / 2)
+        local barHeight  = 3 * Constants.SCALE
+        local barGap     = math.floor(1 * Constants.SCALE)
+        local barWidth   = Constants.CELL_SIZE - barPadding
+        local barX       = x + (barPadding / 2)
+        local visibleTopY = y + offsetY + trimTop * scale
 
-        -- Background
-        lg.setColor(0.3, 0.3, 0.3, 1)
-        lg.rectangle('fill', barX, barY, barWidth, barHeight)
-
-        -- Health (green for player 1, red for player 2)
-        local healthPercent = self.health / self.maxHealth
-        if self.owner == 1 then
-            lg.setColor(0.2, 0.8, 0.2, 1)  -- Green for player 1
-        else
-            lg.setColor(0.8, 0.2, 0.2, 1)  -- Red for player 2
+        -- Energy bar sits directly above the sprite top
+        local hasEnergy = false
+        if self.getEnergy then
+            local curr, max = self:getEnergy()
+            if curr and max and max > 0 then
+                hasEnergy = true
+                local energyBarY = visibleTopY - barHeight - barGap
+                local pct = math.min(curr / max, 1)
+                lg.setColor(0.4, 0.75, 1.0, 1)
+                lg.rectangle('fill', barX, energyBarY, barWidth * pct, barHeight)
+            end
         end
-        lg.rectangle('fill', barX, barY, barWidth * healthPercent, barHeight)
+
+        -- Health bar sits above the energy bar (or directly above sprite if no energy bar)
+        if self.health < self.maxHealth then
+            local energyOffset = hasEnergy and (barHeight + barGap) or 0
+            local hpBarY = visibleTopY - barHeight - barGap - energyOffset
+
+            lg.setColor(0.3, 0.3, 0.3, 1)
+            lg.rectangle('fill', barX, hpBarY, barWidth, barHeight)
+
+            local healthPercent = self.health / self.maxHealth
+            if self.owner == 1 then
+                lg.setColor(0.2, 0.8, 0.2, 1)
+            else
+                lg.setColor(0.8, 0.2, 0.2, 1)
+            end
+            lg.rectangle('fill', barX, hpBarY, barWidth * healthPercent, barHeight)
+        end
     end
 
     -- Draw level asterisks under health bar (if level > 0)
@@ -684,6 +702,7 @@ function BaseUnit:resetCombatState()
     self.pendingAttackDelay  = 0
 
     self.tombMartyrdombuffTimer = nil
+    self._noHeal                = nil
 
     -- Reset directional sprite fields
     if self.hasDirectionalSprites then
@@ -993,6 +1012,10 @@ function BaseUnit:attack(target, grid)
     if target.isDead then
         local cell = grid:getCell(target.col, target.row)
         if cell then cell.occupied = false end
+        -- Free reservation if target died mid-movement (stale reserved flag would block pathfinding)
+        if target.isMoving and target.targetCol and target.targetRow then
+            grid:freeReservation(target.targetCol, target.targetRow)
+        end
         -- Invalidate all cached paths so units recompute around the freed cell next frame
         local allUnits = grid:getAllUnits()
         for _, u in ipairs(allUnits) do

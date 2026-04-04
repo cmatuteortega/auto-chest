@@ -190,13 +190,16 @@ end
 -- Return currentHand to pile, reshuffle entire pile, draw n new cards.
 -- Returns new drawn array.
 function DeckManager.reshuffleAndDraw(currentHand, n)
-    DeckManager.returnCards(currentHand)
+    -- Shuffle only the pile (excludes current hand), then draw
     local pile = DeckManager._drawPile
     for i = #pile, 2, -1 do
         local j = math.random(i)
         pile[i], pile[j] = pile[j], pile[i]
     end
-    return DeckManager.drawCards(n)
+    local drawn = DeckManager.drawCards(n)
+    -- Return old hand to pile for future draws
+    DeckManager.returnCards(currentHand)
+    return drawn
 end
 
 function DeckManager.pileSize()

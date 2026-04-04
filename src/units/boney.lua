@@ -72,10 +72,12 @@ function Boney:update(dt, grid)
         -- Check if we just crossed the 50% threshold
         if self.wasAboveHalfHealth and belowHalf then
             -- Trigger one-time heal
-            local healAmount = math.floor(self.maxHealth * 0.25)
-            self.health = math.min(self.health + healAmount, self.maxHealth)
+            if not self._noHeal then
+                local healAmount = math.floor(self.maxHealth * 0.25)
+                self.health = math.min(self.health + healAmount, self.maxHealth)
+                self:triggerBuffAnim()
+            end
             self.hasHealed = true
-            self:triggerBuffAnim()
         end
 
         -- Update threshold tracker

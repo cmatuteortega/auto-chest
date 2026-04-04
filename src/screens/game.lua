@@ -415,6 +415,7 @@ function GameScreen.new()
             local sprite     = self.sprites[unitType].front
             local trimBottom = self.sprites[unitType].frontTrimBottom or 0
             local card       = Card(x, cardY, sprite, i, unitType, trimBottom)
+            card.upFrames    = self.sprites[unitType] and self.sprites[unitType].upFrames
             table.insert(self.cards, card)
         end
 
@@ -564,7 +565,31 @@ function GameScreen.new()
                     self:checkBattleStart()
                 end
             end
-        elseif self.state == "battle" then
+        end
+
+        -- Update card up-anim: loop animation on cards whose unit type has an upgradeable field unit
+        if self.state == "setup" and #self.cards > 0 then
+            local upgradeableTypes = {}
+            for _, unit in ipairs(self.grid:getAllUnits()) do
+                local isOwn = (not self.isOnline) or (unit.owner == self.playerRole)
+                if isOwn and not unit.isDead and unit.level < 3 then
+                    upgradeableTypes[unit.unitType] = true
+                end
+            end
+            local CARD_ANIM_DURATION = 6 / 8  -- 6 frames @ 8 fps, mirrors card.lua constant
+            for _, card in ipairs(self.cards) do
+                card:update(dt)
+                if upgradeableTypes[card.unitType] then
+                    if card.upAnimTimer <= 0 then
+                        card.upAnimTimer = CARD_ANIM_DURATION
+                    end
+                else
+                    card.upAnimTimer = 0
+                end
+            end
+        end
+
+        if self.state == "battle" then
             -- Fixed timestep simulation: accumulate real dt and drain in discrete steps.
             -- Both clients run the exact same number of steps per battle, eliminating
             -- floating-point divergence caused by variable frame rates.
@@ -841,10 +866,19 @@ function GameScreen.new()
                 AudioManager.playTap()
                 if self.isSandbox or self.playerCoins >= self.rerollCost then
                     if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
-                    if self.usingDeck and not self.isSandbox then
-                        local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
-                        self.drawnCardTypes = newTypes
-                        self:_rebuildCardsFromTypes(newTypes)
+                    if self.usingDeck then
+                        -- In sandbox, reinit pile if too small to draw fresh cards
+                        if self.isSandbox and DeckManager.pileSize() < 3 then
+                            DeckManager.returnCards(self.drawnCardTypes)
+                            self.drawnCardTypes = {}
+                            DeckManager.initDrawPile()
+                            self.drawnCardTypes = DeckManager.drawCards(3)
+                            self:_rebuildCardsFromTypes(self.drawnCardTypes)
+                        else
+                            local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
+                            self.drawnCardTypes = newTypes
+                            self:_rebuildCardsFromTypes(newTypes)
+                        end
                     else
                         self:dealSetupCards()
                     end

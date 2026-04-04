@@ -69,6 +69,13 @@ function Sinner:new(row, col, owner, sprites)
     }
 end
 
+function Sinner:getEnergy()
+    if self.isFree then return nil, nil end
+    local threshold = self:hasUpgrade(1) and FORM_CHANGE_THRESHOLD_UPGRADE
+                                         or  FORM_CHANGE_THRESHOLD_DEFAULT
+    return self.hitCounter, threshold
+end
+
 function Sinner:checkFormChange()
     if self.isFree then return end
     local threshold = self:hasUpgrade(1) and FORM_CHANGE_THRESHOLD_UPGRADE
@@ -103,7 +110,7 @@ function Sinner:doFormChange(grid)
     if self.freeSprites then self.sprites = self.freeSprites end
 
     -- Mending Chains (upgrade 2): heal 40% max HP on form change
-    if self:hasUpgrade(2) then
+    if self:hasUpgrade(2) and not self._noHeal then
         local heal = math.floor(self.maxHealth * 0.4)
         self.health = math.min(self.health + heal, self.maxHealth)
         self:triggerBuffAnim()

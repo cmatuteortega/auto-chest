@@ -117,7 +117,7 @@ end
 -- Heal on kill (Bloodthirst upgrade)
 function Samurai:onKill(target)
     -- Upgrade 1: Heal 30% HP on kill
-    if self:hasUpgrade(1) then
+    if self:hasUpgrade(1) and not self._noHeal then
         local healAmount = math.floor(self.maxHealth * 0.3)
         self.health = math.min(self.health + healAmount, self.maxHealth)
         self:triggerBuffAnim()
