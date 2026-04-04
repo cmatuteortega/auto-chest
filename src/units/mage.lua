@@ -73,10 +73,14 @@ function Mage:new(row, col, owner, sprites)
         },
         {
             name        = "Big Boom",
-            description = "Fireball radius increased to 3 tiles",
+            description = "Fireball radius increased to 2 tiles",
             onApply     = function(unit) end
         }
     }
+end
+
+function Mage:getEnergy()
+    return self.hitCounter, 8
 end
 
 function Mage:resetCombatState()
@@ -146,7 +150,7 @@ end
 function Mage:explodeFireball(grid)
     if not self.fireball then return end
 
-    local radius   = self:hasUpgrade(3) and 3 or 2
+    local radius   = self:hasUpgrade(3) and 2 or 1
     local cx, cy   = self.fireball.targetCol, self.fireball.targetRow
     local dmg      = self.fireball.damage
     local allUnits = grid:getAllUnits()
@@ -167,14 +171,23 @@ function Mage:explodeFireball(grid)
         end
     end
 
-    -- Burning Ground: leave fire patch at impact
+    -- Burning Ground: leave fire patch on every cell in the blast radius
     if self:hasUpgrade(1) then
-        table.insert(self.firePatches, {
-            col         = cx,
-            row         = cy,
-            timer       = 4,
-            damageTimer = 1
-        })
+        for dc = -radius, radius do
+            for dr = -radius, radius do
+                if math.sqrt(dc * dc + dr * dr) <= radius then
+                    local tc, tr = cx + dc, cy + dr
+                    if grid:isValidCell(tc, tr) then
+                        table.insert(self.firePatches, {
+                            col         = tc,
+                            row         = tr,
+                            timer       = 4,
+                            damageTimer = 1
+                        })
+                    end
+                end
+            end
+        end
     end
 end
 

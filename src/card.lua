@@ -4,6 +4,10 @@ local UnitRegistry = require('src.unit_registry')
 
 local Card = Class:extend()
 
+local BUFF_ANIM_FPS      = 8
+local BUFF_ANIM_FRAMES   = 6
+local BUFF_ANIM_DURATION = BUFF_ANIM_FRAMES / BUFF_ANIM_FPS  -- 0.75s
+
 function Card:new(x, y, cardSprite, index, unitType, trimBottom)
     self.x = x
     self.y = y
@@ -22,6 +26,10 @@ function Card:new(x, y, cardSprite, index, unitType, trimBottom)
     self.isDragging = false
     self.dragOffsetX = 0
     self.dragOffsetY = 0
+
+    -- Up animation state
+    self.upAnimTimer = 0
+    self.upFrames    = nil
 end
 
 function Card:startDrag(mouseX, mouseY)
@@ -39,6 +47,12 @@ end
 
 function Card:stopDrag()
     self.isDragging = false
+end
+
+function Card:update(dt)
+    if self.upAnimTimer > 0 then
+        self.upAnimTimer = math.max(0, self.upAnimTimer - dt)
+    end
 end
 
 function Card:snapBack()
@@ -99,6 +113,19 @@ function Card:draw()
         local costText = "¤" .. cost
         local costPadding = 8 * Constants.SCALE
         lg.printf(costText, self.x, self.y + self.height + costPadding, self.width, 'center')
+    end
+
+    -- Draw "up" animation at top-right corner when this card can upgrade a field unit
+    if self.upAnimTimer > 0 and self.upFrames and #self.upFrames > 0 then
+        local elapsed  = BUFF_ANIM_DURATION - self.upAnimTimer
+        local frameIdx = math.min(#self.upFrames, math.floor(elapsed * BUFF_ANIM_FPS) + 1)
+        local img      = self.upFrames[frameIdx]
+        local sw, sh   = img:getWidth(), img:getHeight()
+        local scale    = math.max(1, math.floor(3 * Constants.SCALE))
+        local px = math.floor(self.x + self.width  - sw * scale / 2)
+        local py = math.floor(self.y               + sh * scale / 2)
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(img, px, py, 0, scale, scale, sw / 2, sh / 2)
     end
 end
 

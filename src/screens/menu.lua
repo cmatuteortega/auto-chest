@@ -488,14 +488,25 @@ function MenuScreen.new()
 
     function self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
         local lg = love.graphics
+        local rarity = UnitRegistry.rarity[utype] or "common"
+
+        -- Rarity border colours using system palette
+        local borderR, borderG, borderB
+        if rarity == "epic" then
+            borderR, borderG, borderB = 0.765, 0.639, 0.541  -- tan/copper
+        elseif rarity == "rare" then
+            borderR, borderG, borderB = 0.600, 0.459, 0.467  -- muted rose
+        else
+            borderR, borderG, borderB = 0.125, 0.224, 0.310  -- steel-blue (common)
+        end
 
         -- Background + border
         lg.setColor(0.059, 0.165, 0.247, 1)
         roundedRect(cx, cy, cardW, cardH, 6, sc)
-        lg.setColor(0.125, 0.224, 0.310, 1)
+        lg.setColor(borderR, borderG, borderB, 1)
         roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
         -- Inner top bevel highlight
-        lg.setColor(0.125, 0.224, 0.310, 0.5)
+        lg.setColor(borderR, borderG, borderB, 0.5)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.line(cx + 4 * sc, cy + 1, cx + cardW - 4 * sc, cy + 1)
 

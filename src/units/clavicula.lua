@@ -1,6 +1,32 @@
 local BaseUnitRanged = require('src.base_unit_ranged')
 local Constants      = require('src.constants')
 
+local function drawFirePatch(patch, sprites, clipTop, clipH)
+    local lg        = love.graphics
+    local visualRow = Constants.toVisualRow(patch.row)
+    local cx  = Constants.GRID_OFFSET_X + (patch.col - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local cy  = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local alpha = math.min(1, patch.timer / 2) * 0.8 + 0.2
+    local fireFrames = sprites and sprites.fireFrames
+
+    lg.setScissor(cx - Constants.CELL_SIZE / 2, clipTop, Constants.CELL_SIZE, clipH)
+    if fireFrames then
+        local fps      = 8
+        local elapsed  = 2 - patch.timer
+        local frameIdx = math.floor(elapsed * fps) % #fireFrames + 1
+        local img      = fireFrames[frameIdx]
+        local sw, sh   = img:getWidth(), img:getHeight()
+        local scale    = Constants.CELL_SIZE / sw
+        lg.setColor(1, 1, 1, alpha)
+        lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+    else
+        lg.setColor(1, 0.35, 0, alpha)
+        lg.rectangle('fill', cx - Constants.CELL_SIZE / 2, cy - Constants.CELL_SIZE / 2, Constants.CELL_SIZE, Constants.CELL_SIZE)
+    end
+    lg.setScissor()
+    lg.setColor(1, 1, 1, 1)
+end
+
 -- Sprite-pixel burst: 12 particles fly outward, sized to one sprite pixel (CELL_SIZE/16)
 local function drawPixelBurst(col, row, timer, duration, r, g, b)
     local lg      = love.graphics
@@ -57,6 +83,9 @@ function Clavicula:new(row, col, owner, sprites)
     -- Visual: active explosion flash { col, row, timer }
     self.explosionFlash  = nil
 
+    -- Fire patches left by Cursed Ground explosion: { col, row, timer, damageTimer }
+    self.firePatches = {}
+
     self.upgradeTree = {
         {
             name        = "Twin Spirits",
@@ -76,6 +105,10 @@ function Clavicula:new(row, col, owner, sprites)
     }
 end
 
+function Clavicula:getEnergy()
+    return self.hitCounter, 8
+end
+
 function Clavicula:resetCombatState()
     Clavicula.super.resetCombatState(self)
     self.hitCounter       = 0
@@ -84,6 +117,7 @@ function Clavicula:resetCombatState()
     self.soulDrainAmount  = 0
     self.explosionPending = false
     self.explosionFlash   = nil
+    self.firePatches      = {}
 end
 
 -- Track hits received toward Spectral Mitosis
@@ -209,6 +243,21 @@ function Clavicula:doExplosion(grid)
 
     -- Visual flash
     self.explosionFlash = { col = self.col, row = self.row, timer = 0.4 }
+
+    -- Leave fire patches in a cross around the explosion center
+    local cx, cy = self.col, self.row
+    local crossOffsets = { {0,0}, {1,0}, {-1,0}, {0,1}, {0,-1} }
+    for _, offset in ipairs(crossOffsets) do
+        local tc, tr = cx + offset[1], cy + offset[2]
+        if grid:isValidCell(tc, tr) then
+            table.insert(self.firePatches, {
+                col         = tc,
+                row         = tr,
+                timer       = 2,
+                damageTimer = 1
+            })
+        end
+    end
 end
 
 -- Distribute soul-drain heals from dead clones to surviving copies
@@ -248,12 +297,56 @@ function Clavicula:update(dt, grid)
         end
     end
 
+    -- Tick fire patches
+    local allUnits = grid:getAllUnits()
+    for i = #self.firePatches, 1, -1 do
+        local patch = self.firePatches[i]
+        patch.timer       = patch.timer - dt
+        patch.damageTimer = patch.damageTimer - dt
+
+        if patch.damageTimer <= 0 then
+            patch.damageTimer = 1
+            for _, unit in ipairs(allUnits) do
+                if unit.owner ~= self.owner and not unit.isDead
+                   and unit.col == patch.col and unit.row == patch.row then
+                    unit:takeDamage(1)
+                    if unit.isDead then
+                        local cell = grid:getCell(unit.col, unit.row)
+                        if cell then cell.occupied = false end
+                        self:onKill(unit)
+                    end
+                end
+            end
+        end
+
+        if patch.timer <= 0 then
+            table.remove(self.firePatches, i)
+        end
+    end
+
     Clavicula.super.update(self, dt, grid)
+end
+
+function Clavicula:drawGroundEffects()
+    for _, patch in ipairs(self.firePatches) do
+        local visualRow = Constants.toVisualRow(patch.row)
+        local cy    = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+        local topY  = cy - Constants.CELL_SIZE / 2
+        drawFirePatch(patch, self.sprites, topY, Constants.CELL_SIZE * 3 / 4)
+    end
 end
 
 function Clavicula:drawAttackVisuals()
     -- Draw regular projectiles via parent
     Clavicula.super.drawAttackVisuals(self)
+
+    -- Draw bottom quarter of fire patches on top of units
+    for _, patch in ipairs(self.firePatches) do
+        local visualRow = Constants.toVisualRow(patch.row)
+        local cy      = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+        local bottomY = cy + Constants.CELL_SIZE / 4
+        drawFirePatch(patch, self.sprites, bottomY, Constants.CELL_SIZE / 4)
+    end
 
     -- Draw explosion flash (Cursed Ground)
     if self.explosionFlash then

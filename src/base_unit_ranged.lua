@@ -198,6 +198,11 @@ function BaseUnitRanged:update(dt, grid)
                     if cell then
                         cell.occupied = false
                     end
+                    -- Free reservation if target died mid-movement (stale reserved flag would block pathfinding)
+                    local t = projectile.target
+                    if t.isMoving and t.targetCol and t.targetRow then
+                        grid:freeReservation(t.targetCol, t.targetRow)
+                    end
 
                     -- Invalidate all cached paths so units recompute around the freed cell next frame
                     local allUnits = grid:getAllUnits()

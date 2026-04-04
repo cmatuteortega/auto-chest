@@ -24,6 +24,11 @@ function Bonk:new(row, col, owner, sprites)
     }
 end
 
+function Bonk:getEnergy()
+    local threshold = self:hasUpgrade(1) and 4 or 3
+    return self.hitCount, threshold
+end
+
 function Bonk:attack(target, grid)
     self.hitCount = self.hitCount + 1
 

@@ -23,8 +23,6 @@ function Burrow:new(row, col, owner, sprites)
 
     Burrow.super.new(self, row, col, owner, sprites, stats)
 
-    -- Action unit flag (blocks normal AI until action is complete)
-    self.isActionUnit   = true
     self.actionDuration = 2.0   -- seconds underground before emerging
 
     -- Per-round burrow state
