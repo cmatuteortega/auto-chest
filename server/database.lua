@@ -52,15 +52,7 @@ function Database:createTables()
             last_login INTEGER
         );
 
-        CREATE TABLE IF NOT EXISTS sessions (
-            token TEXT PRIMARY KEY,
-            player_id INTEGER NOT NULL,
-            created_at INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY (player_id) REFERENCES players(id)
-        );
-
         CREATE INDEX IF NOT EXISTS idx_username ON players(username);
-        CREATE INDEX IF NOT EXISTS idx_session_player ON sessions(player_id);
     ]]
 
     local result = self.db:exec(schema)
@@ -71,6 +63,20 @@ function Database:createTables()
     -- Migrations: add gold and gems columns if they don't exist yet
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN gold INTEGER DEFAULT 0") end)
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN gems INTEGER DEFAULT 0") end)
+
+    -- Sessions table: always drop and recreate with device_id (no backward compat)
+    self.db:exec("DROP TABLE IF EXISTS sessions")
+    local sessionSchema = [[
+        CREATE TABLE sessions (
+            token      TEXT PRIMARY KEY,
+            player_id  INTEGER NOT NULL,
+            device_id  TEXT NOT NULL DEFAULT '',
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY (player_id) REFERENCES players(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_player ON sessions(player_id);
+    ]]
+    self.db:exec(sessionSchema)
 end
 
 -- Register a new player
@@ -192,8 +198,14 @@ function Database:loginPlayer(username, password)
     }
 end
 
--- Create session token
-function Database:createSession(playerId)
+-- Create session token (device_id binds token to a specific device)
+function Database:createSession(playerId, deviceId)
+    -- Purge expired sessions for this player (> 30 days)
+    self.db:exec(string.format(
+        "DELETE FROM sessions WHERE player_id = %d AND created_at < %d",
+        playerId, os.time() - 30 * 24 * 3600
+    ))
+
     -- Generate random token
     local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     local token = ""
@@ -202,19 +214,20 @@ function Database:createSession(playerId)
         token = token .. chars:sub(rand, rand)
     end
 
-    -- Store session
-    local stmt = self.db:prepare("INSERT INTO sessions (token, player_id) VALUES (?, ?)")
-    stmt:bind_values(token, playerId)
+    -- Store session with device_id
+    local stmt = self.db:prepare("INSERT INTO sessions (token, player_id, device_id) VALUES (?, ?, ?)")
+    stmt:bind_values(token, playerId, deviceId or "")
     stmt:step()
     stmt:finalize()
 
     return token
 end
 
--- Validate session token
-function Database:validateSession(token)
+-- Validate session token — also checks device_id match and 30-day expiry
+function Database:validateSession(token, deviceId)
     local stmt = self.db:prepare([[
-        SELECT s.player_id, p.username, p.trophies, p.coins, p.active_deck_index,
+        SELECT s.player_id, s.device_id, s.created_at,
+               p.username, p.trophies, p.coins, p.active_deck_index,
                p.deck1_json, p.deck2_json, p.deck3_json, p.deck4_json, p.deck5_json,
                p.gold, p.gems
         FROM sessions s
@@ -228,19 +241,31 @@ function Database:validateSession(token)
         return nil
     end
 
-    local playerId = stmt:get_value(0)
-    local username = stmt:get_value(1)
-    local trophies = stmt:get_value(2)
-    local coins = stmt:get_value(3)
-    local activeDeckIndex = stmt:get_value(4)
-    local deck1Json = stmt:get_value(5)
-    local deck2Json = stmt:get_value(6)
-    local deck3Json = stmt:get_value(7)
-    local deck4Json = stmt:get_value(8)
-    local deck5Json = stmt:get_value(9)
-    local gold = stmt:get_value(10) or 0
-    local gems = stmt:get_value(11) or 0
+    local playerId      = stmt:get_value(0)
+    local storedDevice  = stmt:get_value(1)
+    local createdAt     = stmt:get_value(2)
+    local username      = stmt:get_value(3)
+    local trophies      = stmt:get_value(4)
+    local coins         = stmt:get_value(5)
+    local activeDeckIndex = stmt:get_value(6)
+    local deck1Json     = stmt:get_value(7)
+    local deck2Json     = stmt:get_value(8)
+    local deck3Json     = stmt:get_value(9)
+    local deck4Json     = stmt:get_value(10)
+    local deck5Json     = stmt:get_value(11)
+    local gold          = stmt:get_value(12) or 0
+    local gems          = stmt:get_value(13) or 0
     stmt:finalize()
+
+    -- Reject if device_id doesn't match
+    if storedDevice ~= (deviceId or "") then
+        return nil
+    end
+
+    -- Reject if token is older than 30 days
+    if createdAt and (os.time() - createdAt) > 30 * 24 * 3600 then
+        return nil
+    end
 
     local decks = {
         json.decode(deck1Json) or {name = "Deck 1", counts = {}},
@@ -260,6 +285,14 @@ function Database:validateSession(token)
         activeDeckIndex = activeDeckIndex,
         decks = decks
     }
+end
+
+-- Delete all sessions for a player (called on credential login to invalidate old tokens)
+function Database:deletePlayerSessions(playerId)
+    local stmt = self.db:prepare("DELETE FROM sessions WHERE player_id = ?")
+    stmt:bind_values(playerId)
+    stmt:step()
+    stmt:finalize()
 end
 
 -- Get player by ID

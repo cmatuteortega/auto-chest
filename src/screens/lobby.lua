@@ -70,7 +70,7 @@ function LobbyScreen.new()
                 -- Session dropped — silently reconnect using stored token
                 self.status = "reconnecting"
                 self.statusMsg = "Reconnecting..."
-                self.client:send("reconnect_with_token", {token = _G.PlayerData.token})
+                self.client:send("reconnect_with_token", {token = _G.PlayerData.token, device_id = _G.DeviceId or ""})
             else
                 self.status = "error"
                 self.statusMsg = data.reason or "Error occurred"

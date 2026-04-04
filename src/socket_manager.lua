@@ -46,7 +46,7 @@ function SocketManager.reconnect(onSuccess, onFailure)
     client:on("connect", function()
         -- Set generous timeout so brief interruptions don't kill the socket
         client:setTimeout(32, 5000, 60000)
-        client:send("reconnect_with_token", { token = token })
+        client:send("reconnect_with_token", { token = token, device_id = _G.DeviceId or "" })
     end)
 
     client:on("login_success", function(data)

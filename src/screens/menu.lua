@@ -181,6 +181,15 @@ function MenuScreen.new()
             print("[MENU] Socket disconnected, will reconnect on next action")
         end)
 
+        self._cb_forcedLogout = _G.GameSocket:on("forced_logout", function(data)
+            print("[MENU] Forced logout: " .. tostring(data and data.reason))
+            love.filesystem.remove("session.dat")
+            _G.GameSocket = nil
+            _G.PlayerData = nil
+            local ScreenManager = require('lib.screen_manager')
+            ScreenManager.switch('login')
+        end)
+
         self._cb_decksSynced = _G.GameSocket:on("decks_synced", function()
             self:buildPreviewLayout()
         end)
@@ -195,12 +204,14 @@ function MenuScreen.new()
             if self._cb_currencyUpdate then _G.GameSocket:removeCallback(self._cb_currencyUpdate) end
             if self._cb_shopError      then _G.GameSocket:removeCallback(self._cb_shopError) end
             if self._cb_disconnect     then _G.GameSocket:removeCallback(self._cb_disconnect) end
+            if self._cb_forcedLogout   then _G.GameSocket:removeCallback(self._cb_forcedLogout) end
             if self._cb_decksSynced    then _G.GameSocket:removeCallback(self._cb_decksSynced) end
             if self._cb_onlineCount    then _G.GameSocket:removeCallback(self._cb_onlineCount) end
         end
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
         self._cb_disconnect     = nil
+        self._cb_forcedLogout   = nil
         self._cb_decksSynced    = nil
         self._cb_onlineCount    = nil
     end

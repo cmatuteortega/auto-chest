@@ -16,8 +16,20 @@ local MAX_CONNECTIONS = 16
 local host    = nil
 local db      = nil
 local queue   = {}    -- matchmaking queue: {peer, player_id, username, trophies, queue_time}
-local rooms   = {}    -- keyed by tostring(peer): {peer, partner, role, player_id, username, trophies}
-local sessions = {}   -- keyed by tostring(peer): {player_id, username, token}
+local rooms   = {}    -- keyed by connKey (integer): {peer, partnerKey, role, player_id, username, trophies}
+local sessions = {}   -- keyed by connKey (integer): {player_id, username, token}
+
+-- Per-connection unique IDs — avoids session key collision when ENet reuses peer slots
+local connCounter    = 0
+local connKeys       = {}   -- tostring(peer) → unique integer per connection
+local peerByPlayerId = {}   -- player_id → peer (for evicting old connections on re-login)
+
+local function connKey(peer)
+    return connKeys[tostring(peer)]
+end
+
+-- Forward declaration (defined fully after handleConnect/processMatchmaking)
+local handleDisconnect
 local log     = {}
 local logLimit = 18
 
@@ -106,84 +118,147 @@ local function processMatchmaking()
             -- Remove player from queue
             table.remove(queue, i)
 
-            -- Create room
             local p1, p2 = player, opponent
-            rooms[tostring(p1.peer)] = {
-                peer = p1.peer,
-                partner = p2.peer,
-                role = 1,
-                player_id = p1.player_id,
-                username = p1.username,
-                trophies = p1.trophies
-            }
-            rooms[tostring(p2.peer)] = {
-                peer = p2.peer,
-                partner = p1.peer,
-                role = 2,
-                player_id = p2.player_id,
-                username = p2.username,
-                trophies = p2.trophies
-            }
+            local ck1 = connKey(p1.peer)
+            local ck2 = connKey(p2.peer)
 
-            -- Send match_found to both
-            p1.peer:send(encode("match_found", {
-                role = 1,
-                opponent_name = p2.username,
-                opponent_trophies = p2.trophies,
-                my_trophies = p1.trophies
-            }))
-            p2.peer:send(encode("match_found", {
-                role = 2,
-                opponent_name = p1.username,
-                opponent_trophies = p1.trophies,
-                my_trophies = p2.trophies
-            }))
+            -- Skip if either player already has a live room (safety guard)
+            if not ck1 or not ck2 or rooms[ck1] or rooms[ck2] then
+                pushLog("Skipping match — peer missing connKey or already in room")
+                i = i + 1
+            else
+                -- Create rooms keyed by integer connection ID
+                rooms[ck1] = {
+                    peer       = p1.peer,
+                    partnerKey = ck2,
+                    role       = 1,
+                    player_id  = p1.player_id,
+                    username   = p1.username,
+                    trophies   = p1.trophies
+                }
+                rooms[ck2] = {
+                    peer       = p2.peer,
+                    partnerKey = ck1,
+                    role       = 2,
+                    player_id  = p2.player_id,
+                    username   = p2.username,
+                    trophies   = p2.trophies
+                }
 
-            pushLog("Match: " .. p1.username .. " (" .. p1.trophies .. ") vs " .. p2.username .. " (" .. p2.trophies .. ")")
+                p1.peer:send(encode("match_found", {
+                    role             = 1,
+                    opponent_name    = p2.username,
+                    opponent_trophies = p2.trophies,
+                    my_trophies      = p1.trophies
+                }))
+                p2.peer:send(encode("match_found", {
+                    role             = 2,
+                    opponent_name    = p1.username,
+                    opponent_trophies = p1.trophies,
+                    my_trophies      = p2.trophies
+                }))
 
-            -- Don't increment i, continue from same position
+                pushLog("Match: " .. p1.username .. " (" .. p1.trophies .. ") vs " .. p2.username .. " (" .. p2.trophies .. ")")
+                -- Don't increment i, continue from same position
+            end
         else
             i = i + 1
         end
     end
 end
 
+local function evictStaleAtAddress(raw)
+    local staleKey = connKeys[raw]
+    if not staleKey then return end
+
+    -- Stale session (peer slot reused without disconnect event firing)
+    local s = sessions[staleKey]
+    if s then
+        peerByPlayerId[s.player_id] = nil
+        pushLog("Evicting stale session (peer reuse): " .. s.username)
+        sessions[staleKey] = nil
+    end
+
+    -- Remove stale queue entry
+    for i = #queue, 1, -1 do
+        if connKeys[tostring(queue[i].peer)] == staleKey then
+            table.remove(queue, i)
+        end
+    end
+
+    -- Notify stale room partner
+    local r = rooms[staleKey]
+    if r then
+        if r.partnerKey and rooms[r.partnerKey] then
+            pcall(function() rooms[r.partnerKey].peer:send(encode("opponent_disconnected", {})) end)
+            rooms[r.partnerKey] = nil
+        end
+        rooms[staleKey] = nil
+    end
+
+    connKeys[raw] = nil
+end
+
 local function handleConnect(peer)
-    pushLog("Client connected: " .. tostring(peer))
+    local raw = tostring(peer)
+    evictStaleAtAddress(raw)          -- clear any stale session at this peer slot
+    connCounter = connCounter + 1
+    connKeys[raw] = connCounter
+    pushLog("Client connected: " .. raw .. " (conn=" .. connCounter .. ")")
+end
+
+-- Evict an existing live connection for player_id (called on re-login)
+local function evictPlayerSession(playerId, incomingPeer)
+    local oldPeer = peerByPlayerId[playerId]
+    if oldPeer and oldPeer ~= incomingPeer then
+        pcall(function() oldPeer:send(encode("forced_logout", {reason = "Logged in from another device"})) end)
+        handleDisconnect(oldPeer)
+        pcall(function() oldPeer:reset() end)
+    end
 end
 
 local function handleMessage(peer, eventName, msgData)
-    -- Handle authentication messages
+    local ck = connKey(peer)
+    if not ck then return end   -- peer has no connection ID (shouldn't happen)
+
+    -- ── Authentication ──────────────────────────────────────────────────────
+
     if eventName == "login" then
         local username = msgData.username
         local password = msgData.password
+        local deviceId = msgData.device_id or ""
 
         local player, err = db:loginPlayer(username, password)
 
         if player then
-            local token = db:createSession(player.id)
-            sessions[tostring(peer)] = {
+            -- Invalidate all old DB tokens for this player, then create a fresh one
+            db:deletePlayerSessions(player.id)
+            -- Kick any existing live connection for this player
+            evictPlayerSession(player.id, peer)
+
+            local token = db:createSession(player.id, deviceId)
+            sessions[ck] = {
                 player_id = player.id,
-                username = player.username,
-                token = token
+                username  = player.username,
+                token     = token
             }
+            peerByPlayerId[player.id] = peer
 
             peer:send(encode("login_success", {
-                player_id = player.id,
-                username = player.username,
-                trophies = player.trophies,
-                coins = player.coins,
-                gold = player.gold,
-                gems = player.gems,
+                player_id         = player.id,
+                username          = player.username,
+                trophies          = player.trophies,
+                coins             = player.coins,
+                gold              = player.gold,
+                gems              = player.gems,
                 active_deck_index = player.activeDeckIndex,
-                decks = player.decks,
-                token = token
+                decks             = player.decks,
+                token             = token
             }))
-
             pushLog("Login: " .. username)
         else
             peer:send(encode("login_failed", {reason = err or "Invalid credentials"}))
-            pushLog("Failed login: " .. username)
+            pushLog("Failed login: " .. tostring(username))
         end
 
     elseif eventName == "register" then
@@ -195,34 +270,40 @@ local function handleMessage(peer, eventName, msgData)
         if player then
             peer:send(encode("register_success", {
                 player_id = player.id,
-                username = player.username
+                username  = player.username
             }))
             pushLog("Registration: " .. username)
         else
             peer:send(encode("register_failed", {reason = err or "Registration failed"}))
-            pushLog("Failed registration: " .. username)
+            pushLog("Failed registration: " .. tostring(username))
         end
 
     elseif eventName == "queue_join" then
-        local session = sessions[tostring(peer)]
+        local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
         end
 
-        -- Get latest player data
         local player = db:getPlayer(session.player_id)
         if not player then
             peer:send(encode("error", {reason = "Player not found"}))
             return
         end
 
-        -- Add to matchmaking queue
+        -- Remove any stale queue entries for this player_id (rapid reconnect guard)
+        for i = #queue, 1, -1 do
+            if queue[i].player_id == player.id then
+                pushLog("Removed duplicate queue entry: " .. player.username)
+                table.remove(queue, i)
+            end
+        end
+
         table.insert(queue, {
-            peer = peer,
-            player_id = player.id,
-            username = player.username,
-            trophies = player.trophies,
+            peer       = peer,
+            player_id  = player.id,
+            username   = player.username,
+            trophies   = player.trophies,
             queue_time = love.timer.getTime()
         })
 
@@ -230,7 +311,6 @@ local function handleMessage(peer, eventName, msgData)
         pushLog("Queue join: " .. player.username .. " (" .. player.trophies .. " trophies)")
 
     elseif eventName == "queue_leave" then
-        -- Remove from queue
         for i, entry in ipairs(queue) do
             if entry.peer == peer then
                 table.remove(queue, i)
@@ -241,7 +321,7 @@ local function handleMessage(peer, eventName, msgData)
         end
 
     elseif eventName == "update_deck_slot" then
-        local session = sessions[tostring(peer)]
+        local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
@@ -264,7 +344,7 @@ local function handleMessage(peer, eventName, msgData)
         end
 
     elseif eventName == "update_active_deck" then
-        local session = sessions[tostring(peer)]
+        local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
@@ -277,7 +357,7 @@ local function handleMessage(peer, eventName, msgData)
         pushLog("Active deck set to " .. tostring(deckIndex) .. ": " .. session.username)
 
     elseif eventName == "sync_decks" then
-        local session = sessions[tostring(peer)]
+        local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
@@ -306,72 +386,73 @@ local function handleMessage(peer, eventName, msgData)
 
     elseif eventName == "match_result" then
         local winnerId = msgData.winner_id
-        local session = sessions[tostring(peer)]
-
+        local session = sessions[ck]
         if not session then return end
 
-        local room = rooms[tostring(peer)]
-        if not room or not room.partner then return end
+        local room = rooms[ck]
+        if not room or not room.partnerKey then return end
 
-        local partnerRoom = rooms[tostring(room.partner)]
+        local partnerRoom = rooms[room.partnerKey]
         if not partnerRoom then return end
 
         -- Determine winner and loser
         local winnerData, loserData
-
         if winnerId == room.player_id then
             winnerData = {id = room.player_id, trophies = room.trophies}
-            loserData = {id = partnerRoom.player_id, trophies = partnerRoom.trophies}
+            loserData  = {id = partnerRoom.player_id, trophies = partnerRoom.trophies}
         else
             winnerData = {id = partnerRoom.player_id, trophies = partnerRoom.trophies}
-            loserData = {id = room.player_id, trophies = room.trophies}
+            loserData  = {id = room.player_id, trophies = room.trophies}
         end
 
-        -- Update trophies
         db:updateTrophies(winnerData.id, 20)
         db:updateTrophies(loserData.id, -15)
 
-        -- Award gold: +10 winner, +5 loser
         local winnerNewGold = db:updateGold(winnerData.id, 10)
         local loserNewGold  = db:updateGold(loserData.id, 5)
         local winnerGems    = db:getGems(winnerData.id)
         local loserGems     = db:getGems(loserData.id)
 
-        -- Send currency updates to each player
-        local winnerPeer = (winnerId == room.player_id) and room.peer or room.partner
-        local loserPeer  = (winnerId == room.player_id) and room.partner or room.peer
-        if winnerPeer then winnerPeer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems})) end
-        if loserPeer  then loserPeer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems}))  end
+        -- Send currency updates via partnerKey lookup (avoids stale peer references)
+        local winnerPeer = (winnerId == room.player_id) and room.peer or partnerRoom.peer
+        local loserPeer  = (winnerId == room.player_id) and partnerRoom.peer or room.peer
+        if winnerPeer then pcall(function() winnerPeer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems})) end) end
+        if loserPeer  then pcall(function() loserPeer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems}))  end) end
 
         pushLog("Match result: Winner +10g, Loser +5g")
 
-        -- Clean up rooms so both peers can re-queue immediately
-        rooms[tostring(room.partner)] = nil
-        rooms[tostring(peer)] = nil
+        rooms[room.partnerKey] = nil
+        rooms[ck] = nil
 
     elseif eventName == "reconnect_with_token" then
-        local token = msgData.token
+        local token    = msgData.token
+        local deviceId = msgData.device_id or ""
         if not token or not db then
             peer:send(encode("login_failed", {reason = "No token"}))
             return
         end
-        local player = db:validateSession(token)
+        local player = db:validateSession(token, deviceId)
         if player then
-            sessions[tostring(peer)] = {
+            -- Kick any existing live connection for this player
+            evictPlayerSession(player.id, peer)
+
+            sessions[ck] = {
                 player_id = player.id,
-                username = player.username,
-                token = token
+                username  = player.username,
+                token     = token
             }
+            peerByPlayerId[player.id] = peer
+
             peer:send(encode("login_success", {
-                player_id = player.id,
-                username = player.username,
-                trophies = player.trophies,
-                coins = player.coins,
-                gold = player.gold,
-                gems = player.gems,
+                player_id         = player.id,
+                username          = player.username,
+                trophies          = player.trophies,
+                coins             = player.coins,
+                gold              = player.gold,
+                gems              = player.gems,
                 active_deck_index = player.activeDeckIndex,
-                decks = player.decks,
-                token = token
+                decks             = player.decks,
+                token             = token
             }))
             pushLog("Reconnect: " .. player.username)
         else
@@ -379,8 +460,7 @@ local function handleMessage(peer, eventName, msgData)
         end
 
     elseif eventName == "shop_purchase" then
-        -- Spend gems to buy gold
-        local session = sessions[tostring(peer)]
+        local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
@@ -409,8 +489,7 @@ local function handleMessage(peer, eventName, msgData)
         pushLog("Shop purchase: " .. session.username .. " bought " .. item)
 
     elseif eventName == "gem_purchase" then
-        -- Placeholder: grant gems directly (no real payment)
-        local session = sessions[tostring(peer)]
+        local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
@@ -426,22 +505,20 @@ local function handleMessage(peer, eventName, msgData)
         end
 
         local newGems = db:addGems(session.player_id, gemGain)
-        local currentGold = db:updateGold(session.player_id, 0)  -- read current gold
+        local currentGold = db:updateGold(session.player_id, 0)
         pushLog("Gem purchase (mock): " .. session.username .. " +" .. gemGain .. " gems -> newGems=" .. tostring(newGems) .. " gold=" .. tostring(currentGold))
         peer:send(encode("currency_update", {gold = currentGold, gems = newGems}))
 
     elseif eventName == "relay" then
-        -- Forward game messages to partner
-        local room = rooms[tostring(peer)]
-        if room and room.partner then
-            -- Re-encode the relay message content
-            room.partner:send(encode("relay", msgData))
+        -- Forward game messages to partner (via partnerKey, not raw peer ref)
+        local room = rooms[ck]
+        if room and room.partnerKey and rooms[room.partnerKey] then
+            rooms[room.partnerKey].peer:send(encode("relay", msgData))
         end
     end
 end
 
 local function handleReceive(peer, data)
-    -- Try to decode the message
     if not json then return end
 
     local ok, decoded = pcall(json.decode, data)
@@ -449,45 +526,43 @@ local function handleReceive(peer, data)
         local eventName = decoded[1]
         local msgData = decoded[2] or {}
         handleMessage(peer, eventName, msgData)
-    else
-        -- Fallback: forward raw data if in a room (backwards compatibility)
-        local room = rooms[tostring(peer)]
-        if room and room.partner then
-            room.partner:send(data)
-        end
     end
+    -- Malformed packets are silently dropped (no raw relay — prevents cross-peer data leakage)
 end
 
-local function handleDisconnect(peer)
-    local peerKey = tostring(peer)
+handleDisconnect = function(peer)
+    local raw = tostring(peer)
+    local ck  = connKeys[raw]
+    if not ck then return end
 
     -- Remove from queue
-    for i, entry in ipairs(queue) do
-        if entry.peer == peer then
+    for i = #queue, 1, -1 do
+        if connKeys[tostring(queue[i].peer)] == ck then
+            pushLog("Queue player disconnected: " .. queue[i].username)
             table.remove(queue, i)
-            pushLog("Queue player disconnected: " .. entry.username)
-            break
         end
     end
 
-    -- Remove from session
-    local session = sessions[peerKey]
+    -- Remove session
+    local session = sessions[ck]
     if session then
+        peerByPlayerId[session.player_id] = nil
         pushLog("Session closed: " .. session.username)
-        sessions[peerKey] = nil
+        sessions[ck] = nil
     end
 
     -- Handle room disconnect
-    local room = rooms[peerKey]
+    local room = rooms[ck]
     if room then
-        -- Notify partner
-        if room.partner then
-            room.partner:send(encode("opponent_disconnected", {}))
-            rooms[tostring(room.partner)] = nil
+        if room.partnerKey and rooms[room.partnerKey] then
+            pcall(function() rooms[room.partnerKey].peer:send(encode("opponent_disconnected", {})) end)
+            rooms[room.partnerKey] = nil
         end
-        rooms[peerKey] = nil
+        rooms[ck] = nil
         pushLog("Player disconnected from match (role " .. tostring(room.role) .. ")")
     end
+
+    connKeys[raw] = nil
 end
 
 -- ── Love2D callbacks ────────────────────────────────────────────────────────

@@ -77,6 +77,23 @@ function love.load()
     )
     Push:setDrawOffset(safeX, safeY)
 
+    -- Load or generate a permanent per-device UUID (survives logout, never cleared)
+    local storedDeviceId = love.filesystem.read("device_id.dat")
+    if storedDeviceId then
+        storedDeviceId = storedDeviceId:match("^%s*(.-)%s*$")
+    end
+    if storedDeviceId and #storedDeviceId == 32 then
+        _G.DeviceId = storedDeviceId
+    else
+        local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        local id = ""
+        for _ = 1, 32 do
+            id = id .. chars:sub(math.random(1, #chars), math.random(1, #chars))
+        end
+        _G.DeviceId = id
+        love.filesystem.write("device_id.dat", id)
+    end
+
     -- Initialize screen manager with screen table
     local screens = {
         login   = LoginScreen,

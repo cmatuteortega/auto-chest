@@ -85,9 +85,12 @@ function LoginScreen.new()
             self.status = "logged_in"
             self.statusMessage = "Login successful!"
 
-            -- Persist session token for auto-login on next launch
+            -- Persist session as JSON {token, username} for auto-login on next launch
             if data.token and data.token ~= "" then
-                love.filesystem.write("session.dat", data.token)
+                love.filesystem.write("session.dat", json.encode({
+                    token    = data.token,
+                    username = data.username,
+                }))
             end
 
             -- Store player data and socket globally for other screens
@@ -401,8 +404,9 @@ function LoginScreen.new()
         self.status = "connecting"
         self.statusMessage = "Logging in..."
         self.client:send("login", {
-            username = self.usernameText,
-            password = self.passwordText
+            username  = self.usernameText,
+            password  = self.passwordText,
+            device_id = _G.DeviceId or ""
         })
     end
 
@@ -412,8 +416,9 @@ function LoginScreen.new()
         self.status = "connecting"
         self.statusMessage = "Creating account..."
         self.client:send("register", {
-            username = self.usernameText,
-            password = self.passwordText
+            username  = self.usernameText,
+            password  = self.passwordText,
+            device_id = _G.DeviceId or ""
         })
     end
 
