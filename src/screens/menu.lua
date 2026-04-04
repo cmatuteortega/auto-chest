@@ -52,6 +52,9 @@ function MenuScreen.new()
         self._deckActiveRect  = nil
         self._deckSortByCost  = false
         self.previewLayout    = {}
+        -- Deck detail sub-view ("grid" or "detail")
+        self.deckView         = "grid"
+        self.deckDetailUnit   = nil
 
         -- Load front sprites for collection display (sorted for stable ordering).
         -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
@@ -597,7 +600,7 @@ function MenuScreen.new()
         lg.setFont(Fonts.small)
         lg.setColor(0.965, 0.839, 0.741, 1)
         lg.print("\xe2\x86\x90 Back", btnX, textCY(Fonts.small, btnY, btnH))
-        self._backButtonRect = { x = btnX, y = btnY, w = math.floor(100 * sc), h = btnH }
+        self._backButtonRect = { x = btnX + self.panelOffset, y = btnY, w = math.floor(100 * sc), h = btnH }
 
         -- ── Text content (top to bottom, starting below back button) ──
         local curY = btnY + btnH + math.floor(8 * sc)
@@ -901,6 +904,12 @@ function MenuScreen.new()
     function self:drawDecksPanel(ox, W, H, sc)
         local lg = love.graphics
 
+        if self.deckView == "detail" then
+            self.detailUnit = self.deckDetailUnit
+            self:drawCollectionDetailPage(ox, W, H, sc)
+            return
+        end
+
         -- ── Deck slot tabs ────────────────────────────────────────────────────
         local tabAreaW  = W - 40 * sc
         local tabW      = tabAreaW / 5
@@ -1125,6 +1134,10 @@ function MenuScreen.new()
             -- Hit rect (screen space)
             self._deckCardRects[i] = {
                 utype  = utype,
+                cardX  = cx + self.panelOffset,
+                cardY  = cy,
+                cardW  = cardW,
+                cardH  = cardH,
                 minusX = cx + self.panelOffset,
                 minusW = minusW,
                 plusX  = cx + minusW + centerW + self.panelOffset,
@@ -1726,6 +1739,14 @@ function MenuScreen.new()
             end
         end
 
+        -- Deck detail: start sprite rotation drag
+        if self.currentPanel == 2 and self.deckView == "detail" then
+            local r = self._detailSpriteRect
+            if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._detailDragX = x
+            end
+        end
+
         -- Spring press: activate squish on button contact
         if self.currentPanel == 3 then
             local btn = self._playBtnRect
@@ -1854,6 +1875,11 @@ function MenuScreen.new()
                 self._detailRotAngle = 1
                 self._detailDragX = nil
             end
+            -- Leaving Decks panel: reset deck detail sub-view
+            if self.currentPanel ~= 2 then
+                self.deckView = "grid"
+                self.deckDetailUnit = nil
+            end
             return
         end
 
@@ -1867,6 +1893,12 @@ function MenuScreen.new()
                     self.detailUnit = nil
                     self._detailRotAngle = 1
                     self._detailDragX = nil
+                elseif i == 2 and self.currentPanel == 2 then
+                    -- Re-tap Decks tab: return to grid view
+                    self.deckView = "grid"
+                    self.deckDetailUnit = nil
+                    self._detailRotAngle = 1
+                    self._detailDragX = nil
                 elseif i ~= self.currentPanel then
                     self.currentPanel = i
                     self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
@@ -1875,6 +1907,11 @@ function MenuScreen.new()
                         self.collectionView = "grid"
                         self._detailRotAngle = 1
                         self._detailDragX = nil
+                    end
+                    -- Leaving Decks: reset deck detail sub-view
+                    if i ~= 2 then
+                        self.deckView = "grid"
+                        self.deckDetailUnit = nil
                     end
                 end
                 return
@@ -1887,6 +1924,18 @@ function MenuScreen.new()
             if b and x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
                 self.collectionView = "grid"
                 self.detailUnit = nil
+                self._detailRotAngle = 1
+                self._detailDragX = nil
+            end
+            return
+        end
+
+        -- Deck detail view: back button tap (swallow all other taps in detail view)
+        if self.currentPanel == 2 and self.deckView == "detail" then
+            local b = self._backButtonRect
+            if b and x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
+                self.deckView = "grid"
+                self.deckDetailUnit = nil
                 self._detailRotAngle = 1
                 self._detailDragX = nil
             end
@@ -1945,9 +1994,10 @@ function MenuScreen.new()
                 self:buildPreviewLayout()
                 return
             end
-            -- Card minus/plus strips
+            -- Card minus/plus strips and card body taps
             for _, cr in ipairs(self._deckCardRects) do
                 if y >= cr.stripY and y <= cr.stripY + cr.stripH then
+                    -- Tap on bottom strip: +/- controls
                     if x >= cr.minusX and x <= cr.minusX + cr.minusW then
                         AudioManager.playTap()
                         DeckManager.adjustCount(self.selectedDeckSlot, cr.utype, -1)
@@ -1963,6 +2013,14 @@ function MenuScreen.new()
                         end
                         return
                     end
+                elseif x >= cr.cardX and x <= cr.cardX + cr.cardW and
+                       y >= cr.cardY and y <= cr.cardY + cr.cardH then
+                    -- Tap on card body (above strip): open detail view
+                    AudioManager.playTap()
+                    self.deckDetailUnit = cr.utype
+                    self.deckView = "detail"
+                    self._detailRotAngle = 1
+                    return
                 end
             end
         end

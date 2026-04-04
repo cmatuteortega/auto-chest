@@ -218,10 +218,10 @@ UnitRegistry.unitCosts = {
     clavicula = 4,
     bonk   = 3,
     sinner = 4,
-    tomb   = 3,
+    tomb   = 1,
     lancer   = 3,
     burrow   = 3,
-    catapult = 4
+    catapult = 2
 }
 
 -- Count fully-transparent rows at the top of a sprite file.
@@ -350,6 +350,7 @@ function UnitRegistry.loadAllSprites()
         local lanceImg = love.graphics.newImage(lancePath)
         lanceImg:setFilter('nearest', 'nearest')
         allSprites["lancer"].lance = lanceImg
+        allSprites["marrow"].lance = lanceImg
     end
 
     -- Load stun animation frames (shared across all units)

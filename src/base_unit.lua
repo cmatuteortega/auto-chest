@@ -927,7 +927,7 @@ function BaseUnit:findGoalNearTarget(grid, target)
         if grid:isValidCell(cell.col, cell.row) then
             local gridCell = grid:getCell(cell.col, cell.row)
             -- Check if cell is empty or is our current position
-            if not gridCell.occupied or (cell.col == self.col and cell.row == self.row) then
+            if (not gridCell.occupied and not gridCell.reserved) or (cell.col == self.col and cell.row == self.row) then
                 local distance = math.sqrt((cell.col - self.col)^2 + (cell.row - self.row)^2)
                 if distance < shortestDistance then
                     shortestDistance = distance
@@ -1011,7 +1011,10 @@ function BaseUnit:attack(target, grid)
     target:takeDamage(self:getDamage(grid))
     if target.isDead then
         local cell = grid:getCell(target.col, target.row)
-        if cell then cell.occupied = false end
+        if cell then
+            cell.occupied = false
+            cell.unit = nil
+        end
         -- Free reservation if target died mid-movement (stale reserved flag would block pathfinding)
         if target.isMoving and target.targetCol and target.targetRow then
             grid:freeReservation(target.targetCol, target.targetRow)

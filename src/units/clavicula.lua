@@ -215,9 +215,11 @@ function Clavicula:spawnClone(grid)
     clone.maxHealth = math.floor(clone.baseHealth * mult)
     clone.damage    = math.floor(clone.baseDamage  * mult)
 
-    -- Set spawn HP: 65% with Twin Spirits (upgrade 1), else 50%
-    local hpFraction = self:hasUpgrade(1) and 0.65 or 0.5
-    clone.health    = math.max(1, math.floor(clone.maxHealth * hpFraction))
+    -- Split HP: both original and clone get hpFraction of the original's current HP
+    local hpFraction  = self:hasUpgrade(1) and 0.65 or 0.5
+    local splitHP     = math.max(1, math.floor(self.health * hpFraction))
+    self.health       = math.min(self.maxHealth, splitHP)
+    clone.health      = splitHP
 
     grid:placeUnit(spawnCol, spawnRow, clone)
 end
