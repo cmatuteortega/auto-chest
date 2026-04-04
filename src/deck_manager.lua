@@ -20,6 +20,7 @@ DeckManager._drawPile = {}
 local function emptyDeck(i)
     local counts = {}
     for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do counts[u] = 0 end
+    counts["boney"] = 1
     return { name = "Deck " .. i, counts = counts }
 end
 
@@ -122,6 +123,10 @@ function DeckManager.adjustCount(deckIndex, unitType, delta)
         return false
     end
     local newCount = math.max(0, current + delta)
+    -- Prevent lowering to 0 if it would leave the deck empty
+    if newCount == 0 and DeckManager.getTotalCount(deckIndex) <= 1 then
+        return false
+    end
     if newCount == current then return false end
     deck.counts[unitType] = newCount
     DeckManager.save()
@@ -129,14 +134,8 @@ function DeckManager.adjustCount(deckIndex, unitType, delta)
 end
 
 -- Set deck at deckIndex as the active battle deck.
--- Toggles off if already active. No-op if deck is empty.
 function DeckManager.setActive(deckIndex)
-    if DeckManager.getTotalCount(deckIndex) == 0 then return end
-    if DeckManager._data.activeDeckIndex == deckIndex then
-        DeckManager._data.activeDeckIndex = nil
-    else
-        DeckManager._data.activeDeckIndex = deckIndex
-    end
+    DeckManager._data.activeDeckIndex = deckIndex
     DeckManager.save()
 end
 

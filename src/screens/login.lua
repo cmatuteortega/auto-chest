@@ -78,6 +78,8 @@ function LoginScreen.new()
                 coins = data.coins,
                 gold = data.gold or 0,
                 gems = data.gems or 0,
+                xp = data.xp or 0,
+                level = data.level or 1,
                 activeDeckIndex = data.active_deck_index,
                 decks = data.decks,
                 token = data.token

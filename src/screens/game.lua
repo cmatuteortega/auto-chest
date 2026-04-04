@@ -481,16 +481,29 @@ function GameScreen.new()
                 self.matchResultSent = true
                 if self.socket then
                     self.socket:send("match_result", {
-                        winner_id = _G.PlayerData.id and (didWin and _G.PlayerData.id or nil) or 0
+                        winner_id = didWin and (_G.PlayerData and _G.PlayerData.id or 0) or 0,
+                        did_win   = didWin
                     })
                 end
 
-                -- Update local trophy and gold counts immediately
+                -- Update local trophy, gold and XP counts immediately
                 self.playerTrophies = math.max(0, self.playerTrophies + self.trophyChange)
                 if _G.PlayerData then
                     _G.PlayerData.trophies = self.playerTrophies
                     _G.PlayerData.gold = (_G.PlayerData.gold or 0) + self.goldEarned
                 end
+            end
+
+            -- Apply XP/level update from server when it arrives (message comes while still in game)
+            if self.socket and not self._xpHandler then
+                self._xpHandler = self.socket:on("currency_update", function(data)
+                    if _G.PlayerData then
+                        if data.xp    ~= nil then _G.PlayerData.xp    = data.xp    end
+                        if data.level ~= nil then _G.PlayerData.level = data.level end
+                        if data.gold  ~= nil then _G.PlayerData.gold  = data.gold  end
+                        if data.gems  ~= nil then _G.PlayerData.gems  = data.gems  end
+                    end
+                end)
             end
         end
     end

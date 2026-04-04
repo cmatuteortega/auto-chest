@@ -487,7 +487,7 @@ function BaseUnit:draw()
             lg.rectangle('fill', barX, hpBarY, barWidth, barHeight)
 
             local healthPercent = self.health / self.maxHealth
-            if self.owner == 1 then
+            if self.owner == (Constants.PERSPECTIVE or 1) then
                 lg.setColor(0.2, 0.8, 0.2, 1)
             else
                 lg.setColor(0.8, 0.2, 0.2, 1)

@@ -251,6 +251,8 @@ local function handleMessage(peer, eventName, msgData)
                 coins             = player.coins,
                 gold              = player.gold,
                 gems              = player.gems,
+                xp                = player.xp,
+                level             = player.level,
                 active_deck_index = player.activeDeckIndex,
                 decks             = player.decks,
                 token             = token
@@ -385,7 +387,6 @@ local function handleMessage(peer, eventName, msgData)
         peer:send(encode("online_count", {count = count}))
 
     elseif eventName == "match_result" then
-        local winnerId = msgData.winner_id
         local session = sessions[ck]
         if not session then return end
 
@@ -395,14 +396,15 @@ local function handleMessage(peer, eventName, msgData)
         local partnerRoom = rooms[room.partnerKey]
         if not partnerRoom then return end
 
-        -- Determine winner and loser
+        -- Sender reports whether they won; derive winner/loser from that
+        local senderWon = msgData.did_win == true
         local winnerData, loserData
-        if winnerId == room.player_id then
-            winnerData = {id = room.player_id, trophies = room.trophies}
-            loserData  = {id = partnerRoom.player_id, trophies = partnerRoom.trophies}
+        if senderWon then
+            winnerData = {id = room.player_id,        peer = room.peer}
+            loserData  = {id = partnerRoom.player_id, peer = partnerRoom.peer}
         else
-            winnerData = {id = partnerRoom.player_id, trophies = partnerRoom.trophies}
-            loserData  = {id = room.player_id, trophies = room.trophies}
+            winnerData = {id = partnerRoom.player_id, peer = partnerRoom.peer}
+            loserData  = {id = room.player_id,        peer = room.peer}
         end
 
         db:updateTrophies(winnerData.id, 20)
@@ -412,14 +414,13 @@ local function handleMessage(peer, eventName, msgData)
         local loserNewGold  = db:updateGold(loserData.id, 5)
         local winnerGems    = db:getGems(winnerData.id)
         local loserGems     = db:getGems(loserData.id)
+        local winnerXP      = db:updateXP(winnerData.id, 10)
+        local loserXP       = db:updateXP(loserData.id, 7)
 
-        -- Send currency updates via partnerKey lookup (avoids stale peer references)
-        local winnerPeer = (winnerId == room.player_id) and room.peer or partnerRoom.peer
-        local loserPeer  = (winnerId == room.player_id) and partnerRoom.peer or room.peer
-        if winnerPeer then pcall(function() winnerPeer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems})) end) end
-        if loserPeer  then pcall(function() loserPeer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems}))  end) end
+        if winnerData.peer then pcall(function() winnerData.peer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems, xp = winnerXP.xp, level = winnerXP.level})) end) end
+        if loserData.peer  then pcall(function() loserData.peer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems,  xp = loserXP.xp,  level = loserXP.level}))  end) end
 
-        pushLog("Match result: Winner +10g, Loser +5g")
+        pushLog("Match result: Winner +10g +10xp, Loser +5g +7xp")
 
         rooms[room.partnerKey] = nil
         rooms[ck] = nil
@@ -450,6 +451,8 @@ local function handleMessage(peer, eventName, msgData)
                 coins             = player.coins,
                 gold              = player.gold,
                 gems              = player.gems,
+                xp                = player.xp,
+                level             = player.level,
                 active_deck_index = player.activeDeckIndex,
                 decks             = player.decks,
                 token             = token
