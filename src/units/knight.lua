@@ -18,7 +18,7 @@ function Knight:new(row, col, owner, sprites)
 
     -- ACTION move identification (taunt resolves at battle start)
     self.isActionUnit   = true
-    self.actionDuration = 0  -- instant effect, no animation delay needed
+    self.actionDuration = 0.6  -- windup animation, taunt fires when complete
 
     -- Upgrade tracking flags
     self.hasHealed = false  -- Track if Mend heal has been used
@@ -56,21 +56,24 @@ end
 
 -- Passive: Taunt all enemies within 3 cells at battle start
 function Knight:onBattleStart(grid)
+    -- Store taunt params; fires when windup animation completes
+    self.pendingTaunt = {
+        grid = grid,
+        tauntDuration = self:hasUpgrade(1) and 5 or 3,
+    }
+    self.actionAnimPlaying  = true
+    self.actionAnimProgress = 0
+    self.actionAnimDone     = false
+end
+
+function Knight:applyTaunt(grid, tauntDuration)
     local allUnits = grid:getAllUnits()
     local enemiesInRadius = 0
 
-    -- Determine taunt duration based on upgrade 1
-    local tauntDuration = 3  -- Base duration
-    if self:hasUpgrade(1) then
-        tauntDuration = 5  -- Extended duration with Iron Will
-    end
-
     for _, unit in ipairs(allUnits) do
-        -- Only taunt enemy units
         if unit.owner ~= self.owner and not unit.isDead then
             local distance = math.sqrt((unit.col - self.col)^2 + (unit.row - self.row)^2)
             if distance <= 3 then
-                -- Apply taunt
                 unit.tauntedBy = self
                 unit.tauntTimer = tauntDuration
                 enemiesInRadius = enemiesInRadius + 1
@@ -90,6 +93,21 @@ end
 
 -- Override update for Mend heal logic (upgrade 3)
 function Knight:update(dt, grid)
+    -- Windup animation; fires taunt when complete
+    if self.actionAnimPlaying and not self.actionAnimDone then
+        self.actionAnimProgress = math.min(1, self.actionAnimProgress + dt / self.actionDuration)
+        if self.actionAnimProgress >= 1 then
+            self.actionAnimDone    = true
+            self.actionAnimPlaying = false
+            if self.pendingTaunt then
+                local p = self.pendingTaunt
+                self:applyTaunt(p.grid, p.tauntDuration)
+                self.pendingTaunt = nil
+            end
+        end
+        return  -- skip normal combat AI during windup
+    end
+
     -- Handle Mend upgrade (heal once at 50% HP threshold)
     if self:hasUpgrade(3) and not self.hasHealed and not self.isDead then
         local belowHalf = self.health < self.maxHealth * 0.5
@@ -120,6 +138,7 @@ function Knight:resetCombatState()
     self.hasHealed          = false
     self.wasAboveHalfHealth = true
     self.hpBonusApplied     = false
+    self.pendingTaunt       = nil
 end
 
 -- Melee attack: apply damage (animation started by startMeleeAnimation in update())
