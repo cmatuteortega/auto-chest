@@ -554,4 +554,20 @@ function UnitRegistry.getRandomUnitType()
     return types[math.random(#types)]
 end
 
+-- ── Progression constants ────────────────────────────────────────────────
+
+-- Units every new player starts with (2 copies each)
+UnitRegistry.starterUnits = { "boney", "marrow", "knight", "marc" }
+UnitRegistry.STARTER_COPIES = 2
+
+-- Max copies of a single unit a player can own via progression
+UnitRegistry.MAX_CARD_COPIES = 4
+
+-- Rarity tiers for milestone unlock ordering (commons exhausted first, then rares, then epics)
+UnitRegistry.rarityTiers = {
+    { tier = "common", units = { "burrow", "amalgam", "mage", "bull" } },
+    { tier = "rare",   units = { "samurai", "bonk", "lancer", "humerus" } },
+    { tier = "epic",   units = { "clavicula", "tomb", "sinner", "catapult" } },
+}
+
 return UnitRegistry

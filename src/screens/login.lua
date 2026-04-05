@@ -82,7 +82,8 @@ function LoginScreen.new()
                 level = data.level or 1,
                 activeDeckIndex = data.active_deck_index,
                 decks = data.decks,
-                token = data.token
+                token = data.token,
+                unlocks = data.unlocks
             }
             self.status = "logged_in"
             self.statusMessage = "Login successful!"

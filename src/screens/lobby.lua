@@ -112,7 +112,14 @@ function LobbyScreen.new()
     function self:update(dt)
         -- Poll network
         if self.client then
-            self.client:update()
+            local ok, err = pcall(function() self.client:update() end)
+            if not ok then
+                print("[LOBBY] Socket error: " .. tostring(err))
+                self.client = nil
+                _G.GameSocket = nil
+                local ScreenManager = require('lib.screen_manager')
+                ScreenManager.switch('login')
+            end
         end
 
         -- Transition to game after match found

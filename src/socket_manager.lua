@@ -63,6 +63,7 @@ function SocketManager.reconnect(onSuccess, onFailure)
             _G.PlayerData.activeDeckIndex = data.active_deck_index
             _G.PlayerData.decks           = data.decks
             _G.PlayerData.token           = data.token
+            _G.PlayerData.unlocks         = data.unlocks or _G.PlayerData.unlocks
         end
         if onSuccess then onSuccess() end
     end)
@@ -87,7 +88,12 @@ end
 --- @return true when the handle is finished (success or failure), false while in progress
 function SocketManager.updateReconnect(handle, dt)
     if not handle or handle.done then return true end
-    handle.client:update()
+    local ok, err = pcall(function() handle.client:update() end)
+    if not ok then
+        print("[SocketManager] Reconnect client error: " .. tostring(err))
+        handle.done = true
+        return true
+    end
     handle.elapsed = handle.elapsed + (dt or 0)
     if handle.elapsed >= handle.TIMEOUT then
         handle.done = true
