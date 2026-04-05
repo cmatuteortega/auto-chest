@@ -47,7 +47,7 @@ function Catapult:new(row, col, owner, sprites)
     Catapult.super.new(self, row, col, owner, sprites, stats)
 
     self.isActionUnit   = true
-    self.actionDuration = 0.6
+    self.actionDuration = 0.3
 
     -- Active projectile: { startCol, startRow, targetCol, targetRow, progress, duration }
     self.projectile = nil
@@ -80,13 +80,14 @@ end
 
 function Catapult:resetCombatState()
     Catapult.super.resetCombatState(self)
-    self.projectile  = nil
-    self.firePatches = {}
-    self.shotFired   = false
+    self.projectile        = nil
+    self.pendingProjectile = nil
+    self.firePatches       = {}
+    self.shotFired         = false
 end
 
 function Catapult:onBattleStart(grid)
-    -- Fire 4 rows forward toward the enemy side
+    -- Store shot params; projectile fires when windup animation completes
     local targetRow
     if self.owner == 1 then
         targetRow = math.max(1, self.row - 4)
@@ -94,15 +95,18 @@ function Catapult:onBattleStart(grid)
         targetRow = math.min(8, self.row + 4)
     end
 
-    self.projectile = {
+    self.pendingProjectile = {
         startCol  = self.col,
         startRow  = self.row,
         targetCol = self.col,
         targetRow = targetRow,
-        progress  = 0,
-        duration  = self.actionDuration,
+        duration  = 0.6,
     }
-    self.shotFired = true
+    self.projectile         = nil
+    self.actionAnimPlaying  = true
+    self.actionAnimProgress = 0
+    self.actionAnimDone     = false
+    self.shotFired          = false
 end
 
 -- Explode on landing: deal damage + plant fire patches in a cross
@@ -166,6 +170,29 @@ function Catapult:update(dt, grid)
 
     if self.isDead then
         self.state = "dead"
+        return
+    end
+
+    -- Windup animation; fires projectile when complete
+    if self.actionAnimPlaying and not self.actionAnimDone then
+        self.actionAnimProgress = math.min(1, self.actionAnimProgress + dt / self.actionDuration)
+        if self.actionAnimProgress >= 1 then
+            self.actionAnimDone    = true
+            self.actionAnimPlaying = false
+            if self.pendingProjectile then
+                local p = self.pendingProjectile
+                self.projectile = {
+                    startCol  = p.startCol,
+                    startRow  = p.startRow,
+                    targetCol = p.targetCol,
+                    targetRow = p.targetRow,
+                    progress  = 0,
+                    duration  = p.duration,
+                }
+                self.pendingProjectile = nil
+                self.shotFired = true
+            end
+        end
         return
     end
 

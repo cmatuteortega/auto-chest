@@ -334,16 +334,18 @@ function MenuScreen.new()
         end
 
         -- Advance idle and attack animations for play-panel preview
-        local IDLE_FRAME_DUR = 0.12 * 2  -- matches animFrameDuration * 2 from base_unit
+        local DEFAULT_IDLE_FRAME_DUR = 0.12 * 2  -- matches animFrameDuration * 2 from base_unit
+        local IDLE_FRAME_DUR_OVERRIDE = { marrow = 0.18 }  -- per-unit overrides (matches idleFrameDuration in unit files)
         for _, utype in ipairs(self.unitOrder) do
             local d = self.dirSprites[utype]
             -- Idle frame cycling
             if d and d.hasDirectionalSprites and d.directional.idle and d.directional.idle[0] then
-                local frames = d.directional.idle[0].frames
-                local anim   = self.idleAnim[utype]
+                local frames   = d.directional.idle[0].frames
+                local anim     = self.idleAnim[utype]
+                local frameDur = IDLE_FRAME_DUR_OVERRIDE[utype] or DEFAULT_IDLE_FRAME_DUR
                 anim.timer = anim.timer + dt
-                if anim.timer >= IDLE_FRAME_DUR then
-                    anim.timer = anim.timer - IDLE_FRAME_DUR
+                if anim.timer >= frameDur then
+                    anim.timer = anim.timer - frameDur
                     anim.frameIndex = (anim.frameIndex % #frames) + 1
                 end
             end
@@ -440,6 +442,13 @@ function MenuScreen.new()
                     idx = math.min(count, math.floor(p * count) + 1)
                 end
                 return dirData.frames[idx], dirData.trimBottom[idx]
+            end
+            -- Action units: use action/idle override sprite (animated)
+            local aio = d.directional.actionIdleOverride
+            if aio and (aio[0] or aio[180]) then
+                local ad  = aio[0] or aio[180]
+                local idx = math.min(self.idleAnim[utype].frameIndex, #ad.frames)
+                return ad.frames[idx], ad.trimBottom[idx] or 0
             end
             -- Idle
             if d.directional.idle and d.directional.idle[0] then
@@ -541,9 +550,19 @@ function MenuScreen.new()
         lg.printf(costStr, badgeX, badgeY + (badgeH - Fonts.tiny:getHeight()) / 2, badgeW, 'center')
 
         -- Front sprite (integer scale, bottom-anchored to card baseline)
-        local img        = self.sprites[utype]
-        local iw, ih     = img:getDimensions()
-        local trimBottom = self.spriteTrimBottoms[utype] or 0
+        -- Action units: use action/idle override sprite instead of default front
+        local img, trimBottom
+        local _d = self.dirSprites[utype]
+        local _aio = _d and _d.directional and _d.directional.actionIdleOverride
+        if _aio and (_aio[0] or _aio[180]) then
+            local _ad = _aio[0] or _aio[180]
+            img        = _ad.frames[1]
+            trimBottom = _ad.trimBottom[1] or 0
+        else
+            img        = self.sprites[utype]
+            trimBottom = self.spriteTrimBottoms[utype] or 0
+        end
+        local iw, ih = img:getDimensions()
         local sprSc      = math.max(1, math.floor(4 * sc))
         local BOTTOM_MARGIN = 3
         local sx = math.floor(cx + (cardW - iw * sprSc) / 2)
@@ -670,12 +689,21 @@ function MenuScreen.new()
             local angle = ROTATION_ANGLES[self._detailRotAngle]
             local img, trimBottom
             if angle == 0 then
-                -- Front: use animated idle frames
-                local idleData = d.directional.idle[0]
-                local frameIdx = self.idleAnim[utype].frameIndex
-                frameIdx = math.min(frameIdx, #idleData.frames)
-                img        = idleData.frames[frameIdx]
-                trimBottom = idleData.trimBottom[frameIdx] or 0
+                -- Front: action units use their action/idle override; others use animated idle
+                local aio = d.directional.actionIdleOverride
+                if aio and (aio[0] or aio[180]) then
+                    local ad       = aio[0] or aio[180]
+                    local frameIdx = self.idleAnim[utype].frameIndex
+                    local idx      = math.min(frameIdx, #ad.frames)
+                    img        = ad.frames[idx]
+                    trimBottom = ad.trimBottom[idx] or 0
+                else
+                    local idleData = d.directional.idle[0]
+                    local frameIdx = self.idleAnim[utype].frameIndex
+                    frameIdx = math.min(frameIdx, #idleData.frames)
+                    img        = idleData.frames[frameIdx]
+                    trimBottom = idleData.trimBottom[frameIdx] or 0
+                end
             else
                 -- Other angles: use first walk frame
                 local walkData = d.directional.walk[angle] or d.directional.walk[0]
@@ -1086,10 +1114,21 @@ function MenuScreen.new()
             lg.printf(costStr, badgeX, badgeY + (badgeH - Fonts.tiny:getHeight()) / 2, badgeW, 'center')
 
             -- Sprite (bottom-anchored above bottom strip)
-            local img = self.sprites[utype]
+            -- Action units: use action/idle override sprite instead of default front
+            local _d2 = self.dirSprites[utype]
+            local _aio2 = _d2 and _d2.directional and _d2.directional.actionIdleOverride
+            local img, _deckTrimBottom
+            if _aio2 and (_aio2[0] or _aio2[180]) then
+                local _ad2 = _aio2[0] or _aio2[180]
+                img            = _ad2.frames[1]
+                _deckTrimBottom = _ad2.trimBottom[1] or 0
+            else
+                img            = self.sprites[utype]
+                _deckTrimBottom = self.spriteTrimBottoms[utype] or 0
+            end
             if img then
                 local iw, ih     = img:getDimensions()
-                local trimBottom = self.spriteTrimBottoms[utype] or 0
+                local trimBottom = _deckTrimBottom
                 local sprSc      = math.max(1, math.floor(4 * sc))
                 local BOTTOM_MARGIN = 3
                 local sx = math.floor(cx + (cardW - iw * sprSc) / 2)

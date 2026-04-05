@@ -172,6 +172,12 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.animFrameIndex    = 1
     self.animFrameTimer    = 0
     self.animFrameDuration = 0.12          -- seconds/frame; subclasses may override
+    self.idleFrameDuration = 0.24          -- seconds/frame for idle cycling (default 2× walk)
+
+    -- Battle-start one-shot action animation (used by action units like Marrow)
+    self.actionAnimProgress = 0     -- 0..1, set by the unit's update(); drives frame index
+    self.actionAnimPlaying  = false -- true while action is in flight
+    self.actionAnimDone     = false -- latched true once animation finishes
 
     -- Visual
     self.sprite = self:getSprite()
@@ -242,6 +248,29 @@ function BaseUnit:getDirectionalSprite()
     end
 
     local d = self.sprites.directional
+
+    -- Action animation: one-shot battle-start sequence
+    if self.animState == "action" and d.action then
+        local step = self:getNearestStep(self:visualAngle(self.facingAngle), {0, 180},
+                                         self:visualAngle(self.prevFacingAngle))
+        local dirData = d.action[step] or d.action[0]
+        if dirData then
+            local idx = math.min(self.animFrameIndex, #dirData.frames)
+            return dirData.frames[idx], dirData.trimBottom[idx], dirData.trimTop[idx]
+        end
+    end
+
+    -- Idle override: use action/idle sprites during setup before action fires
+    if self.animState == "idle" and not self.actionAnimDone and d.actionIdleOverride then
+        local step = self:getNearestStep(self:visualAngle(self.facingAngle), {0, 180},
+                                         self:visualAngle(self.prevFacingAngle))
+        local dirData = d.actionIdleOverride[step] or d.actionIdleOverride[0]
+        if dirData then
+            local idx = math.min(self.animFrameIndex, #dirData.frames)
+            return dirData.frames[idx], dirData.trimBottom[idx], dirData.trimTop[idx]
+        end
+    end
+
     local stateKey = self.animState == "attack" and "hit" or self.animState
     local availableSteps = (self.animState == "idle") and {0, 180} or {0, 45, 135, 180, 225, 315}
     local step = self:getNearestStep(self:visualAngle(self.facingAngle), availableSteps,
@@ -291,7 +320,11 @@ function BaseUnit:updateVisuals(dt, gameState)
 
     -- 2. Determine animState
     local prevState = self.animState
-    if self.attackAnimProgress < 1 and self.attackTargetCol then
+    if self.actionAnimPlaying and not self.actionAnimDone then
+        self.animState = "action"
+    elseif not self.actionAnimDone and self.sprites.directional and self.sprites.directional.action then
+        self.animState = "idle"   -- hold action-idle pose until windup begins
+    elseif self.attackAnimProgress < 1 and self.attackTargetCol then
         self.animState = "attack"
     elseif self.isMoving then
         self.animState = "walk"
@@ -307,7 +340,15 @@ function BaseUnit:updateVisuals(dt, gameState)
     end
 
     -- 3. Advance frame index
-    if self.animState == "attack" then
+    if self.animState == "action" then
+        -- Progress-driven one-shot: map actionAnimProgress (0..1) to frame index
+        local d = self.sprites.directional
+        local step = self:getNearestStep(self:visualAngle(self.facingAngle), {0, 180},
+                                         self:visualAngle(self.prevFacingAngle))
+        local dirData = d.action and (d.action[step] or d.action[0])
+        local count = dirData and #dirData.frames or 1
+        self.animFrameIndex = math.min(count, math.floor(self.actionAnimProgress * count) + 1)
+    elseif self.animState == "attack" then
         -- 3-phase attack: windup (0→⅓) / lunge (⅓→⅔) / impact (⅔→1)
         -- frame 1 = windup, frame 2 = lunge, frame 3 = impact
         local d = self.sprites.directional
@@ -331,7 +372,7 @@ function BaseUnit:updateVisuals(dt, gameState)
     else
         -- Cycle idle/walk frames via timer (only when actually moving for walk)
         -- Idle uses a slower cadence than walk for a more relaxed breathing feel
-        local frameDur = (self.animState == "idle") and (self.animFrameDuration * 2) or self.animFrameDuration
+        local frameDur = (self.animState == "idle") and self.idleFrameDuration or self.animFrameDuration
         local shouldCycle = (self.animState == "idle") or self.isMoving
         if shouldCycle then
             self.animFrameTimer = self.animFrameTimer + dt
@@ -707,6 +748,11 @@ function BaseUnit:resetCombatState()
 
     self.tombMartyrdombuffTimer = nil
     self._noHeal                = nil
+
+    -- Reset action animation state
+    self.actionAnimProgress = 0
+    self.actionAnimPlaying  = false
+    self.actionAnimDone     = false
 
     -- Reset directional sprite fields
     if self.hasDirectionalSprites then

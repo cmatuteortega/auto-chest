@@ -302,6 +302,51 @@ function UnitRegistry.loadDirectionalSprites(unitType)
         loadFrames("hit", angle)
     end
 
+    -- Load action animation frames (battle-start one-shot) from action/ subfolder
+    local actionBase = basePath .. "action/"
+    if love.filesystem.getInfo(actionBase .. "action_0_1.png") then
+        result.directional.action = {}
+        result.directional.actionIdleOverride = {}
+        local function loadActionFrames(destTable, angle)
+            local frames, trims, trimTops = {}, {}, {}
+            local i = 1
+            while true do
+                local path = actionBase .. "action_" .. angle .. "_" .. i .. ".png"
+                if not love.filesystem.getInfo(path) then break end
+                local img = love.graphics.newImage(path)
+                img:setFilter('nearest', 'nearest')
+                table.insert(frames, img)
+                table.insert(trims, trimBottomRows(path))
+                table.insert(trimTops, trimTopRows(path))
+                i = i + 1
+            end
+            if #frames > 0 then
+                destTable[angle] = {frames = frames, trimBottom = trims, trimTop = trimTops}
+            end
+        end
+        local function loadActionIdleFrames(destTable, angle)
+            local frames, trims, trimTops = {}, {}, {}
+            local i = 1
+            while true do
+                local path = actionBase .. "idle_" .. angle .. "_" .. i .. ".png"
+                if not love.filesystem.getInfo(path) then break end
+                local img = love.graphics.newImage(path)
+                img:setFilter('nearest', 'nearest')
+                table.insert(frames, img)
+                table.insert(trims, trimBottomRows(path))
+                table.insert(trimTops, trimTopRows(path))
+                i = i + 1
+            end
+            if #frames > 0 then
+                destTable[angle] = {frames = frames, trimBottom = trims, trimTop = trimTops}
+            end
+        end
+        for _, angle in ipairs({0, 180}) do
+            loadActionFrames(result.directional.action, angle)
+            loadActionIdleFrames(result.directional.actionIdleOverride, angle)
+        end
+    end
+
     -- Load background animation frames if a background-anim/ folder exists
     local bgFrames = {}
     local i = 1

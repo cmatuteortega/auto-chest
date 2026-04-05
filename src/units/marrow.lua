@@ -19,8 +19,9 @@ function Marrow:new(row, col, owner, sprites)
     Marrow.super.new(self, row, col, owner, sprites, stats)
 
     -- Lance passive (fires at battle start)
-    self.isActionUnit   = true
-    self.actionDuration = 0.6
+    self.isActionUnit      = true
+    self.actionDuration    = 0.6
+    self.idleFrameDuration = 0.18  -- 4 frames × 0.18s = 0.72s cycle, matches boney's 3 × 0.24s
     self.lance          = nil
 
     -- Track damage boost timer for upgrade 2
@@ -72,17 +73,19 @@ end
 
 function Marrow:onBattleStart(grid)
     local endRow = (self.owner == 1) and 1 or Constants.GRID_ROWS
-    self.lance = {
-        progress = 0,
+    -- Store lance params; lance fires when windup animation completes
+    self.pendingLance = {
         duration = self.actionDuration,
         startCol = self.col,
         startRow = self.row,
         endRow   = endRow,
         targets  = self:findColumnTargets(grid),
-        hitIndex = 1,
         damage   = 5,
-        done     = false,
     }
+    self.lance              = nil
+    self.actionAnimPlaying  = true
+    self.actionAnimProgress = 0
+    self.actionAnimDone     = false
 end
 
 -- Override getDamage to apply damage boost from upgrade 2
@@ -96,7 +99,32 @@ end
 
 -- Override update to handle lance phase then normal combat
 function Marrow:update(dt, grid)
-    -- Lance animation and hit resolution
+    -- Windup animation; fires lance when complete
+    if self.actionAnimPlaying and not self.actionAnimDone then
+        self.actionAnimProgress = math.min(1, self.actionAnimProgress + dt / self.actionDuration)
+        if self.actionAnimProgress >= 1 then
+            self.actionAnimDone    = true
+            self.actionAnimPlaying = false
+            if self.pendingLance then
+                local p = self.pendingLance
+                self.lance = {
+                    progress = 0,
+                    duration = p.duration,
+                    startCol = p.startCol,
+                    startRow = p.startRow,
+                    endRow   = p.endRow,
+                    targets  = p.targets,
+                    hitIndex = 1,
+                    damage   = p.damage,
+                    done     = false,
+                }
+                self.pendingLance = nil
+            end
+        end
+        return  -- skip normal combat AI during windup
+    end
+
+    -- Lance travel and hit resolution
     if self.lance and not self.lance.done then
         local lance = self.lance
         lance.progress = lance.progress + (dt / lance.duration)
@@ -138,12 +166,7 @@ function Marrow:update(dt, grid)
     Marrow.super.update(self, dt, grid)
 end
 
--- Passive: Gain attack speed on kill
 function Marrow:onKill(target)
-    -- Increase attack speed by 0.2 per kill (stacks permanently for the battle)
-    self.attackSpeed = self.attackSpeed + 0.25
-    self:triggerBuffAnim()
-
     -- Upgrade 2: 2s damage boost
     if self:hasUpgrade(2) then
         self.damageBoostTimer = 2
@@ -154,7 +177,7 @@ end
 function Marrow:resetCombatState()
     Marrow.super.resetCombatState(self)
     self.lance            = nil
-    self.attackSpeed      = self.baseAttackSpeed
+    self.pendingLance     = nil
     self.damageBoostTimer = 0
 end
 
