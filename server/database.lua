@@ -462,7 +462,7 @@ function Database:updateXP(playerId, amount)
         if not unlocks.pending_rewards then unlocks.pending_rewards = {} end
 
         for lvl = oldLevel + 1, level do
-            local rng = makeLCG(playerId * 1000 + lvl)
+            local rng = function(n) return math.random(n) end
             local reward = computeLevelReward(lvl, unlocks, rng)
             if reward then
                 -- Apply card grant immediately

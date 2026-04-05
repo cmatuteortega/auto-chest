@@ -361,11 +361,14 @@ function MenuScreen.new()
             local unlocks = _G.PlayerData and _G.PlayerData.unlocks
             if unlocks and unlocks.pending_rewards and #unlocks.pending_rewards > 0 then
                 local reward = unlocks.pending_rewards[1]
-                self._rewardState = "pending"
-                self._rewardUnit  = reward.unit
-                self._rewardType  = reward.type   -- "card" or "new_unit"
-                self._rewardLevel = reward.level
+                self._rewardState     = "pending"
+                self._rewardUnit      = reward.unit
+                self._rewardType      = reward.type   -- "card" or "new_unit"
+                self._rewardLevel     = reward.level
+                self._rewardShakeTime = 0
             end
+        elseif self._rewardState == "pending" then
+            self._rewardShakeTime = (self._rewardShakeTime or 0) + dt
         elseif self._rewardState == "revealing" then
             self._rewardAnimTimer = self._rewardAnimTimer + dt
         end
@@ -1542,28 +1545,39 @@ function MenuScreen.new()
                 local fillW  = math.floor(barW * math.min(pxp / xpNeed, 1))
                 local isPending = (self._rewardState == "pending")
 
+                -- Shake offset: initial burst decays, then a gentle idle pulse
+                local shakeX = 0
+                if isPending then
+                    local t = self._rewardShakeTime or 0
+                    -- Burst: amplitude 4px decaying to 0 over 0.6s
+                    local burst = 4 * sc * math.exp(-t * 6) * math.sin(t * 60)
+                    -- Idle pulse: amplitude 1.5px, period ~1.4s, starts after burst fades
+                    local idle  = 1.5 * sc * math.sin(t * 4.5) * math.min(t / 0.6, 1)
+                    shakeX = math.floor(burst + idle)
+                end
+
                 -- Background (same dark as settings button bg)
                 lg.setColor(0.059, 0.165, 0.247, 1)
-                lg.rectangle('fill', barX, stripY, barW, stripH, barR, barR)
+                lg.rectangle('fill', barX + shakeX, stripY, barW, stripH, barR, barR)
                 -- Fill: tan (#c3a38a) when pending reward, else normal purple
                 if isPending then
                     lg.setColor(0.765, 0.639, 0.541, 1)
-                    lg.rectangle('fill', barX, stripY, barW, stripH, barR, barR)
+                    lg.rectangle('fill', barX + shakeX, stripY, barW, stripH, barR, barR)
                 elseif fillW > 0 then
                     lg.setColor(0.306, 0.286, 0.373, 1)
-                    lg.rectangle('fill', barX, stripY, fillW, stripH, barR, barR)
+                    lg.rectangle('fill', barX + shakeX, stripY, fillW, stripH, barR, barR)
                 end
                 -- Outline
                 lg.setColor(0.125, 0.224, 0.310, 1)
                 lg.setLineWidth(math.max(1, math.floor(sc)))
-                lg.rectangle('line', barX, stripY, barW, stripH, barR, barR)
+                lg.rectangle('line', barX + shakeX, stripY, barW, stripH, barR, barR)
 
                 -- Label: reward text when pending, else "Level X"
                 lg.setFont(Fonts.small)
                 if isPending then
                     lg.setColor(0.059, 0.059, 0.078, 1)
                     local rewardLabel = (self._rewardType == "new_unit") and "New unlock!" or "New card!"
-                    lg.printf(rewardLabel, barX, textCY(Fonts.small, stripY, stripH), barW, 'center')
+                    lg.printf(rewardLabel, barX + shakeX, textCY(Fonts.small, stripY, stripH), barW, 'center')
                 else
                     lg.setColor(0.965, 0.839, 0.741, 1)
                     lg.printf("Level " .. plevel, barX, textCY(Fonts.small, stripY, stripH), barW, 'center')
@@ -1770,13 +1784,32 @@ function MenuScreen.new()
             lg.setColor(rarityColor)
             roundedRectLine(0, 0, cardW, cardH, 8, sc, math.max(2, math.floor(3 * sc)))
 
-            -- Unit sprite (centered in upper portion)
+            -- Layout constants
+            local topPad    = math.floor(cardH * 0.06)
+            local nameH     = Fonts.medium:getHeight()
+            local badgeH    = Fonts.small:getHeight()
+            local bottomPad = math.floor(cardH * 0.05)
+            local nameY     = cardH - bottomPad - badgeH - math.floor(6 * sc) - nameH
+            local badgeY    = cardH - bottomPad - badgeH
+
+            -- Unit sprite: fill available space between top pad and name, vertically centered
             local img = self.sprites[rewardUnit]
             if img then
-                local iw = img:getWidth()
-                local sprSc  = math.max(1, math.floor(6 * sc))
-                local sx = math.floor((cardW - iw * sprSc) / 2)
-                local sy = math.floor(cardH * 0.12)
+                local iw, ih    = img:getDimensions()
+                local trimBottom = self.spriteTrimBottoms[rewardUnit] or 0
+                local sprSc     = math.max(1, math.floor(6 * sc))
+                local sprW      = iw * sprSc
+                local sprH      = (ih - trimBottom) * sprSc
+                local zoneH     = nameY - topPad - math.floor(8 * sc)
+                -- Scale down if sprite is taller than the zone
+                if sprH > zoneH then
+                    local fit = zoneH / sprH
+                    sprSc  = math.max(1, math.floor(sprSc * fit))
+                    sprW   = iw * sprSc
+                    sprH   = (ih - trimBottom) * sprSc
+                end
+                local sx = math.floor((cardW - sprW) / 2)
+                local sy = math.floor(topPad + (zoneH - sprH) / 2)
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
             end
@@ -1785,7 +1818,7 @@ function MenuScreen.new()
             lg.setFont(Fonts.medium)
             lg.setColor(1, 1, 1, 1)
             local unitName = rewardUnit:sub(1,1):upper() .. rewardUnit:sub(2)
-            lg.printf(unitName, 0, math.floor(cardH * 0.72), cardW, 'center')
+            lg.printf(unitName, 0, nameY, cardW, 'center')
 
             -- Badge: "NEW!" or "+1"
             local badgeText = (self._rewardType == "new_unit") and "NEW!" or "+1"
@@ -1795,7 +1828,7 @@ function MenuScreen.new()
             else
                 lg.setColor(0.6, 1, 0.6, 1)
             end
-            lg.printf(badgeText, 0, math.floor(cardH * 0.84), cardW, 'center')
+            lg.printf(badgeText, 0, badgeY, cardW, 'center')
 
             lg.pop()
 
