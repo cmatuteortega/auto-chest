@@ -123,6 +123,15 @@ function DeckManager.adjustCount(deckIndex, unitType, delta)
         return false
     end
     local newCount = math.max(0, current + delta)
+    -- Enforce unlock limits (skip in God Mode or offline/no unlock data)
+    if delta > 0 and not _G.GodMode then
+        local unlocks = _G.PlayerData and _G.PlayerData.unlocks
+        if unlocks and unlocks.cards then
+            local owned = unlocks.cards[unitType] or 0
+            if owned <= 0 then return false end
+            if newCount > owned then return false end
+        end
+    end
     -- Prevent lowering to 0 if it would leave the deck empty
     if newCount == 0 and DeckManager.getTotalCount(deckIndex) <= 1 then
         return false

@@ -63,6 +63,7 @@ function SocketManager.reconnect(onSuccess, onFailure)
             _G.PlayerData.activeDeckIndex = data.active_deck_index
             _G.PlayerData.decks           = data.decks
             _G.PlayerData.token           = data.token
+            _G.PlayerData.unlocks         = data.unlocks or _G.PlayerData.unlocks
         end
         if onSuccess then onSuccess() end
     end)

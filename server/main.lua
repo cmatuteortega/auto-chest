@@ -244,6 +244,12 @@ local function handleMessage(peer, eventName, msgData)
             }
             peerByPlayerId[player.id] = peer
 
+            -- Migrate unlocks for existing players if needed
+            local unlocks = player.unlocks
+            if not unlocks then
+                unlocks = db:migrateUnlocks(player.id)
+            end
+
             peer:send(encode("login_success", {
                 player_id         = player.id,
                 username          = player.username,
@@ -255,7 +261,8 @@ local function handleMessage(peer, eventName, msgData)
                 level             = player.level,
                 active_deck_index = player.activeDeckIndex,
                 decks             = player.decks,
-                token             = token
+                token             = token,
+                unlocks           = unlocks
             }))
             pushLog("Login: " .. username)
         else
@@ -417,8 +424,8 @@ local function handleMessage(peer, eventName, msgData)
         local winnerXP      = db:updateXP(winnerData.id, 10)
         local loserXP       = db:updateXP(loserData.id, 7)
 
-        if winnerData.peer then pcall(function() winnerData.peer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems, xp = winnerXP.xp, level = winnerXP.level})) end) end
-        if loserData.peer  then pcall(function() loserData.peer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems,  xp = loserXP.xp,  level = loserXP.level}))  end) end
+        if winnerData.peer then pcall(function() winnerData.peer:send(encode("currency_update", {gold = winnerNewGold, gems = winnerGems, xp = winnerXP.xp, level = winnerXP.level, unlocks = winnerXP.unlocks})) end) end
+        if loserData.peer  then pcall(function() loserData.peer:send(encode("currency_update",  {gold = loserNewGold,  gems = loserGems,  xp = loserXP.xp,  level = loserXP.level,  unlocks = loserXP.unlocks}))  end) end
 
         pushLog("Match result: Winner +10g +10xp, Loser +5g +7xp")
 
@@ -444,6 +451,12 @@ local function handleMessage(peer, eventName, msgData)
             }
             peerByPlayerId[player.id] = peer
 
+            -- Migrate unlocks for existing players if needed
+            local unlocks = player.unlocks
+            if not unlocks then
+                unlocks = db:migrateUnlocks(player.id)
+            end
+
             peer:send(encode("login_success", {
                 player_id         = player.id,
                 username          = player.username,
@@ -455,7 +468,8 @@ local function handleMessage(peer, eventName, msgData)
                 level             = player.level,
                 active_deck_index = player.activeDeckIndex,
                 decks             = player.decks,
-                token             = token
+                token             = token,
+                unlocks           = unlocks
             }))
             pushLog("Reconnect: " .. player.username)
         else
@@ -511,6 +525,19 @@ local function handleMessage(peer, eventName, msgData)
         local currentGold = db:updateGold(session.player_id, 0)
         pushLog("Gem purchase (mock): " .. session.username .. " +" .. gemGain .. " gems -> newGems=" .. tostring(newGems) .. " gold=" .. tostring(currentGold))
         peer:send(encode("currency_update", {gold = currentGold, gems = newGems}))
+
+    elseif eventName == "claim_reward" then
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+
+        local unlocks = db:claimReward(session.player_id)
+        peer:send(encode("reward_claimed", {
+            pending_rewards = unlocks and unlocks.pending_rewards or {}
+        }))
+        pushLog("Reward claimed: " .. session.username)
 
     elseif eventName == "relay" then
         -- Forward game messages to partner (via partnerKey, not raw peer ref)

@@ -16,6 +16,9 @@ local json = require("lib.json")  -- Load json once at module level
 local Database = {}
 Database.__index = Database
 
+-- Forward-declared helpers (defined in the Unlock / Progression section below)
+local makeLCG, computeLevelReward, computeRandomCardReward, computeMilestoneReward
+
 -- Initialize database connection
 function Database.new(dbPath)
     local self = setmetatable({}, Database)
@@ -65,6 +68,7 @@ function Database:createTables()
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN gems INTEGER DEFAULT 0") end)
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN xp INTEGER DEFAULT 0") end)
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1") end)
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN unlocks_json TEXT") end)
 
     -- Sessions table: always drop and recreate with device_id (no backward compat)
     self.db:exec("DROP TABLE IF EXISTS sessions")
@@ -96,19 +100,29 @@ function Database:registerPlayer(username, password)
     -- Hash password
     local hash = bcrypt.digest(password, 10) -- 10 rounds
 
-    -- Insert new player with 5 deck slots (each pre-seeded with 1 boney)
-    local emptyDeck = '{"name":"Deck %d","counts":{"boney":1}}'
+    -- Starter deck: 2 copies of each starter unit
+    local starterDeck = '{"name":"Deck 1","counts":{"boney":2,"marrow":2,"knight":2,"marc":2}}'
+    local emptyDeck   = '{"name":"Deck %d","counts":{"boney":1}}'
+
+    -- Initial unlock state: starter units with 2 copies each
+    local starterUnlocks = json.encode({
+        cards = { boney = 2, marrow = 2, knight = 2, marc = 2 },
+        pending_rewards = {}
+    })
+
     stmt = self.db:prepare([[
         INSERT INTO players (username, password_hash, trophies, coins, active_deck_index,
-                           deck1_json, deck2_json, deck3_json, deck4_json, deck5_json)
-        VALUES (?, ?, 0, 6, 1, ?, ?, ?, ?, ?)
+                           deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
+                           unlocks_json)
+        VALUES (?, ?, 0, 6, 1, ?, ?, ?, ?, ?, ?)
     ]])
     stmt:bind_values(username, hash,
-        string.format(emptyDeck, 1),
+        starterDeck,
         string.format(emptyDeck, 2),
         string.format(emptyDeck, 3),
         string.format(emptyDeck, 4),
-        string.format(emptyDeck, 5))
+        string.format(emptyDeck, 5),
+        starterUnlocks)
 
     local result = stmt:step()
     stmt:finalize()
@@ -131,12 +145,13 @@ function Database:registerPlayer(username, password)
         level = 1,
         activeDeckIndex = 1,
         decks = {
-            json.decode(string.format(emptyDeck, 1)),
+            json.decode(starterDeck),
             json.decode(string.format(emptyDeck, 2)),
             json.decode(string.format(emptyDeck, 3)),
             json.decode(string.format(emptyDeck, 4)),
             json.decode(string.format(emptyDeck, 5))
-        }
+        },
+        unlocks = json.decode(starterUnlocks)
     }
 end
 
@@ -145,7 +160,7 @@ function Database:loginPlayer(username, password)
     local stmt = self.db:prepare([[
         SELECT id, username, password_hash, trophies, coins, active_deck_index,
                deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
-               gold, gems, xp, level
+               gold, gems, xp, level, unlocks_json
         FROM players WHERE username = ?
     ]])
     stmt:bind_values(username)
@@ -170,6 +185,7 @@ function Database:loginPlayer(username, password)
     local gems = stmt:get_value(12) or 0
     local xp   = stmt:get_value(13) or 0
     local level = stmt:get_value(14) or 1
+    local unlocksJson = stmt:get_value(15)
     stmt:finalize()
 
     -- Verify password
@@ -192,6 +208,12 @@ function Database:loginPlayer(username, password)
         json.decode(deck5Json) or {name = "Deck 5", counts = {}}
     }
 
+    -- Parse unlocks (nil if not yet migrated)
+    local unlocks = nil
+    if unlocksJson then
+        unlocks = json.decode(unlocksJson)
+    end
+
     return {
         id = playerId,
         username = storedUsername,
@@ -202,7 +224,8 @@ function Database:loginPlayer(username, password)
         xp = xp,
         level = level,
         activeDeckIndex = activeDeckIndex,
-        decks = decks
+        decks = decks,
+        unlocks = unlocks
     }
 end
 
@@ -237,7 +260,7 @@ function Database:validateSession(token, deviceId)
         SELECT s.player_id, s.device_id, s.created_at,
                p.username, p.trophies, p.coins, p.active_deck_index,
                p.deck1_json, p.deck2_json, p.deck3_json, p.deck4_json, p.deck5_json,
-               p.gold, p.gems, p.xp, p.level
+               p.gold, p.gems, p.xp, p.level, p.unlocks_json
         FROM sessions s
         JOIN players p ON s.player_id = p.id
         WHERE s.token = ?
@@ -265,6 +288,7 @@ function Database:validateSession(token, deviceId)
     local gems          = stmt:get_value(13) or 0
     local xp            = stmt:get_value(14) or 0
     local level         = stmt:get_value(15) or 1
+    local unlocksJson   = stmt:get_value(16)
     stmt:finalize()
 
     -- Reject if device_id doesn't match
@@ -285,6 +309,11 @@ function Database:validateSession(token, deviceId)
         json.decode(deck5Json) or {name = "Deck 5", counts = {}}
     }
 
+    local unlocks = nil
+    if unlocksJson then
+        unlocks = json.decode(unlocksJson)
+    end
+
     return {
         id = playerId,
         username = username,
@@ -295,7 +324,8 @@ function Database:validateSession(token, deviceId)
         xp = xp,
         level = level,
         activeDeckIndex = activeDeckIndex,
-        decks = decks
+        decks = decks,
+        unlocks = unlocks
     }
 end
 
@@ -312,7 +342,7 @@ function Database:getPlayer(playerId)
     local stmt = self.db:prepare([[
         SELECT id, username, trophies, coins, active_deck_index,
                deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
-               gold, gems, xp, level
+               gold, gems, xp, level, unlocks_json
         FROM players WHERE id = ?
     ]])
     stmt:bind_values(playerId)
@@ -336,6 +366,7 @@ function Database:getPlayer(playerId)
     local gems = stmt:get_value(11) or 0
     local xp   = stmt:get_value(12) or 0
     local level = stmt:get_value(13) or 1
+    local unlocksJson = stmt:get_value(14)
     stmt:finalize()
 
     local decks = {
@@ -345,6 +376,11 @@ function Database:getPlayer(playerId)
         json.decode(deck4Json) or {name = "Deck 4", counts = {}},
         json.decode(deck5Json) or {name = "Deck 5", counts = {}}
     }
+
+    local unlocks = nil
+    if unlocksJson then
+        unlocks = json.decode(unlocksJson)
+    end
 
     return {
         id = id,
@@ -356,7 +392,8 @@ function Database:getPlayer(playerId)
         xp = xp,
         level = level,
         activeDeckIndex = activeDeckIndex,
-        decks = decks
+        decks = decks,
+        unlocks = unlocks
     }
 end
 
@@ -385,7 +422,8 @@ function Database:updateTrophies(playerId, delta)
     return 0
 end
 
--- Add XP to a player, handling level-ups. Returns {xp, level}.
+-- Add XP to a player, handling level-ups and unlock rewards.
+-- Returns {xp, level, unlocks} where unlocks is the full unlock state (or nil if unchanged).
 function Database:updateXP(playerId, amount)
     local stmt = self.db:prepare("SELECT xp, level FROM players WHERE id = ?")
     stmt:bind_values(playerId)
@@ -396,6 +434,7 @@ function Database:updateXP(playerId, amount)
     end
     stmt:finalize()
 
+    local oldLevel = level
     xp = xp + amount
 
     -- Level-up loop: xpNeeded = 30 + floor((level-1)/10) * 5
@@ -412,7 +451,36 @@ function Database:updateXP(playerId, amount)
     stmt:step()
     stmt:finalize()
 
-    return {xp = xp, level = level}
+    -- Compute unlock rewards for each new level reached
+    local unlocks = nil
+    if level > oldLevel then
+        unlocks = self:getUnlocks(playerId)
+        if not unlocks then
+            unlocks = self:migrateUnlocks(playerId)
+        end
+        -- Ensure pending_rewards exists
+        if not unlocks.pending_rewards then unlocks.pending_rewards = {} end
+
+        for lvl = oldLevel + 1, level do
+            local rng = makeLCG(playerId * 1000 + lvl)
+            local reward = computeLevelReward(lvl, unlocks, rng)
+            if reward then
+                -- Apply card grant immediately
+                if reward.type == "new_unit" then
+                    unlocks.cards[reward.unit] = 1
+                elseif reward.type == "card" then
+                    unlocks.cards[reward.unit] = (unlocks.cards[reward.unit] or 0) + 1
+                end
+                -- Add to pending for client reveal animation
+                reward.level = lvl
+                table.insert(unlocks.pending_rewards, reward)
+            end
+        end
+
+        self:setUnlocks(playerId, unlocks)
+    end
+
+    return { xp = xp, level = level, unlocks = unlocks }
 end
 
 -- Add gold to a player (delta can be negative)
@@ -523,6 +591,148 @@ function Database:updateCoins(playerId, coins)
     stmt:finalize()
 
     return true
+end
+
+-- ── Unlock / Progression System ─────────────────────────────────────────
+
+-- Starter units and rarity tiers (mirrors unit_registry.lua constants)
+local STARTER_UNITS  = { "boney", "marrow", "knight", "marc" }
+local STARTER_COPIES = 2
+local MAX_COPIES     = 4
+
+-- Rarity tiers: commons exhausted first, then rares, then epics.
+-- Within a tier, milestone rewards pick randomly.
+local RARITY_TIERS = {
+    { tier = "common", units = { "burrow", "amalgam", "mage", "bull" } },
+    { tier = "rare",   units = { "samurai", "bonk", "lancer", "humerus" } },
+    { tier = "epic",   units = { "clavicula", "tomb", "sinner", "catapult" } },
+}
+
+local function isMilestone(level)
+    return level >= 5 and level % 5 == 0
+end
+
+-- Simple deterministic LCG RNG (no dependency on math.random state)
+makeLCG = function(seed)
+    local s = seed
+    return function(n)
+        s = (s * 1103515245 + 12345) % 2147483648
+        if n then return (s % n) + 1 end
+        return s
+    end
+end
+
+-- Pick a random card from already-unlocked units that have < MAX_COPIES.
+-- Returns { type="card", unit=name } or nil.
+computeRandomCardReward = function(unlocks, rngFunc)
+    local pool = {}
+    for unit, count in pairs(unlocks.cards) do
+        if count > 0 and count < MAX_COPIES then
+            table.insert(pool, unit)
+        end
+    end
+    if #pool == 0 then return nil end
+    table.sort(pool) -- deterministic iteration
+    local idx = rngFunc(#pool)
+    return { type = "card", unit = pool[idx] }
+end
+
+-- Pick a random not-yet-unlocked unit from the lowest available rarity tier.
+-- Returns { type="new_unit", unit=name } or nil.
+computeMilestoneReward = function(unlocks, rngFunc)
+    for _, tierInfo in ipairs(RARITY_TIERS) do
+        local available = {}
+        for _, unit in ipairs(tierInfo.units) do
+            if not unlocks.cards[unit] or unlocks.cards[unit] == 0 then
+                table.insert(available, unit)
+            end
+        end
+        if #available > 0 then
+            local idx = rngFunc(#available)
+            return { type = "new_unit", unit = available[idx] }
+        end
+    end
+    -- All units unlocked; fall back to random card reward
+    return computeRandomCardReward(unlocks, rngFunc)
+end
+
+-- Compute the reward for reaching a given level.
+computeLevelReward = function(level, unlocks, rngFunc)
+    if level < 2 then return nil end
+    if isMilestone(level) then
+        return computeMilestoneReward(unlocks, rngFunc)
+    else
+        return computeRandomCardReward(unlocks, rngFunc)
+    end
+end
+
+-- Read unlock state for a player. Returns table or nil.
+function Database:getUnlocks(playerId)
+    local stmt = self.db:prepare("SELECT unlocks_json FROM players WHERE id = ?")
+    stmt:bind_values(playerId)
+    local result = nil
+    if stmt:step() == sqlite3.ROW then
+        local raw = stmt:get_value(0)
+        if raw then result = json.decode(raw) end
+    end
+    stmt:finalize()
+    return result
+end
+
+-- Write unlock state for a player.
+function Database:setUnlocks(playerId, unlocks)
+    local encoded = json.encode(unlocks)
+    local stmt = self.db:prepare("UPDATE players SET unlocks_json = ? WHERE id = ?")
+    stmt:bind_values(encoded, playerId)
+    stmt:step()
+    stmt:finalize()
+end
+
+-- Migrate unlocks for existing players who have no unlocks_json yet.
+-- Simulates all rewards from level 2 to the player's current level using
+-- a deterministic RNG seeded per player+level, so the result is reproducible.
+function Database:migrateUnlocks(playerId)
+    local stmt = self.db:prepare("SELECT level FROM players WHERE id = ?")
+    stmt:bind_values(playerId)
+    local level = 1
+    if stmt:step() == sqlite3.ROW then
+        level = stmt:get_value(0) or 1
+    end
+    stmt:finalize()
+
+    -- Start with starter cards
+    local unlocks = { cards = {}, pending_rewards = {} }
+    for _, unit in ipairs(STARTER_UNITS) do
+        unlocks.cards[unit] = STARTER_COPIES
+    end
+
+    -- Simulate each level-up reward
+    for lvl = 2, level do
+        local rng = makeLCG(playerId * 1000 + lvl)
+        local reward = computeLevelReward(lvl, unlocks, rng)
+        if reward then
+            if reward.type == "new_unit" then
+                unlocks.cards[reward.unit] = 1
+            elseif reward.type == "card" then
+                unlocks.cards[reward.unit] = (unlocks.cards[reward.unit] or 0) + 1
+            end
+            -- No pending rewards for migration (retroactive)
+        end
+    end
+
+    self:setUnlocks(playerId, unlocks)
+    return unlocks
+end
+
+-- Claim (remove) the first pending reward. Returns updated unlocks.
+function Database:claimReward(playerId)
+    local unlocks = self:getUnlocks(playerId)
+    if not unlocks or not unlocks.pending_rewards or #unlocks.pending_rewards == 0 then
+        return unlocks
+    end
+    table.remove(unlocks.pending_rewards, 1)
+    self:setUnlocks(playerId, unlocks)
+    return unlocks
 end
 
 -- Close database connection

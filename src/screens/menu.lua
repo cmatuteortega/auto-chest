@@ -106,6 +106,19 @@ function MenuScreen.new()
         self._settingsLogoutRect = nil
         self._settingsMusicRect  = nil
         self._settingsSFXRect    = nil
+        self._settingsGodModeRect = nil
+        self._settingsTitleRect   = nil
+        self._settingsTitleTaps   = 0
+        self._settingsTitleLastTap = 0
+        self._showGodModeRow     = false
+
+        -- Reward reveal state
+        self._rewardState     = "idle"   -- "idle", "pending", "revealing"
+        self._rewardAnimTimer = 0
+        self._rewardUnit      = nil
+        self._rewardType      = nil      -- "card" or "new_unit"
+        self._rewardLevel     = nil
+        self._xpBarRect       = nil
 
         -- Hit-rect caches (rebuilt each draw, stored in screen coords)
         self._collectionCards = {}
@@ -174,10 +187,11 @@ function MenuScreen.new()
         self._cb_currencyUpdate = _G.GameSocket:on("currency_update", function(data)
             print("[MENU] currency_update received gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
             if _G.PlayerData then
-                if data.gold  ~= nil then _G.PlayerData.gold  = data.gold  end
-                if data.gems  ~= nil then _G.PlayerData.gems  = data.gems  end
-                if data.xp    ~= nil then _G.PlayerData.xp    = data.xp    end
-                if data.level ~= nil then _G.PlayerData.level = data.level end
+                if data.gold    ~= nil then _G.PlayerData.gold    = data.gold    end
+                if data.gems    ~= nil then _G.PlayerData.gems    = data.gems    end
+                if data.xp      ~= nil then _G.PlayerData.xp      = data.xp      end
+                if data.level   ~= nil then _G.PlayerData.level   = data.level   end
+                if data.unlocks ~= nil then _G.PlayerData.unlocks = data.unlocks end
             end
         end)
 
@@ -206,6 +220,13 @@ function MenuScreen.new()
         self._cb_onlineCount = _G.GameSocket:on("online_count", function(data)
             self._onlineCount = data.count
         end)
+
+        self._cb_rewardClaimed = _G.GameSocket:on("reward_claimed", function(data)
+            -- Server confirms claim; sync pending_rewards
+            if _G.PlayerData and _G.PlayerData.unlocks then
+                _G.PlayerData.unlocks.pending_rewards = data.pending_rewards or {}
+            end
+        end)
     end
 
     function self:removeSocketHandlers()
@@ -216,6 +237,7 @@ function MenuScreen.new()
             if self._cb_forcedLogout   then _G.GameSocket:removeCallback(self._cb_forcedLogout) end
             if self._cb_decksSynced    then _G.GameSocket:removeCallback(self._cb_decksSynced) end
             if self._cb_onlineCount    then _G.GameSocket:removeCallback(self._cb_onlineCount) end
+            if self._cb_rewardClaimed  then _G.GameSocket:removeCallback(self._cb_rewardClaimed) end
         end
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
@@ -223,6 +245,7 @@ function MenuScreen.new()
         self._cb_forcedLogout   = nil
         self._cb_decksSynced    = nil
         self._cb_onlineCount    = nil
+        self._cb_rewardClaimed  = nil
     end
 
     function self:startReconnect()
@@ -331,6 +354,20 @@ function MenuScreen.new()
                 self.shopNotice    = nil
                 self.shopNoticeTimer = 0
             end
+        end
+
+        -- Reward reveal state machine
+        if self._rewardState == "idle" then
+            local unlocks = _G.PlayerData and _G.PlayerData.unlocks
+            if unlocks and unlocks.pending_rewards and #unlocks.pending_rewards > 0 then
+                local reward = unlocks.pending_rewards[1]
+                self._rewardState = "pending"
+                self._rewardUnit  = reward.unit
+                self._rewardType  = reward.type   -- "card" or "new_unit"
+                self._rewardLevel = reward.level
+            end
+        elseif self._rewardState == "revealing" then
+            self._rewardAnimTimer = self._rewardAnimTimer + dt
         end
 
         -- Advance idle and attack animations for play-panel preview
@@ -783,6 +820,8 @@ function MenuScreen.new()
         local currentY = startY
         local cardIndex = 0
 
+        local unlocks = _G.PlayerData and _G.PlayerData.unlocks
+
         for _, group in ipairs(UnitRegistry.groups) do
             self:drawGroupHeader(startX, currentY, totalW, headerH, group.name, sc)
             currentY = currentY + headerH + 6 * sc
@@ -792,15 +831,21 @@ function MenuScreen.new()
                 local row = math.floor((j - 1) / cols)
                 local cx  = startX + col * (cardW + gapX)
                 local cy  = currentY + row * (cardH + gapY)
-                self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
-                cardIndex = cardIndex + 1
-                self._collectionCards[cardIndex] = {
-                    x = cx + self.panelOffset,
-                    y = cy,
-                    w = cardW,
-                    h = cardH,
-                    utype = utype
-                }
+                local owned = unlocks and unlocks.cards and (unlocks.cards[utype] or 0) or nil
+                local isLocked = (not _G.GodMode) and owned ~= nil and owned == 0
+                if isLocked then
+                    self:drawEmptyCard(cx, cy, cardW, cardH, sc)
+                else
+                    self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
+                    cardIndex = cardIndex + 1
+                    self._collectionCards[cardIndex] = {
+                        x = cx + self.panelOffset,
+                        y = cy,
+                        w = cardW,
+                        h = cardH,
+                        utype = utype
+                    }
+                end
             end
 
             local numRows = math.ceil(#group.units / cols)
@@ -1055,11 +1100,15 @@ function MenuScreen.new()
 
         local deck = DeckManager.getDeck(self.selectedDeckSlot)
 
-        -- Build unit list in collection order, then optionally sort by cost
+        -- Build unit list in collection order, filtered to unlocked units
         local sortedUnits = {}
+        local unlocks = _G.PlayerData and _G.PlayerData.unlocks
         for _, group in ipairs(UnitRegistry.groups) do
             for _, utype in ipairs(group.units) do
-                table.insert(sortedUnits, { utype = utype, count = deck.counts[utype] or 0 })
+                local owned = unlocks and unlocks.cards and unlocks.cards[utype] or 0
+                if _G.GodMode or not unlocks or not unlocks.cards or owned > 0 then
+                    table.insert(sortedUnits, { utype = utype, count = deck.counts[utype] or 0, owned = owned })
+                end
             end
         end
         if self._deckSortByCost then
@@ -1163,7 +1212,11 @@ function MenuScreen.new()
             -- [+] label (right 30%)
             local plusW = cardW - minusW - centerW
             local plusX = cx + minusW + centerW
-            if total < 20 then
+            local canAdd = total < 20
+            if canAdd and not _G.GodMode and entry.owned and entry.owned > 0 then
+                canAdd = count < entry.owned
+            end
+            if canAdd then
                 lg.setColor(0.965, 0.839, 0.741, 1)
             else
                 lg.setColor(0.306, 0.286, 0.373, 1)
@@ -1487,12 +1540,16 @@ function MenuScreen.new()
                 local xpNeed = 30 + math.floor((plevel - 1) / 10) * 5
                 local barR   = math.max(1, math.floor(3 * sc))
                 local fillW  = math.floor(barW * math.min(pxp / xpNeed, 1))
+                local isPending = (self._rewardState == "pending")
 
                 -- Background (same dark as settings button bg)
                 lg.setColor(0.059, 0.165, 0.247, 1)
                 lg.rectangle('fill', barX, stripY, barW, stripH, barR, barR)
-                -- Fill (#4e495f)
-                if fillW > 0 then
+                -- Fill: tan (#c3a38a) when pending reward, else normal purple
+                if isPending then
+                    lg.setColor(0.765, 0.639, 0.541, 1)
+                    lg.rectangle('fill', barX, stripY, barW, stripH, barR, barR)
+                elseif fillW > 0 then
                     lg.setColor(0.306, 0.286, 0.373, 1)
                     lg.rectangle('fill', barX, stripY, fillW, stripH, barR, barR)
                 end
@@ -1501,10 +1558,18 @@ function MenuScreen.new()
                 lg.setLineWidth(math.max(1, math.floor(sc)))
                 lg.rectangle('line', barX, stripY, barW, stripH, barR, barR)
 
-                -- "Level X" label centered inside the bar
+                -- Label: reward text when pending, else "Level X"
                 lg.setFont(Fonts.small)
-                lg.setColor(0.965, 0.839, 0.741, 1)
-                lg.printf("Level " .. plevel, barX, textCY(Fonts.small, stripY, stripH), barW, 'center')
+                if isPending then
+                    lg.setColor(0.059, 0.059, 0.078, 1)
+                    local rewardLabel = (self._rewardType == "new_unit") and "New unlock!" or "New card!"
+                    lg.printf(rewardLabel, barX, textCY(Fonts.small, stripY, stripH), barW, 'center')
+                else
+                    lg.setColor(0.965, 0.839, 0.741, 1)
+                    lg.printf("Level " .. plevel, barX, textCY(Fonts.small, stripY, stripH), barW, 'center')
+                end
+
+                self._xpBarRect = { x = barX, y = stripY, w = barW, h = stripH }
             end
         end
 
@@ -1521,7 +1586,7 @@ function MenuScreen.new()
 
             -- Panel geometry
             local panW  = math.floor(240 * sc)
-            local panH  = math.floor(240 * sc)
+            local panH  = math.floor(self._showGodModeRow and 280 or 240) * sc
             local panX  = math.floor((W - panW) / 2)
             local panY  = math.floor((H - panH) / 2)
             local brd   = math.max(1, math.floor(2 * sc))
@@ -1557,6 +1622,7 @@ function MenuScreen.new()
             lg.setFont(Fonts.medium)
             lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf("SETTINGS", panX, textCY(Fonts.medium, panY + offY, hdrH), panW, 'center')
+            self._settingsTitleRect = { x = panX, y = panY + offY, w = panW, h = hdrH }
 
             -- Divider under title
             lg.setColor(0.306, 0.286, 0.373, 1)
@@ -1605,8 +1671,15 @@ function MenuScreen.new()
             self._settingsMusicRect = drawToggleRow("Music", AudioManager.musicEnabled, row1Y)
             self._settingsSFXRect   = drawToggleRow("SFX",   AudioManager.sfxEnabled,   row2Y)
 
+            -- Hidden God Mode row (revealed by tapping SETTINGS title 5 times)
+            self._settingsGodModeRect = nil
+            if self._showGodModeRow then
+                local row3Y = panY + offY + math.floor(134 * sc)
+                self._settingsGodModeRect = drawToggleRow("God Mode", _G.GodMode == true, row3Y)
+            end
+
             -- Divider above logout
-            local divY = panY + offY + math.floor(138 * sc)
+            local divY = panY + offY + math.floor(self._showGodModeRow and 182 or 138) * sc
             lg.setColor(0.306, 0.286, 0.373, 1)
             lg.setLineWidth(math.max(1, math.floor(sc)))
             lg.line(panX + math.floor(12 * sc), divY,
@@ -1626,6 +1699,113 @@ function MenuScreen.new()
             lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
             self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
         end
+
+        -- Reward reveal overlay
+        if self._rewardState == "revealing" and self._rewardUnit then
+            local t = self._rewardAnimTimer
+            -- Dim backdrop
+            local backdropAlpha = math.min(t / 0.2, 0.7)
+            lg.setColor(0, 0, 0, backdropAlpha)
+            lg.rectangle('fill', 0, 0, W, H)
+
+            -- Card geometry
+            local cardW = math.floor(160 * sc)
+            local cardH = math.floor(220 * sc)
+            local cardX = math.floor((W - cardW) / 2)
+            local cardY = math.floor((H - cardH) / 2 - 20 * sc)
+
+            -- Animation phases
+            local scale, rotation = 0, 0
+            if t < 0.3 then
+                -- Phase 1: scale 0→1.1, rotation -15°→0°
+                local p = t / 0.3
+                scale    = 1.1 * p
+                rotation = math.rad(-15) * (1 - p)
+            elseif t < 0.5 then
+                -- Phase 2: scale 1.1→1.0 (bounce settle)
+                local p = (t - 0.3) / 0.2
+                scale    = 1.1 - 0.1 * p
+                rotation = 0
+            else
+                -- Phase 3: hold steady
+                scale    = 1.0
+                rotation = 0
+            end
+
+            -- Determine rarity for border color
+            local rewardUnit = self._rewardUnit
+            local rarityColor = {0.765, 0.639, 0.541, 1} -- common/starter = tan
+            for _, tier in ipairs(UnitRegistry.rarityTiers) do
+                for _, u in ipairs(tier.units) do
+                    if u == rewardUnit then
+                        if tier.tier == "rare" then
+                            rarityColor = {0.267, 0.533, 0.8, 1}   -- #4488cc
+                        elseif tier.tier == "epic" then
+                            rarityColor = {0.6, 0.267, 0.8, 1}     -- #9944cc
+                        end
+                    end
+                end
+            end
+
+            -- Draw card with transform
+            lg.push()
+            lg.translate(cardX + cardW / 2, cardY + cardH / 2)
+            lg.rotate(rotation)
+            lg.scale(scale, scale)
+            lg.translate(-cardW / 2, -cardH / 2)
+
+            -- Golden glow for new_unit rewards
+            if self._rewardType == "new_unit" and t > 0.3 then
+                local glowAlpha = math.min((t - 0.3) / 0.3, 0.4)
+                lg.setColor(1, 0.85, 0.3, glowAlpha)
+                local gm = math.floor(8 * sc)
+                roundedRect(-gm, -gm, cardW + gm * 2, cardH + gm * 2, 10, sc)
+            end
+
+            -- Card background
+            lg.setColor(0.059, 0.165, 0.247, 1)
+            roundedRect(0, 0, cardW, cardH, 8, sc)
+
+            -- Card border (rarity color)
+            lg.setColor(rarityColor)
+            roundedRectLine(0, 0, cardW, cardH, 8, sc, math.max(2, math.floor(3 * sc)))
+
+            -- Unit sprite (centered in upper portion)
+            local img = self.sprites[rewardUnit]
+            if img then
+                local iw = img:getWidth()
+                local sprSc  = math.max(1, math.floor(6 * sc))
+                local sx = math.floor((cardW - iw * sprSc) / 2)
+                local sy = math.floor(cardH * 0.12)
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(img, sx, sy, 0, sprSc, sprSc)
+            end
+
+            -- Unit name
+            lg.setFont(Fonts.medium)
+            lg.setColor(1, 1, 1, 1)
+            local unitName = rewardUnit:sub(1,1):upper() .. rewardUnit:sub(2)
+            lg.printf(unitName, 0, math.floor(cardH * 0.72), cardW, 'center')
+
+            -- Badge: "NEW!" or "+1"
+            local badgeText = (self._rewardType == "new_unit") and "NEW!" or "+1"
+            lg.setFont(Fonts.small)
+            if self._rewardType == "new_unit" then
+                lg.setColor(1, 0.85, 0.3, 1)
+            else
+                lg.setColor(0.6, 1, 0.6, 1)
+            end
+            lg.printf(badgeText, 0, math.floor(cardH * 0.84), cardW, 'center')
+
+            lg.pop()
+
+            -- "Tap to continue" after 1.5s
+            if t > 1.5 then
+                lg.setFont(Fonts.tiny)
+                lg.setColor(0.7, 0.7, 0.7, 0.5 + 0.5 * math.sin(t * 3))
+                lg.printf("Tap to continue", 0, cardY + cardH + math.floor(20 * sc), W, 'center')
+            end
+        end
     end
 
     -- ── input ───────────────────────────────────────────────────────────────
@@ -1638,7 +1818,7 @@ function MenuScreen.new()
         self.isDragging = false
 
         -- Overlays absorb all presses
-        if self.showDetail or self.showSettings then return end
+        if self.showDetail or self.showSettings or self._rewardState == "revealing" then return end
 
         -- Collection detail: start sprite rotation drag
         if self.currentPanel == 1 and self.collectionView == "detail" then
@@ -1673,7 +1853,7 @@ function MenuScreen.new()
 
     function self:handleMove(x, y)
         if not self.isPressed then return end
-        if self.showDetail or self.showSettings then return end
+        if self.showDetail or self.showSettings or self._rewardState == "revealing" then return end
 
         -- Collection detail: sprite rotation drag
         if self._detailDragX ~= nil then
@@ -1720,8 +1900,67 @@ function MenuScreen.new()
         self._detailDragX = nil
         local dx = x - self.pressX
 
+        -- Reward reveal overlay: tap to dismiss after 1.5s
+        if self._rewardState == "revealing" then
+            if self._rewardAnimTimer > 1.5 then
+                AudioManager.playTap()
+                -- Send claim_reward to server
+                if _G.GameSocket and _G.GameSocket:isConnected() then
+                    _G.GameSocket:send("claim_reward", {})
+                end
+                -- Remove first pending reward locally
+                local unlocks = _G.PlayerData and _G.PlayerData.unlocks
+                if unlocks and unlocks.pending_rewards then
+                    table.remove(unlocks.pending_rewards, 1)
+                end
+                -- Check if more pending
+                if unlocks and unlocks.pending_rewards and #unlocks.pending_rewards > 0 then
+                    local reward = unlocks.pending_rewards[1]
+                    self._rewardState     = "pending"
+                    self._rewardUnit      = reward.unit
+                    self._rewardType      = reward.type
+                    self._rewardLevel     = reward.level
+                    self._rewardAnimTimer = 0
+                else
+                    self._rewardState     = "idle"
+                    self._rewardUnit      = nil
+                    self._rewardType      = nil
+                    self._rewardLevel     = nil
+                    self._rewardAnimTimer = 0
+                end
+            end
+            return
+        end
+
         -- Settings overlay
         if self.showSettings then
+            -- Hidden title tap counter (5 taps reveals God Mode row)
+            if self._settingsTitleRect then
+                local r = self._settingsTitleRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    local now = love.timer.getTime()
+                    if now - (self._settingsTitleLastTap or 0) < 1.5 then
+                        self._settingsTitleTaps = (self._settingsTitleTaps or 0) + 1
+                    else
+                        self._settingsTitleTaps = 1
+                    end
+                    self._settingsTitleLastTap = now
+                    if self._settingsTitleTaps >= 3 then
+                        self._showGodModeRow = true
+                        self._settingsTitleTaps = 0
+                    end
+                    return
+                end
+            end
+            -- God Mode toggle
+            if self._settingsGodModeRect then
+                local r = self._settingsGodModeRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    _G.GodMode = not _G.GodMode
+                    AudioManager.playTap()
+                    return
+                end
+            end
             -- Music toggle
             if self._settingsMusicRect then
                 local r = self._settingsMusicRect
@@ -1764,6 +2003,17 @@ function MenuScreen.new()
             local r = self._settingsBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self.showSettings = true
+                return
+            end
+        end
+
+        -- XP bar tap: start reveal when pending
+        if self._rewardState == "pending" and self._xpBarRect then
+            local r = self._xpBarRect
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                AudioManager.playTap()
+                self._rewardState     = "revealing"
+                self._rewardAnimTimer = 0
                 return
             end
         end

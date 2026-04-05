@@ -498,10 +498,11 @@ function GameScreen.new()
             if self.socket and not self._xpHandler then
                 self._xpHandler = self.socket:on("currency_update", function(data)
                     if _G.PlayerData then
-                        if data.xp    ~= nil then _G.PlayerData.xp    = data.xp    end
-                        if data.level ~= nil then _G.PlayerData.level = data.level end
-                        if data.gold  ~= nil then _G.PlayerData.gold  = data.gold  end
-                        if data.gems  ~= nil then _G.PlayerData.gems  = data.gems  end
+                        if data.xp      ~= nil then _G.PlayerData.xp      = data.xp      end
+                        if data.level   ~= nil then _G.PlayerData.level   = data.level   end
+                        if data.gold    ~= nil then _G.PlayerData.gold    = data.gold    end
+                        if data.gems    ~= nil then _G.PlayerData.gems    = data.gems    end
+                        if data.unlocks ~= nil then _G.PlayerData.unlocks = data.unlocks end
                     end
                 end)
             end
