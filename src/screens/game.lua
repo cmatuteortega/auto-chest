@@ -517,7 +517,11 @@ function GameScreen.new()
 
         -- Poll network (must happen every frame)
         if self.isOnline and self.socket then
-            self.socket:update()
+            local ok, err = pcall(function() self.socket:update() end)
+            if not ok then
+                print("[GAME] Socket error: " .. tostring(err))
+                self.opponentDisconnected = true
+            end
         end
 
         -- Opponent disconnected mid-game

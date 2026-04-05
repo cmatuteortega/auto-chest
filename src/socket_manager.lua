@@ -88,7 +88,12 @@ end
 --- @return true when the handle is finished (success or failure), false while in progress
 function SocketManager.updateReconnect(handle, dt)
     if not handle or handle.done then return true end
-    handle.client:update()
+    local ok, err = pcall(function() handle.client:update() end)
+    if not ok then
+        print("[SocketManager] Reconnect client error: " .. tostring(err))
+        handle.done = true
+        return true
+    end
     handle.elapsed = handle.elapsed + (dt or 0)
     if handle.elapsed >= handle.TIMEOUT then
         handle.done = true

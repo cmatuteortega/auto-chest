@@ -332,7 +332,12 @@ function MenuScreen.new()
             SocketManager.updateReconnect(self._reconnectHandle, dt)
         elseif _G.GameSocket then
             if _G.GameSocket:isConnected() then
-                _G.GameSocket:update()
+                local ok, err = pcall(function() _G.GameSocket:update() end)
+                if not ok then
+                    print("[MENU] Socket error, reconnecting: " .. tostring(err))
+                    _G.GameSocket = nil
+                    self:startReconnect()
+                end
             elseif not self._reconnecting then
                 self:startReconnect()
             end
@@ -627,6 +632,44 @@ function MenuScreen.new()
         lg.printf("?", cx, textCY(Fonts.medium, cy, cardH), cardW, "center")
     end
 
+    function self:drawLockedCard(cx, cy, cardW, cardH, utype, sc)
+        local lg = love.graphics
+        -- Card background
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        roundedRect(cx, cy, cardW, cardH, 6, sc)
+        -- Dim border
+        lg.setColor(0.180, 0.200, 0.240, 1)
+        roundedRectLine(cx, cy, cardW, cardH, 6, sc, 2 * sc)
+
+        -- Silhouette sprite (same layout as drawCollectionCard)
+        local _d   = self.dirSprites[utype]
+        local _aio = _d and _d.directional and _d.directional.actionIdleOverride
+        local img, trimBottom
+        if _aio and (_aio[0] or _aio[180]) then
+            local _ad  = _aio[0] or _aio[180]
+            img        = _ad.frames[1]
+            trimBottom = _ad.trimBottom[1] or 0
+        else
+            img        = self.sprites[utype]
+            trimBottom = self.spriteTrimBottoms[utype] or 0
+        end
+        if img then
+            local iw, ih = img:getDimensions()
+            local sprSc      = math.max(1, math.floor(4 * sc))
+            local BOTTOM_MARGIN = 3
+            local sx = math.floor(cx + (cardW - iw * sprSc) / 2)
+            local sy = math.floor(cy + cardH - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
+            -- Dark silhouette tint
+            lg.setColor(0.03, 0.04, 0.06, 1)
+            lg.draw(img, sx, sy, 0, sprSc, sprSc)
+        end
+
+        -- "?" label at top (name area)
+        lg.setFont(Fonts.small)
+        lg.setColor(0.306, 0.286, 0.373, 1)
+        lg.printf("?", cx, cy + 10 * sc, cardW, 'center')
+    end
+
     function self:drawGroupHeader(x, y, w, h, name, sc)
         local lg = love.graphics
         -- Base fill
@@ -837,7 +880,7 @@ function MenuScreen.new()
                 local owned = unlocks and unlocks.cards and (unlocks.cards[utype] or 0) or nil
                 local isLocked = (not _G.GodMode) and owned ~= nil and owned == 0
                 if isLocked then
-                    self:drawEmptyCard(cx, cy, cardW, cardH, sc)
+                    self:drawLockedCard(cx, cy, cardW, cardH, utype, sc)
                 else
                     self:drawCollectionCard(cx, cy, cardW, cardH, utype, sc)
                     cardIndex = cardIndex + 1
