@@ -46,8 +46,8 @@ function Mage:new(row, col, owner, sprites)
     Mage.super.new(self, row, col, owner, sprites, stats)
 
     -- Hit counter: increments on attacks made and damage received
-    self.hitCounter      = 0
-    self.fireballPending = false  -- set in takeDamage (no grid access there)
+    self.hitCounter    = 0
+    self.fireballReady = false  -- next ranged attack will be a fireball
 
     -- Active fireball: { startCol, startRow, targetCol, targetRow, progress, duration, damage }
     self.fireball  = nil
@@ -85,9 +85,9 @@ end
 
 function Mage:resetCombatState()
     Mage.super.resetCombatState(self)
-    self.hitCounter      = 0
-    self.fireballPending = false
-    self.fireball        = nil
+    self.hitCounter    = 0
+    self.fireballReady = false
+    self.fireball      = nil
     self.firePatches     = {}
     self.arcaneTimer     = 0
     self.arcaneActive    = false
@@ -101,58 +101,51 @@ function Mage:takeDamage(amount)
         self.hitCounter = self.hitCounter + 1
         if self.hitCounter >= 8 then
             self.hitCounter      = 0
-            self.fireballPending = true
+            self.fireballReady   = true
         end
     end
 end
 
--- Override attack: track hits dealt, fire fireball if counter hits 6
+-- Override attack: track hits dealt; if fireballReady, upgrade the arrow into a fireball
 function Mage:attack(target, grid)
     Mage.super.attack(self, target, grid)
     self.hitCounter = self.hitCounter + 1
     if self.hitCounter >= 8 then
-        self.hitCounter = 0
-        self:fireFireball(grid)
+        self.hitCounter    = 0
+        self.fireballReady = true
     end
-end
-
--- Launch a fireball at the nearest enemy
-function Mage:fireFireball(grid)
-    if self.isDead then return end
-    local target = self:findNearestEnemy(grid)
-    if not target then return end
-
-    self.fireball = {
-        startCol  = self.col,
-        startRow  = self.row,
-        targetCol = target.col,
-        targetRow = target.row,
-        progress  = 0,
-        duration  = 0.5,
-        damage    = math.max(1, math.floor(self.damage * 2)),
-        animTime  = 0,
-        rotation  = 0,
-    }
-
-    -- Arcane Surge: +50% attack speed for 3s
-    if self:hasUpgrade(2) then
-        if not self.arcaneActive then
-            self.preArcaneSpeed = self.attackSpeed
-            self.attackSpeed    = self.attackSpeed * 1.5
-            self.arcaneActive   = true
-            self:triggerBuffAnim()
+    -- Upgrade the arrow that was just fired into a fireball
+    if self.fireballReady and #self.arrows > 0 then
+        self.fireballReady = false
+        local arrow = self.arrows[#self.arrows]
+        arrow.isFireball = true
+        arrow.damage     = math.max(1, math.floor(self.damage * 2))
+        arrow.duration   = 0.5
+        arrow.progress   = 0  -- restart flight with fireball duration
+        arrow.animTime   = 0
+        arrow.rotation   = 0
+        -- Arcane Surge: +50% attack speed for 3s
+        if self:hasUpgrade(2) then
+            if not self.arcaneActive then
+                self.preArcaneSpeed = self.attackSpeed
+                self.attackSpeed    = self.attackSpeed * 1.5
+                self.arcaneActive   = true
+                self:triggerBuffAnim()
+            end
+            self.arcaneTimer = 3
         end
-        self.arcaneTimer = 3
     end
 end
 
--- Explode fireball: deal AoE damage, apply upgrades
-function Mage:explodeFireball(grid)
-    if not self.fireball then return end
+-- AoE explosion when a fireball arrow hits its target
+function Mage:onProjectileHit(projectile, grid)
+    if not projectile.isFireball then
+        return Mage.super.onProjectileHit(self, projectile, grid)
+    end
 
     local radius   = self:hasUpgrade(3) and 2 or 1
-    local cx, cy   = self.fireball.targetCol, self.fireball.targetRow
-    local dmg      = self.fireball.damage
+    local cx, cy   = projectile.targetCol, projectile.targetRow
+    local dmg      = projectile.damage
     local allUnits = grid:getAllUnits()
 
     for _, unit in ipairs(allUnits) do
@@ -192,12 +185,6 @@ function Mage:explodeFireball(grid)
 end
 
 function Mage:update(dt, grid)
-    -- Consume pending fireball flag (set from takeDamage which has no grid)
-    if self.fireballPending then
-        self.fireballPending = false
-        self:fireFireball(grid)
-    end
-
     -- Arcane Surge timer
     if self.arcaneActive then
         self.arcaneTimer = self.arcaneTimer - dt
@@ -236,17 +223,6 @@ function Mage:update(dt, grid)
         end
     end
 
-    -- Advance fireball flight
-    if self.fireball then
-        self.fireball.progress = self.fireball.progress + (dt / self.fireball.duration)
-        self.fireball.animTime = self.fireball.animTime + dt
-        self.fireball.rotation = self.fireball.rotation + dt * math.pi * 2
-        if self.fireball.progress >= 1.0 then
-            self:explodeFireball(grid)
-            self.fireball = nil
-        end
-    end
-
     -- Call parent: handles regular arrows + movement + attacking
     Mage.super.update(self, dt, grid)
 end
@@ -260,53 +236,56 @@ function Mage:drawGroundEffects()
     end
 end
 
+-- Override drawProjectile: fireball arrows use arc + rotation rendering
+function Mage:drawProjectile(projectile)
+    if not projectile.isFireball then
+        return Mage.super.drawProjectile(self, projectile)
+    end
+
+    local lg       = love.graphics
+    local startVR  = Constants.toVisualRow(projectile.startRow)
+    local targetVR = Constants.toVisualRow(projectile.targetRow)
+    local sx = Constants.GRID_OFFSET_X + (projectile.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local sy = Constants.GRID_OFFSET_Y + (startVR - 1)             * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local ex = Constants.GRID_OFFSET_X + (projectile.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+    local ey = Constants.GRID_OFFSET_Y + (targetVR - 1)             * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+
+    local t  = projectile.progress
+    local cx = sx + (ex - sx) * t
+    local cy = sy + (ey - sy) * t - math.sin(t * math.pi) * 12 * Constants.SCALE  -- slight arc
+
+    local frames = self.sprites and self.sprites.fireballFrames
+    if frames then
+        local fps      = 12
+        local frameIdx = math.floor((projectile.animTime or 0) * fps) % #frames + 1
+        local img      = frames[frameIdx]
+        local sw, sh   = img:getWidth(), img:getHeight()
+        local scale    = Constants.SCALE * 3
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(img, cx, cy, projectile.rotation or 0, scale, scale, sw / 2, sh / 2)
+    else
+        lg.setColor(1, 0.5, 0.1, 0.35)
+        lg.circle('fill', cx, cy, 10 * Constants.SCALE)
+        lg.setColor(1, 0.85, 0.2, 1)
+        lg.circle('fill', cx, cy, 5 * Constants.SCALE)
+    end
+
+    lg.setColor(1, 1, 1, 1)
+end
+
 function Mage:drawAttackVisuals()
-    -- Draw regular arrows via parent
+    -- Parent handles arrow routing (skips 135/180/225 which go below)
     Mage.super.drawAttackVisuals(self)
 
     -- Draw bottom quarter of fire patches on top of units
     for _, patch in ipairs(self.firePatches) do
         local visualRow = Constants.toVisualRow(patch.row)
-        local cy     = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
+        local cy      = Constants.GRID_OFFSET_Y + (visualRow - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
         local bottomY = cy + Constants.CELL_SIZE / 4
         drawFirePatch(patch, self.sprites, bottomY, Constants.CELL_SIZE / 4)
     end
 
-    local lg = love.graphics
-
-    -- Draw active fireball
-    if self.fireball then
-        local fb       = self.fireball
-        local startVR  = Constants.toVisualRow(fb.startRow)
-        local targetVR = Constants.toVisualRow(fb.targetRow)
-        local sx = Constants.GRID_OFFSET_X + (fb.startCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-        local sy = Constants.GRID_OFFSET_Y + (startVR - 1)     * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-        local ex = Constants.GRID_OFFSET_X + (fb.targetCol - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-        local ey = Constants.GRID_OFFSET_Y + (targetVR - 1)     * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-
-        local t  = fb.progress
-        local cx = sx + (ex - sx) * t
-        local cy = sy + (ey - sy) * t - math.sin(t * math.pi) * 12 * Constants.SCALE  -- slight arc
-
-        local frames = self.sprites and self.sprites.fireballFrames
-        if frames then
-            local fps      = 12
-            local frameIdx = math.floor(fb.animTime * fps) % #frames + 1
-            local img      = frames[frameIdx]
-            local sw, sh   = img:getWidth(), img:getHeight()
-            local scale    = Constants.SCALE * 3
-            lg.setColor(1, 1, 1, 1)
-            lg.draw(img, cx, cy, fb.rotation, scale, scale, sw / 2, sh / 2)
-        else
-            -- Fallback: procedural circles
-            lg.setColor(1, 0.5, 0.1, 0.35)
-            lg.circle('fill', cx, cy, 10 * Constants.SCALE)
-            lg.setColor(1, 0.85, 0.2, 1)
-            lg.circle('fill', cx, cy, 5 * Constants.SCALE)
-        end
-    end
-
-    lg.setColor(1, 1, 1, 1)
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 return Mage

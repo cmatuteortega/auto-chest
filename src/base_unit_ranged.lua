@@ -186,37 +186,11 @@ function BaseUnitRanged:update(dt, grid)
     for i = #self.arrows, 1, -1 do
         local projectile = self.arrows[i]
         projectile.progress = projectile.progress + (dt / projectile.duration)
+        if projectile.animTime  then projectile.animTime  = projectile.animTime  + dt end
+        if projectile.rotation  then projectile.rotation  = projectile.rotation  + dt * math.pi * 2 end
 
         if projectile.progress >= 1.0 then
-            -- Projectile reached target, apply damage
-            if projectile.target and not projectile.target.isDead then
-                projectile.target:takeDamage(projectile.damage)
-
-                -- If target died, mark cell as unoccupied and trigger onKill
-                if projectile.target.isDead then
-                    local cell = grid:getCell(projectile.target.col, projectile.target.row)
-                    if cell then
-                        cell.occupied = false
-                    end
-                    -- Free reservation if target died mid-movement (stale reserved flag would block pathfinding)
-                    local t = projectile.target
-                    if t.isMoving and t.targetCol and t.targetRow then
-                        grid:freeReservation(t.targetCol, t.targetRow)
-                    end
-
-                    -- Invalidate all cached paths so units recompute around the freed cell next frame
-                    local allUnits = grid:getAllUnits()
-                    for _, u in ipairs(allUnits) do
-                        if not u.isDead then u.path = nil end
-                    end
-
-                    -- Trigger onKill hook for passive abilities
-                    if projectile.shooter then
-                        projectile.shooter:onKill(projectile.target)
-                    end
-                end
-            end
-
+            self:onProjectileHit(projectile, grid)
             -- Remove projectile
             table.remove(self.arrows, i)
         end
@@ -226,11 +200,50 @@ function BaseUnitRanged:update(dt, grid)
     BaseUnit.update(self, dt, grid)
 end
 
--- Override draw to render projectiles
+-- Called when a projectile reaches its target. Default: single-target damage.
+-- Override in subclasses for AoE or special effects.
+function BaseUnitRanged:onProjectileHit(projectile, grid)
+    if projectile.target and not projectile.target.isDead then
+        projectile.target:takeDamage(projectile.damage)
+
+        if projectile.target.isDead then
+            local cell = grid:getCell(projectile.target.col, projectile.target.row)
+            if cell then cell.occupied = false end
+            local t = projectile.target
+            if t.isMoving and t.targetCol and t.targetRow then
+                grid:freeReservation(t.targetCol, t.targetRow)
+            end
+            local allUnits = grid:getAllUnits()
+            for _, u in ipairs(allUnits) do
+                if not u.isDead then u.path = nil end
+            end
+            if projectile.shooter then
+                projectile.shooter:onKill(projectile.target)
+            end
+        end
+    end
+end
+
+-- Draw projectiles that should appear BEHIND the unit sprite (called before sprite draw).
+-- Only fires when the unit's visual facing snaps to 180° (facing north/away).
+function BaseUnitRanged:drawAttackVisualsBelow()
+    local va   = self:visualAngle(self.facingAngle)
+    local step = self:getNearestStep(va, {0, 45, 135, 180, 225, 315}, self:visualAngle(self.prevFacingAngle))
+    if step == 135 or step == 180 or step == 225 then
+        for _, projectile in ipairs(self.arrows) do
+            self:drawProjectile(projectile)
+        end
+    end
+end
+
+-- Draw projectiles that appear on top of the unit sprite (all other facing directions).
 function BaseUnitRanged:drawAttackVisuals()
-    -- Draw all active projectiles
-    for _, projectile in ipairs(self.arrows) do
-        self:drawProjectile(projectile)
+    local va   = self:visualAngle(self.facingAngle)
+    local step = self:getNearestStep(va, {0, 45, 135, 180, 225, 315}, self:visualAngle(self.prevFacingAngle))
+    if step ~= 135 and step ~= 180 and step ~= 225 then
+        for _, projectile in ipairs(self.arrows) do
+            self:drawProjectile(projectile)
+        end
     end
 end
 

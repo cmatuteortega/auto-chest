@@ -499,6 +499,9 @@ function BaseUnit:draw()
     local offsetX = math.floor((Constants.CELL_SIZE - spriteWidth * scale) / 2)
     local offsetY = math.floor(Constants.CELL_SIZE - (spriteHeight - trimBottom + BOTTOM_MARGIN) * scale)
 
+    -- Draw projectiles that should appear behind this unit (ranged units facing north/away)
+    self:drawAttackVisualsBelow()
+
     lg.draw(sprite, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
 
     -- Bars above the sprite: anchor to the unit's visible top (same reference as stun particles)
@@ -605,6 +608,10 @@ end
 
 -- Override this in subclasses for custom attack visuals
 function BaseUnit:drawAttackVisuals()
+    -- Base implementation does nothing
+end
+
+function BaseUnit:drawAttackVisualsBelow()
     -- Base implementation does nothing
 end
 
