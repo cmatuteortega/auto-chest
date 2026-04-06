@@ -57,6 +57,8 @@ function GameScreen.new()
         -- Load battle background sprite
         self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
         self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
+        self.goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
+        self.goldIcon:setFilter('nearest', 'nearest')
 
         -- Create grid
         self.grid = Grid()
@@ -836,11 +838,19 @@ function GameScreen.new()
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 
-        -- Coin display in bottom left (uses same font size as player name)
+        -- Coin display in bottom left (icon + number)
         lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)  -- White color
-        local coinText = self.isSandbox and "¤ ∞" or ("¤ " .. self.playerCoins)
-        lg.print(coinText, topMargin, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
+        lg.setColor(1, 1, 1, 1)
+        local coinStr = self.isSandbox and "999" or tostring(self.playerCoins)
+        local baseY = Constants.GAME_HEIGHT - fontHeight - bottomMargin
+        local iconH = math.floor(fontHeight * 0.55)
+        local iconSc = iconH / self.goldIcon:getHeight()
+        local iconW = self.goldIcon:getWidth() * iconSc
+        local iconGap = math.floor(4 * Constants.SCALE)
+        local visH  = Fonts.large:getAscent() - Fonts.large:getDescent()
+        local iconY = math.floor(baseY + (visH - iconH) / 2)
+        lg.draw(self.goldIcon, topMargin, iconY, 0, iconSc, iconSc)
+        lg.print(coinStr, topMargin + iconW + iconGap, baseY)
 
         -- Reset font for buttons
         lg.setFont(Fonts.medium)

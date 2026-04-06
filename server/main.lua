@@ -388,6 +388,30 @@ local function handleMessage(peer, eventName, msgData)
             peer:send(encode("error", {reason = err or "Failed to sync decks"}))
         end
 
+    elseif eventName == "award_card" then
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+        local unitType = msgData.unit
+        if not unitType or type(unitType) ~= "string" then
+            peer:send(encode("error", {reason = "Missing unit type"}))
+            return
+        end
+        local cost = tonumber(msgData.cost) or 0
+        local newGold
+        if cost > 0 then
+            newGold = db:updateGold(session.player_id, -cost)
+        end
+        local unlocks = db:awardCard(session.player_id, unitType)
+        if unlocks then
+            peer:send(encode("card_awarded", { unlocks = unlocks, gold = newGold }))
+            pushLog("Card awarded (" .. unitType .. ", cost " .. cost .. "g): " .. session.username)
+        else
+            peer:send(encode("error", {reason = "Failed to award card"}))
+        end
+
     elseif eventName == "get_online_count" then
         local count = 0
         for _ in pairs(sessions) do count = count + 1 end

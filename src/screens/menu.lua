@@ -6,6 +6,7 @@ local Constants      = require('src.constants')
 local UnitRegistry   = require('src.unit_registry')
 local DeckManager    = require('src.deck_manager')
 local SocketManager  = require('src.socket_manager')
+local json           = require('lib.json')
 
 local MenuScreen = {}
 
@@ -143,6 +144,26 @@ function MenuScreen.new()
         self.shopNotice    = nil
         self.shopNoticeTimer = 0
 
+        -- Daily chest state
+        -- "waiting" = timer counting down, "ready" = claimable, "breaking" = Broken anim,
+        -- "open"    = Open(GoldLoot) anim playing / held on ChestOpen until claimed
+        self._chestState     = "waiting"
+        self._chestTimer     = 0      -- seconds elapsed since last claim (0‥86400)
+        self._chestAnimTimer = 0      -- frame-advance timer within breaking/open anims
+        self._chestAnimFrame = 1      -- current sprite frame index
+        self._chestSaveThrottle = 0   -- seconds since last persistence write
+        self._chestSprites   = nil    -- loaded lazily
+        self._chestBtnRect   = nil    -- hit rect for the chest sprite
+        self._chestSkipRect  = nil    -- hit rect for god-mode skip button
+        self:loadChestTimer()
+
+        -- Card trade state
+        self._tradeSlots        = {}   -- up to 3 unitType strings (nil = bought/empty slot)
+        self._tradeTimer        = 0    -- seconds since last trade reset (0‥86400)
+        self._tradeSaveThrottle = 0
+        self._tradeCardRects    = {}   -- hit rects for purchasable trade cards
+        self:loadTradeTimer()
+
         -- Reconnection state
         self._reconnectHandle = nil
         self._reconnecting    = false
@@ -182,6 +203,11 @@ function MenuScreen.new()
         -- Button spring physics (Balatro squish/bounce)
         self._playSpring = { scale = 1.0, vel = 0.0, pressed = false }
         self._sbtnSpring = { scale = 1.0, vel = 0.0, pressed = false }
+        self._tradeBtnSprings = {
+            { scale = 1.0, vel = 0.0, pressed = false },
+            { scale = 1.0, vel = 0.0, pressed = false },
+            { scale = 1.0, vel = 0.0, pressed = false },
+        }
 
         -- Online player count
         self._onlineCount     = nil  -- nil until first response
@@ -237,6 +263,14 @@ function MenuScreen.new()
                 _G.PlayerData.unlocks.pending_rewards = data.pending_rewards or {}
             end
         end)
+
+        self._cb_cardAwarded = _G.GameSocket:on("card_awarded", function(data)
+            -- Server confirms card award; sync authoritative unlocks and gold
+            if _G.PlayerData then
+                if data.unlocks then _G.PlayerData.unlocks = data.unlocks end
+                if data.gold    then _G.PlayerData.gold    = data.gold    end
+            end
+        end)
     end
 
     function self:removeSocketHandlers()
@@ -248,6 +282,7 @@ function MenuScreen.new()
             if self._cb_decksSynced    then _G.GameSocket:removeCallback(self._cb_decksSynced) end
             if self._cb_onlineCount    then _G.GameSocket:removeCallback(self._cb_onlineCount) end
             if self._cb_rewardClaimed  then _G.GameSocket:removeCallback(self._cb_rewardClaimed) end
+            if self._cb_cardAwarded    then _G.GameSocket:removeCallback(self._cb_cardAwarded) end
         end
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
@@ -256,6 +291,7 @@ function MenuScreen.new()
         self._cb_decksSynced    = nil
         self._cb_onlineCount    = nil
         self._cb_rewardClaimed  = nil
+        self._cb_cardAwarded    = nil
     end
 
     function self:startReconnect()
@@ -368,6 +404,78 @@ function MenuScreen.new()
             if self.shopNoticeTimer <= 0 then
                 self.shopNotice    = nil
                 self.shopNoticeTimer = 0
+            end
+        end
+
+        -- Daily chest update
+        local CHEST_DURATION  = 86400
+local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
+        if self._chestState == "waiting" then
+            self._chestTimer = self._chestTimer + dt
+            if self._chestTimer >= CHEST_DURATION then
+                self._chestTimer = CHEST_DURATION
+                self._chestState = "ready"
+                self:saveChestTimer()
+            else
+                -- Throttled persist (every 5s)
+                self._chestSaveThrottle = (self._chestSaveThrottle or 0) + dt
+                if self._chestSaveThrottle >= 5 then
+                    self._chestSaveThrottle = 0
+                    self:saveChestTimer()
+                end
+            end
+        elseif self._chestState == "hit" then
+            self._chestAnimTimer = self._chestAnimTimer + dt
+            if self._chestAnimTimer >= 0.15 then
+                self._chestState     = "open"
+                self._chestAnimTimer = 0
+                self._chestAnimFrame = 1
+            end
+        elseif self._chestState == "open" then
+            if self._chestAnimFrame <= 16 then
+                self._chestAnimTimer = self._chestAnimTimer + dt
+                local frame = math.floor(self._chestAnimTimer / OPEN_FRAME_DT) + 1
+                if frame > 16 then
+                    self._chestAnimFrame = 17  -- animation done; award card now
+                    -- Pick a random unit using rarity weighting
+                    local unitType = self:pickWeightedCard()
+                    -- Update locally for immediate feedback
+                    if _G.PlayerData and _G.PlayerData.unlocks then
+                        local u = _G.PlayerData.unlocks
+                        u.cards = u.cards or {}
+                        u.cards[unitType] = (u.cards[unitType] or 0) + 1
+                        u.pending_rewards = u.pending_rewards or {}
+                        table.insert(u.pending_rewards, { unit = unitType, type = "card" })
+                    end
+                    -- Persist to server (authoritative)
+                    if _G.GameSocket then
+                        _G.GameSocket:send("award_card", { unit = unitType })
+                    end
+                    -- Reset chest
+                    self._chestTimer     = 0
+                    self._chestState     = "waiting"
+                    self._chestAnimTimer = 0
+                    self._chestAnimFrame = 1
+                    self:saveChestTimer()
+                else
+                    self._chestAnimFrame = frame
+                end
+            end
+        end
+
+        -- Card trade timer
+        if self._tradeTimer < 86400 then
+            self._tradeTimer = self._tradeTimer + dt
+            if self._tradeTimer >= 86400 then
+                self._tradeTimer = 86400
+                self._tradeSlots = {}   -- expired; regenerated lazily on next draw
+                self:saveTradeTimer()
+            else
+                self._tradeSaveThrottle = (self._tradeSaveThrottle or 0) + dt
+                if self._tradeSaveThrottle >= 5 then
+                    self._tradeSaveThrottle = 0
+                    self:saveTradeTimer()
+                end
             end
         end
 
@@ -493,6 +601,7 @@ function MenuScreen.new()
         end
         updateSpring(self._playSpring, dt)
         updateSpring(self._sbtnSpring, dt)
+        for i = 1, 3 do updateSpring(self._tradeBtnSprings[i], dt) end
     end
 
     -- Returns the current preview frame + trimBottom for a unit type.
@@ -1371,11 +1480,361 @@ function MenuScreen.new()
         lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
     end
 
-    function self:drawShopPanel(ox, W, H)
+    -- ── Daily chest helpers ──────────────────────────────────────────────────
+
+    function self:loadChestSprites()
+        if self._chestSprites then return end
+        local function img(path)
+            local i = love.graphics.newImage(path)
+            i:setFilter('nearest', 'nearest')
+            return i
+        end
+        local function trimBottom(path)
+            local d = love.image.newImageData(path)
+            local w, h = d:getDimensions()
+            local trim = 0
+            for y = h - 1, 0, -1 do
+                local rowEmpty = true
+                for x = 0, w - 1 do
+                    if select(4, d:getPixel(x, y)) > 0.01 then rowEmpty = false; break end
+                end
+                if rowEmpty then trim = trim + 1 else break end
+            end
+            return trim
+        end
+        local function entry(path)
+            return { image = img(path), trimBottom = trimBottom(path) }
+        end
+        local s = {}
+        s.closed  = entry('src/assets/Chest/Chest.png')
+        s.hit     = entry('src/assets/Chest/HitChest.png')
+        s.open    = entry('src/assets/Chest/ChestOpen.png')
+        s.opening = {}
+        for i = 1, 16 do s.opening[i] = entry('src/assets/Chest/Open(GoldLoot)' .. i .. '.png') end
+        self._chestSprites = s
+    end
+
+    function self:saveChestTimer()
+        local data = json.encode({ saved_at = love.timer.getTime(), elapsed = self._chestTimer })
+        love.filesystem.write('chest_timer.json', data)
+    end
+
+    function self:loadChestTimer()
+        local CHEST_DURATION = 86400
+        if not love.filesystem.getInfo('chest_timer.json') then
+            self._chestTimer = 0
+            self._chestState = "waiting"
+            return
+        end
+        local raw = love.filesystem.read('chest_timer.json')
+        local ok, saved = pcall(json.decode, raw)
+        if not ok or not saved then
+            self._chestTimer = 0
+            self._chestState = "waiting"
+            return
+        end
+        local elapsed = (saved.elapsed or 0) + (love.timer.getTime() - (saved.saved_at or 0))
+        if elapsed >= CHEST_DURATION then
+            self._chestTimer = CHEST_DURATION
+            self._chestState = "ready"
+        else
+            self._chestTimer = math.max(0, elapsed)
+            self._chestState = "waiting"
+        end
+    end
+
+    function self:saveTradeTimer()
+        love.filesystem.write('trade_timer.json', json.encode({
+            saved_at = love.timer.getTime(),
+            elapsed  = self._tradeTimer,
+            slots    = self._tradeSlots,
+        }))
+    end
+
+    function self:loadTradeTimer()
+        if not love.filesystem.getInfo('trade_timer.json') then
+            self._tradeTimer = 86400  -- force slot generation on first draw
+            self._tradeSlots = {}
+            return
+        end
+        local raw = love.filesystem.read('trade_timer.json')
+        local ok, saved = pcall(json.decode, raw)
+        if not ok or not saved then
+            self._tradeTimer = 86400
+            self._tradeSlots = {}
+            return
+        end
+        local elapsed = (saved.elapsed or 0) + (love.timer.getTime() - (saved.saved_at or 0))
+        if elapsed >= 86400 then
+            self._tradeTimer = 86400  -- expired; slots regenerated lazily on next draw
+            self._tradeSlots = {}
+        else
+            self._tradeTimer = math.max(0, elapsed)
+            self._tradeSlots = saved.slots or {}
+        end
+    end
+
+    -- Rarity weights for card pool selection.
+    -- owned = already unlocked but < 4 copies; locked = not yet unlocked.
+    -- Cards at 4 copies are excluded (maxed).
+    local RARITY_WEIGHTS = {
+        owned  = { common = 8, rare = 4, epic = 2 },
+        locked = { common = 3, rare = 1, epic = 0 },
+    }
+
+    -- Build a weighted pool from all unit types based on owned copies + rarity.
+    -- Returns a list of {unit, weight} with total weight > 0.
+    local function buildCardPool()
+        local cards   = (_G.PlayerData and _G.PlayerData.unlocks and _G.PlayerData.unlocks.cards) or {}
+        local rarity  = UnitRegistry.rarity or {}
+        local all     = UnitRegistry.getAllUnitTypes()
+        local pool    = {}
+        for _, unitType in ipairs(all) do
+            local owned = cards[unitType] or 0
+            local r     = rarity[unitType] or "common"
+            local w
+            if owned >= 4 then
+                w = 0
+            elseif owned > 0 then
+                w = (RARITY_WEIGHTS.owned[r]  or 3)
+            else
+                w = (RARITY_WEIGHTS.locked[r] or 0)
+            end
+            if w > 0 then
+                pool[#pool + 1] = { unit = unitType, weight = w }
+            end
+        end
+        return pool
+    end
+
+    -- Pick one unit from a weighted pool (modifies pool in-place by removing picked entry).
+    local function weightedPick(pool)
+        local total = 0
+        for _, e in ipairs(pool) do total = total + e.weight end
+        if total <= 0 then return nil end
+        local r = love.math.random() * total
+        local acc = 0
+        for idx, e in ipairs(pool) do
+            acc = acc + e.weight
+            if r <= acc then
+                table.remove(pool, idx)
+                return e.unit
+            end
+        end
+        -- fallback: last entry
+        local last = pool[#pool]
+        if last then table.remove(pool, #pool); return last.unit end
+    end
+
+    -- Pick a single weighted card (used by daily chest).
+    function self:pickWeightedCard()
+        local pool = buildCardPool()
+        local picked = weightedPick(pool)
+        if not picked then
+            -- fallback: any random unit
+            local all = UnitRegistry.getAllUnitTypes()
+            picked = all[love.math.random(#all)]
+        end
+        return picked
+    end
+
+    function self:generateTradeSlots()
+        local pool = buildCardPool()
+        self._tradeSlots = {}
+        for _ = 1, 3 do
+            if #pool == 0 then break end
+            local picked = weightedPick(pool)
+            if picked then
+                self._tradeSlots[#self._tradeSlots + 1] = picked
+            end
+        end
+        self._tradeTimer = 0
+        self:saveTradeTimer()
+    end
+
+    function self:drawShopPanel(ox, W, H) -- luacheck: ignore H
         local lg = love.graphics
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.6, 0.6, 0.6, 1)
-        lg.printf("Work in progress", ox, H * 0.45, W, 'center')
+        local sc = Constants.SCALE
+        local _ = H  -- parameter passed by caller; unused here
+
+        self:loadChestSprites()
+
+        local CHEST_DURATION = 86400
+        local sprites = self._chestSprites
+        local state   = self._chestState
+
+        -- ── Shared grid geometry (matches collection panel) ───────────────────
+        local cols    = 4
+        local cardW   = math.floor(100 * sc)
+        local cardH   = math.floor(130 * sc)
+        local gapX    = math.floor(12 * sc)
+        local totalW  = cols * cardW + (cols - 1) * gapX
+        local startX  = math.floor(ox + (W - totalW) / 2)
+        local hdrH    = math.floor(40 * sc)
+        local hdrY    = math.floor(130 * sc)
+
+        -- ── Daily Chest header (collection-width) ─────────────────────────────
+        self:drawGroupHeader(startX, hdrY, totalW, hdrH, "Daily Chest", sc)
+
+        -- ── Chest sprite selection ────────────────────────────────────────────
+        local chestEntry
+        if state == "waiting" then
+            chestEntry = sprites.closed
+        elseif state == "ready" then
+            chestEntry = self._chestPressed and sprites.hit or sprites.closed
+        elseif state == "hit" then
+            chestEntry = sprites.hit
+        elseif state == "open" then
+            chestEntry = (self._chestAnimFrame <= 16)
+                and (sprites.opening[self._chestAnimFrame] or sprites.open)
+                or  sprites.open
+        end
+
+        -- ── Layout: chest on right half, timer/claim on left half ────────────
+        -- All frames share a fixed baseline; each is bottom-anchored via trimBottom.
+        local pixSc     = math.floor(5 * sc)
+        local chestTopY = hdrY + hdrH + math.floor(10 * sc)
+        local slotH     = sprites.closed.image:getHeight() * pixSc
+        local baseline  = chestTopY + slotH
+
+        -- Chest: centred in the right 55% of the panel
+        local rightZoneX = math.floor(ox + W * 0.45)
+        local rightZoneW = math.floor(W * 0.55)
+
+        if chestEntry then
+            local img  = chestEntry.image
+            local trim = chestEntry.trimBottom
+            local iw, ih = img:getDimensions()
+            local visH = (ih - trim) * pixSc
+            local drawW = iw * pixSc
+            local chestX = math.floor(rightZoneX + (rightZoneW - drawW) / 2)
+            local chestY = math.floor(baseline - visH) - math.floor(20 * sc)
+
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(img, chestX, chestY, 0, pixSc, pixSc)
+
+            local po = self.panelOffset
+            self._chestBtnRect = { x = chestX + po, y = chestY, w = drawW, h = visH }
+        else
+            self._chestBtnRect = nil
+        end
+
+        -- ── Timer or CLAIM button: left 45%, vertically centred on chest ──────
+        local leftZoneX = ox
+        local leftZoneW = math.floor(W * 0.45)
+        local po        = self.panelOffset
+        local midY      = math.floor(chestTopY + slotH / 2)
+
+        if state == "waiting" then
+            local remaining = math.max(0, CHEST_DURATION - self._chestTimer)
+            local hh = math.floor(remaining / 3600)
+            local mm = math.floor((remaining % 3600) / 60)
+            local ss = math.floor(remaining % 60)
+            lg.setFont(Fonts.medium)
+            lg.setColor(0.6, 0.6, 0.6, 1)
+            local timeStr = string.format("%02d:%02d:%02d", hh, mm, ss)
+            lg.printf(timeStr, leftZoneX, textCY(Fonts.medium, midY, Fonts.medium:getHeight()), leftZoneW, 'center')
+        elseif state == "ready" then
+            lg.setFont(Fonts.medium)
+            lg.setColor(1, 0.85, 0.3, 1)
+            lg.printf("Claim!", leftZoneX, textCY(Fonts.medium, midY, Fonts.medium:getHeight()), leftZoneW, 'center')
+        elseif state == "hit" or state == "open" then
+            lg.setFont(Fonts.medium)
+            lg.setColor(0.5, 0.9, 0.5, 1)
+            lg.printf("Opening...", leftZoneX, textCY(Fonts.medium, midY, Fonts.medium:getHeight()), leftZoneW, 'center')
+        end
+
+        local belowChest = baseline + math.floor(10 * sc)
+
+        -- ── God Mode skip button ─────────────────────────────────────────────
+        self._chestSkipRect = nil
+        if _G.GodMode and (state == "waiting" or state == "ready") then
+            local skipW = math.floor(120 * sc)
+            local skipH = math.floor(22 * sc)
+            local skipX = math.floor(ox + (W - skipW) / 2)
+            local skipY = belowChest
+            lg.setColor(0.15, 0.15, 0.18, 1)
+            roundedRect(skipX, skipY, skipW, skipH, 4, sc)
+            lg.setColor(0.45, 0.35, 0.55, 1)
+            roundedRectLine(skipX, skipY, skipW, skipH, 4, sc, math.max(1, math.floor(sc)))
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.8, 0.6, 1, 1)
+            lg.printf("Skip Timer [GOD]", skipX, textCY(Fonts.tiny, skipY, skipH), skipW, 'center')
+            self._chestSkipRect = { x = skipX + po, y = skipY, w = skipW, h = skipH }
+        end
+
+        -- ── Card Trade section ───────────────────────────────────────────────
+        -- Lazy slot generation (first draw, or after daily reset)
+        if self._tradeTimer >= 86400 or #self._tradeSlots == 0 then
+            self:generateTradeSlots()
+        end
+
+        local tradeHdrY = baseline + math.floor(40 * sc)
+        self:drawGroupHeader(startX, tradeHdrY, totalW, hdrH, "Card Trade", sc)
+
+        self._tradeCardRects = {}
+        local allUnits = UnitRegistry.getAllUnitTypes()
+        if #allUnits >= 3 then
+            local btnH    = math.floor(28 * sc)
+            local btnGap  = math.floor(10 * sc)
+            local btnShd  = math.floor(4 * sc)
+            local cardY   = tradeHdrY + hdrH + math.floor(16 * sc)
+            local trCols  = 3
+            local trTotalW = trCols * cardW + (trCols - 1) * gapX
+            local trStartX = math.floor(ox + (W - trTotalW) / 2)
+
+            for i = 1, 3 do
+                local col  = (i - 1) % trCols
+                local cx   = trStartX + col * (cardW + gapX)
+                local cy   = cardY
+                local slot = self._tradeSlots[i]
+
+                if slot then
+                    self:drawCollectionCard(cx, cy, cardW, cardH, slot, sc)
+                    -- Buy button below the card (sandbox style with spring animation)
+                    local bx   = cx
+                    local by   = cy + cardH + btnGap
+                    local sp   = self._tradeBtnSprings[i]
+                    local ss   = sp.scale
+                    local maxF = math.floor(4 * sc)
+                    local flt  = math.floor(maxF * math.max(0, (ss - 0.93) / 0.07))
+                    -- Shadow (static)
+                    lg.setColor(0.031, 0.078, 0.118, 1)
+                    roundedRect(bx + math.floor(2 * sc), by + btnShd, cardW, btnH, 8, sc)
+                    -- Face (floats + scales)
+                    local pivX = bx + cardW / 2
+                    local pivY = (by - flt) + btnH / 2
+                    lg.push()
+                    lg.translate(pivX, pivY)
+                    lg.scale(ss, ss)
+                    lg.translate(-pivX, -pivY)
+                    lg.setColor(0.765, 0.639, 0.541, 1)
+                    roundedRect(bx, by - flt, cardW, btnH, 8, sc)
+                    lg.setColor(0.965, 0.839, 0.741, 1)
+                    roundedRectLine(bx, by - flt, cardW, btnH, 8, sc, 2 * sc)
+                    lg.setFont(Fonts.small)
+                    lg.setColor(1, 1, 1, 1)
+                    local _iconH  = math.floor(btnH * 0.55)
+                    local _iconSc = _iconH / self.goldIcon:getHeight()
+                    local _iconW  = self.goldIcon:getWidth() * _iconSc
+                    local _gap    = math.floor(4 * sc)
+                    local _tW     = Fonts.small:getWidth("100")
+                    local _totW   = _iconW + _gap + _tW
+                    local _cx     = math.floor(bx + (cardW - _totW) / 2)
+                    local _midY   = textCY(Fonts.small, by - flt, btnH)
+                    local _visH   = Fonts.small:getAscent() - Fonts.small:getDescent()
+                    local _iY     = math.floor(_midY + (_visH - _iconH) / 2)
+                    lg.draw(self.goldIcon, _cx, _iY, 0, _iconSc, _iconSc)
+                    lg.print("100", _cx + _iconW + _gap, _midY)
+                    lg.pop()
+                    -- Hit rect covers full float range (screen space)
+                    table.insert(self._tradeCardRects, { x = bx + po, y = by - maxF, w = cardW, h = btnH + btnShd + maxF, slotIndex = i })
+                else
+                    -- Bought slot — show empty card, no button
+                    self:drawEmptyCard(cx, cy, cardW, cardH, sc)
+                end
+            end
+        end
     end
 
     function self:drawBottomBar(W, H, sc)
@@ -2026,6 +2485,23 @@ function MenuScreen.new()
             end
         end
 
+        -- Chest press: show HitChest sprite immediately on touch-down
+        if self.currentPanel == 4 and self._chestState == "ready" and self._chestBtnRect then
+            local r = self._chestBtnRect
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._chestPressed = true
+            end
+        end
+
+        -- Spring press: trade buy buttons (shop panel)
+        if self.currentPanel == 4 then
+            for _, r in ipairs(self._tradeCardRects) do
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    self._tradeBtnSprings[r.slotIndex].pressed = true
+                end
+            end
+        end
+
         -- Spring press: activate squish on button contact
         if self.currentPanel == 3 then
             local btn = self._playBtnRect
@@ -2121,6 +2597,8 @@ function MenuScreen.new()
         self.isPressed = false
         self._playSpring.pressed = false
         self._sbtnSpring.pressed = false
+        for i = 1, 3 do self._tradeBtnSprings[i].pressed = false end
+        self._chestPressed = false
         self._detailDragX = nil
         -- End collection scroll drag (keep velocity for momentum)
         if self._collectionScrollDragY ~= nil then
@@ -2249,6 +2727,63 @@ function MenuScreen.new()
                 self._rewardState     = "revealing"
                 self._rewardAnimTimer = 0
                 return
+            end
+        end
+
+        -- Shop panel: daily chest input
+        if self.currentPanel == 4 then
+            -- God Mode skip timer button
+            if _G.GodMode and self._chestSkipRect and self._chestState == "waiting" then
+                local r = self._chestSkipRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    self._chestTimer = 86400
+                    self._chestState = "ready"
+                    self:saveChestTimer()
+                    AudioManager.playTap()
+                    return
+                end
+            end
+            -- Tap chest when ready → start opening animation
+            if self._chestState == "ready" and self._chestBtnRect then
+                local r = self._chestBtnRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    self._chestState     = "hit"
+                    self._chestAnimTimer = 0
+                    self._chestAnimFrame = 1
+                    AudioManager.playTap()
+                    return
+                end
+            end
+            -- Card trade: tap a purchasable slot
+            for _, r in ipairs(self._tradeCardRects) do
+                local i = r.slotIndex
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    local gold = (_G.PlayerData and _G.PlayerData.gold) or 0
+                    if gold >= 100 then
+                        local unitType = self._tradeSlots[i]
+                        -- Deduct locally for immediate feedback
+                        _G.PlayerData.gold = gold - 100
+                        -- Update unlocks locally for immediate feedback
+                        if _G.PlayerData.unlocks and unitType then
+                            local u = _G.PlayerData.unlocks
+                            u.cards = u.cards or {}
+                            u.cards[unitType] = (u.cards[unitType] or 0) + 1
+                            u.pending_rewards = u.pending_rewards or {}
+                            table.insert(u.pending_rewards, { unit = unitType, type = "card" })
+                        end
+                        -- Persist card + deduct gold on server (authoritative)
+                        if _G.GameSocket and unitType then
+                            _G.GameSocket:send("award_card", { unit = unitType, cost = 100 })
+                        end
+                        self._tradeSlots[i] = false  -- mark slot as bought (false is JSON-safe)
+                        self:saveTradeTimer()
+                        AudioManager.playTap()
+                    else
+                        self.shopNotice     = "Not enough gold!"
+                        self.shopNoticeTimer = 2.0
+                    end
+                    return
+                end
             end
         end
 

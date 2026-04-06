@@ -8,6 +8,15 @@ local BUFF_ANIM_FPS      = 8
 local BUFF_ANIM_FRAMES   = 6
 local BUFF_ANIM_DURATION = BUFF_ANIM_FRAMES / BUFF_ANIM_FPS  -- 0.75s
 
+local _goldIcon
+local function getGoldIcon()
+    if not _goldIcon then
+        _goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
+        _goldIcon:setFilter('nearest', 'nearest')
+    end
+    return _goldIcon
+end
+
 function Card:new(x, y, cardSprite, index, unitType, trimBottom)
     self.x = x
     self.y = y
@@ -108,11 +117,23 @@ function Card:draw()
     -- Cost display below card (only when not dragging)
     if not self.isDragging then
         lg.setFont(Fonts.small)
-        lg.setColor(1, 1, 1, 1)  -- White color
+        lg.setColor(1, 1, 1, 1)
         local cost = UnitRegistry.unitCosts[self.unitType] or 3
-        local costText = "¤" .. cost
         local costPadding = 8 * Constants.SCALE
-        lg.printf(costText, self.x, self.y + self.height + costPadding, self.width, 'center')
+        local costY = self.y + self.height + costPadding
+        local icon = getGoldIcon()
+        local iconH = math.floor(Fonts.small:getHeight() * 0.55)
+        local iconSc = iconH / icon:getHeight()
+        local iconW = icon:getWidth() * iconSc
+        local costStr = tostring(cost)
+        local textW = Fonts.small:getWidth(costStr)
+        local gap = 2
+        local totalW = iconW + gap + textW
+        local startX = math.floor(self.x + (self.width - totalW) / 2)
+        local visH  = Fonts.small:getAscent() - Fonts.small:getDescent()
+        local iconY = math.floor(costY + (visH - iconH) / 2)
+        lg.draw(icon, startX, iconY, 0, iconSc, iconSc)
+        lg.print(costStr, startX + iconW + gap, costY)
     end
 
     -- Draw "up" animation at top-right corner when this card can upgrade a field unit

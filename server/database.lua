@@ -739,6 +739,19 @@ function Database:migrateUnlocks(playerId)
     return unlocks
 end
 
+-- Award a card of the given unit type and queue it in pending_rewards.
+-- Updates unlocks_json in the database. Returns updated unlocks.
+function Database:awardCard(playerId, unitType)
+    local unlocks = self:getUnlocks(playerId)
+    if not unlocks then return nil end
+    unlocks.cards = unlocks.cards or {}
+    unlocks.cards[unitType] = (unlocks.cards[unitType] or 0) + 1
+    unlocks.pending_rewards = unlocks.pending_rewards or {}
+    table.insert(unlocks.pending_rewards, { unit = unitType, type = "card" })
+    self:setUnlocks(playerId, unlocks)
+    return unlocks
+end
+
 -- Claim (remove) the first pending reward. Returns updated unlocks.
 function Database:claimReward(playerId)
     local unlocks = self:getUnlocks(playerId)
