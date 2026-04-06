@@ -66,6 +66,18 @@ function GameScreen.new()
         -- Initialize SUIT
         self.suit = suit.new()
 
+        -- Ready button spring + hit rect
+        self._readySpring  = { scale = 1.0, vel = 0.0, pressed = false }
+        self._readyBtnRect = nil
+
+        -- Reroll button spring + hit rect
+        self._rerollSpring  = { scale = 1.0, vel = 0.0, pressed = false }
+        self._rerollBtnRect = nil
+
+        -- Emote button spring + hit rect
+        self._emoteSpring  = { scale = 1.0, vel = 0.0, pressed = false }
+        self._emoteBtnRect = nil
+
         -- Initialize Tooltip
         self.tooltip = Tooltip()
 
@@ -397,6 +409,9 @@ function GameScreen.new()
         local cardsEndX = startX + totalWidth
         self.rerollButtonX = cardsEndX + cardSpacing
         self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
+        -- Emote button (same height, opposite side)
+        self.emoteButtonX = startX - cardSpacing - self.rerollButtonSize
+        self.emoteButtonY = self.rerollButtonY
     end
 
     -- Build Card objects from an array of unitType strings.
@@ -426,6 +441,9 @@ function GameScreen.new()
         local cardsEndX = startX + totalWidth
         self.rerollButtonX = cardsEndX + cardSpacing
         self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
+        -- Emote button (same height, opposite side)
+        self.emoteButtonX = startX - cardSpacing - self.rerollButtonSize
+        self.emoteButtonY = self.rerollButtonY
     end
 
     -- Draw cards from the deck pile (or fall back to random) and display them.
@@ -689,6 +707,27 @@ function GameScreen.new()
 
         -- Update grid with current mouse position
         self.grid:update(dt, self.mouseX, self.mouseY)
+
+        -- Spring physics for emote button
+        local emTarget = self._emoteSpring.pressed and 0.93 or 1.0
+        local emAccel  = -480 * (self._emoteSpring.scale - emTarget) - 18 * self._emoteSpring.vel
+        self._emoteSpring.vel   = self._emoteSpring.vel   + emAccel * dt
+        self._emoteSpring.scale = self._emoteSpring.scale + self._emoteSpring.vel * dt
+        self._emoteSpring.scale = math.max(0.85, math.min(1.12, self._emoteSpring.scale))
+
+        -- Spring physics for reroll button
+        local rrTarget = self._rerollSpring.pressed and 0.93 or 1.0
+        local rrAccel  = -480 * (self._rerollSpring.scale - rrTarget) - 18 * self._rerollSpring.vel
+        self._rerollSpring.vel   = self._rerollSpring.vel   + rrAccel * dt
+        self._rerollSpring.scale = self._rerollSpring.scale + self._rerollSpring.vel * dt
+        self._rerollSpring.scale = math.max(0.85, math.min(1.12, self._rerollSpring.scale))
+
+        -- Spring physics for ready button
+        local rspTarget = self._readySpring.pressed and 0.93 or 1.0
+        local rspAccel  = -480 * (self._readySpring.scale - rspTarget) - 18 * self._readySpring.vel
+        self._readySpring.vel   = self._readySpring.vel   + rspAccel * dt
+        self._readySpring.scale = self._readySpring.scale + self._readySpring.vel * dt
+        self._readySpring.scale = math.max(0.85, math.min(1.12, self._readySpring.scale))
     end
 
     function self:draw()
@@ -861,58 +900,181 @@ function GameScreen.new()
         local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
         local buttonY = ((gridBottom + self.cardY) / 2) - (buttonHeight / 2)
 
+        -- Helper functions for rounded-rect buttons
+        local function roundedRect(x, y, w, h, r, sc)
+            lg.rectangle('fill', x, y, w, h, r * sc, r * sc)
+        end
+        local function roundedRectLine(x, y, w, h, r, sc, lw)
+            lg.setLineWidth(lw)
+            lg.rectangle('line', x, y, w, h, r * sc, r * sc)
+        end
+        local function textCY(font, boxY, boxH)
+            return math.floor(boxY + (boxH - (font:getAscent() - font:getDescent())) / 2)
+        end
+
         -- Buttons
         if self.state == "setup" then
-            -- In online mode: show "READY" until pressed, then "Esperando…"
-            local buttonText = "READY"
-            if self.isOnline and self.localReady then
-                buttonText = "Esperando…"
-            end
             local buttonPadding = 20 * Constants.SCALE
-            local textWidth = Fonts.medium:getWidth(buttonText)
-            local buttonWidth = textWidth + buttonPadding * 2
+            -- Size button to fit the wider of the two possible labels
+            local readyW   = Fonts.medium:getWidth("READY")
+            local waitW    = Fonts.medium:getWidth("Esperando…")
+            local buttonWidth = math.max(readyW, waitW) + buttonPadding * 2
             local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
 
-            -- Ready button below the grid (disabled after pressing in online mode)
-            local readyButton = self.suit:Button(buttonText, {id="ready_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
-            if readyButton.hit and not (self.isOnline and self.localReady) then
-                AudioManager.playTap()
-                if self.isOnline then
-                    self.localReady = true
-                    self:sendMsg({type = "ready"})
-                    self:checkBattleStart()
+            -- Custom ready button (Play style → Sandbox style after press)
+            local sc       = Constants.SCALE
+            local maxFloat = math.floor(4 * sc)
+            local shadowH  = math.floor(4 * sc)
+            local sp       = self._readySpring
+            local floatOff = math.floor(maxFloat * math.max(0, (sp.scale - 0.93) / 0.07))
+            local isWaiting = self.isOnline and self.localReady
+
+            -- Store hit rect for press/release handlers
+            self._readyBtnRect = { x = buttonX, y = buttonY - maxFloat, w = buttonWidth, h = buttonHeight + maxFloat }
+
+            if not isWaiting then
+                -- PLAY button style: warm tan, cream border, idle bob + rotation
+                local t       = love.timer.getTime()
+                local idleBob = math.sin(t * 1.8) * 2 * sc
+                local idleRot = math.sin(t * 1.3) * 0.012
+                local drawY   = buttonY - floatOff + math.floor(idleBob)
+
+                lg.setColor(0.031, 0.078, 0.118, 1)
+                roundedRect(buttonX + math.floor(2 * sc), buttonY + shadowH, buttonWidth, buttonHeight, 8, sc)
+
+                local pivX = buttonX + buttonWidth / 2
+                local pivY = drawY + buttonHeight / 2
+                local bx   = -buttonWidth / 2
+                local by   = -buttonHeight / 2
+                lg.push()
+                lg.translate(pivX, pivY)
+                lg.rotate(idleRot)
+                lg.scale(sp.scale, sp.scale)
+                lg.setColor(0.765, 0.639, 0.541, 1)
+                roundedRect(bx, by, buttonWidth, buttonHeight, 8, sc)
+                lg.setColor(0.965, 0.839, 0.741, 1)
+                roundedRectLine(bx, by, buttonWidth, buttonHeight, 8, sc, 2 * sc)
+                lg.setFont(Fonts.medium)
+                lg.setColor(1, 1, 1, 1)
+                lg.printf("READY", bx, textCY(Fonts.medium, by, buttonHeight), buttonWidth, 'center')
+                lg.pop()
+            else
+                -- SANDBOX button style: dusty mauve, same-color border, no bob/rotation
+                local drawY = buttonY - floatOff
+
+                lg.setColor(0.031, 0.078, 0.118, 1)
+                roundedRect(buttonX + math.floor(2 * sc), buttonY + shadowH, buttonWidth, buttonHeight, 8, sc)
+
+                local pivX = buttonX + buttonWidth / 2
+                local pivY = drawY + buttonHeight / 2
+                lg.push()
+                lg.translate(pivX, pivY)
+                lg.scale(sp.scale, sp.scale)
+                lg.translate(-pivX, -pivY)
+                lg.setColor(0.600, 0.459, 0.467, 1)
+                roundedRect(buttonX, drawY, buttonWidth, buttonHeight, 8, sc)
+                lg.setColor(0.600, 0.459, 0.467, 1)
+                roundedRectLine(buttonX, drawY, buttonWidth, buttonHeight, 8, sc, 2 * sc)
+                lg.setFont(Fonts.medium)
+                lg.setColor(1, 1, 1, 1)
+                lg.printf("Esperando…", buttonX, textCY(Fonts.medium, drawY, buttonHeight), buttonWidth, 'center')
+                lg.pop()
+            end
+
+            -- Reroll button (custom draw: play style when affordable, sandbox when not)
+            do
+                local rx        = self.rerollButtonX
+                local ry        = self.rerollButtonY
+                local rsz       = self.rerollButtonSize
+                local rsp       = self._rerollSpring
+                local rfloatOff = math.floor(maxFloat * math.max(0, (rsp.scale - 0.93) / 0.07))
+                local canAfford = self.isSandbox or self.playerCoins >= self.rerollCost
+
+                self._rerollBtnRect = { x = rx, y = ry - maxFloat, w = rsz, h = rsz + maxFloat }
+
+                if canAfford then
+                    local t       = love.timer.getTime()
+                    local idleBob = math.sin(t * 1.8) * 2 * sc
+                    local idleRot = math.sin(t * 1.3) * 0.012
+                    local drawY   = ry - rfloatOff + math.floor(idleBob)
+
+                    lg.setColor(0.031, 0.078, 0.118, 1)
+                    roundedRect(rx + math.floor(2 * sc), ry + shadowH, rsz, rsz, 8, sc)
+
+                    local pivX = rx + rsz / 2
+                    local pivY = drawY + rsz / 2
+                    local bx   = -rsz / 2
+                    local by   = -rsz / 2
+                    lg.push()
+                    lg.translate(pivX, pivY)
+                    lg.rotate(idleRot)
+                    lg.scale(rsp.scale, rsp.scale)
+                    lg.setColor(0.765, 0.639, 0.541, 1)
+                    roundedRect(bx, by, rsz, rsz, 8, sc)
+                    lg.setColor(0.965, 0.839, 0.741, 1)
+                    roundedRectLine(bx, by, rsz, rsz, 8, sc, 2 * sc)
+                    lg.setFont(Fonts.medium)
+                    lg.setColor(1, 1, 1, 1)
+                    lg.printf("X", bx, textCY(Fonts.medium, by, rsz), rsz, 'center')
+                    lg.pop()
                 else
-                    self.timer = 0
-                    self:beginBattleCountdown()
+                    local drawY = ry - rfloatOff
+
+                    lg.setColor(0.031, 0.078, 0.118, 1)
+                    roundedRect(rx + math.floor(2 * sc), ry + shadowH, rsz, rsz, 8, sc)
+
+                    local pivX = rx + rsz / 2
+                    local pivY = drawY + rsz / 2
+                    lg.push()
+                    lg.translate(pivX, pivY)
+                    lg.scale(rsp.scale, rsp.scale)
+                    lg.translate(-pivX, -pivY)
+                    lg.setColor(0.600, 0.459, 0.467, 1)
+                    roundedRect(rx, drawY, rsz, rsz, 8, sc)
+                    lg.setColor(0.600, 0.459, 0.467, 1)
+                    roundedRectLine(rx, drawY, rsz, rsz, 8, sc, 2 * sc)
+                    lg.setFont(Fonts.medium)
+                    lg.setColor(1, 1, 1, 1)
+                    lg.printf("X", rx, textCY(Fonts.medium, drawY, rsz), rsz, 'center')
+                    lg.pop()
                 end
             end
 
-            -- Reroll button to the right of cards
-            local rerollButton = self.suit:Button("@", {id="reroll_btn"},
-                self.rerollButtonX, self.rerollButtonY,
-                self.rerollButtonSize, self.rerollButtonSize)
-            if rerollButton.hit then
-                AudioManager.playTap()
-                if self.isSandbox or self.playerCoins >= self.rerollCost then
-                    if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
-                    if self.usingDeck then
-                        -- In sandbox, reinit pile if too small to draw fresh cards
-                        if self.isSandbox and DeckManager.pileSize() < 3 then
-                            DeckManager.returnCards(self.drawnCardTypes)
-                            self.drawnCardTypes = {}
-                            DeckManager.initDrawPile()
-                            self.drawnCardTypes = DeckManager.drawCards(3)
-                            self:_rebuildCardsFromTypes(self.drawnCardTypes)
-                        else
-                            local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
-                            self.drawnCardTypes = newTypes
-                            self:_rebuildCardsFromTypes(newTypes)
-                        end
-                    else
-                        self:dealSetupCards()
-                    end
-                end
+            -- Emote button (play style, left of cards, no action yet)
+            do
+                local ex        = self.emoteButtonX
+                local ey        = self.emoteButtonY
+                local esz       = self.rerollButtonSize
+                local esp       = self._emoteSpring
+                local efloatOff = math.floor(maxFloat * math.max(0, (esp.scale - 0.93) / 0.07))
+                local t         = love.timer.getTime()
+                local idleBob   = math.sin(t * 1.8 + 1.0) * 2 * sc  -- offset phase from reroll
+                local idleRot   = math.sin(t * 1.3 + 1.0) * 0.012
+                local drawY     = ey - efloatOff + math.floor(idleBob)
+
+                self._emoteBtnRect = { x = ex, y = ey - maxFloat, w = esz, h = esz + maxFloat }
+
+                lg.setColor(0.031, 0.078, 0.118, 1)
+                roundedRect(ex + math.floor(2 * sc), ey + shadowH, esz, esz, 8, sc)
+
+                local pivX = ex + esz / 2
+                local pivY = drawY + esz / 2
+                local bx   = -esz / 2
+                local by   = -esz / 2
+                lg.push()
+                lg.translate(pivX, pivY)
+                lg.rotate(idleRot)
+                lg.scale(esp.scale, esp.scale)
+                lg.setColor(0.765, 0.639, 0.541, 1)
+                roundedRect(bx, by, esz, esz, 8, sc)
+                lg.setColor(0.965, 0.839, 0.741, 1)
+                roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
+                lg.setFont(Fonts.medium)
+                lg.setColor(1, 1, 1, 1)
+                lg.printf("@", bx, textCY(Fonts.medium, by, esz), esz, 'center')
+                lg.pop()
             end
+
             -- Sandbox: MENU button at top-right corner
             if self.isSandbox then
                 local menuBtnW = Fonts.medium:getWidth("MENU") + 20 * Constants.SCALE
@@ -1098,6 +1260,28 @@ function GameScreen.new()
                 end
             end
         end
+
+        -- Spring squish for ready + reroll buttons
+        if self.state == "setup" then
+            if self._readyBtnRect then
+                local rb = self._readyBtnRect
+                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                    self._readySpring.pressed = true
+                end
+            end
+            if self._rerollBtnRect then
+                local rb = self._rerollBtnRect
+                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                    self._rerollSpring.pressed = true
+                end
+            end
+            if self._emoteBtnRect then
+                local rb = self._emoteBtnRect
+                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                    self._emoteSpring.pressed = true
+                end
+            end
+        end
     end
 
     -- Shared release logic (called from both mousereleased and touchreleased)
@@ -1105,6 +1289,55 @@ function GameScreen.new()
         -- Tutorial bubble tap-to-advance (does not consume the event)
         if self.isTutorial and self.tutorialManager then
             self.tutorialManager:handleTap(x, y)
+        end
+
+        -- ── Ready + reroll + emote buttons ───────────────────────────────────
+        self._readySpring.pressed  = false
+        self._rerollSpring.pressed = false
+        self._emoteSpring.pressed  = false
+        if self.state == "setup" and self._readyBtnRect then
+            local rb = self._readyBtnRect
+            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                if not (self.isOnline and self.localReady) then
+                    AudioManager.playTap()
+                    if self.isOnline then
+                        self.localReady = true
+                        self:sendMsg({type = "ready"})
+                        self:checkBattleStart()
+                    else
+                        self.timer = 0
+                        self:beginBattleCountdown()
+                    end
+                end
+                return
+            end
+        end
+
+        -- ── Reroll button ─────────────────────────────────────────────────────
+        if self.state == "setup" and self._rerollBtnRect then
+            local rb = self._rerollBtnRect
+            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                AudioManager.playTap()
+                if self.isSandbox or self.playerCoins >= self.rerollCost then
+                    if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
+                    if self.usingDeck then
+                        if self.isSandbox and DeckManager.pileSize() < 3 then
+                            DeckManager.returnCards(self.drawnCardTypes)
+                            self.drawnCardTypes = {}
+                            DeckManager.initDrawPile()
+                            self.drawnCardTypes = DeckManager.drawCards(3)
+                            self:_rebuildCardsFromTypes(self.drawnCardTypes)
+                        else
+                            local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
+                            self.drawnCardTypes = newTypes
+                            self:_rebuildCardsFromTypes(newTypes)
+                        end
+                    else
+                        self:dealSetupCards()
+                    end
+                end
+                return
+            end
         end
 
         -- ── Tooltip upgrade button ────────────────────────────────────────────
@@ -1390,6 +1623,28 @@ function GameScreen.new()
                     self.pressedCard = card
                     self.pressedCardIndex = i
                     return
+                end
+            end
+        end
+
+        -- Spring squish for ready + reroll + emote buttons
+        if self.state == "setup" then
+            if self._readyBtnRect then
+                local rb = self._readyBtnRect
+                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                    self._readySpring.pressed = true
+                end
+            end
+            if self._rerollBtnRect then
+                local rb = self._rerollBtnRect
+                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                    self._rerollSpring.pressed = true
+                end
+            end
+            if self._emoteBtnRect then
+                local rb = self._emoteBtnRect
+                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                    self._emoteSpring.pressed = true
                 end
             end
         end

@@ -20,7 +20,9 @@ local function drawFirePatch(patch, sprites, clipTop, clipH)
         local sw, sh   = img:getWidth(), img:getHeight()
         local scale    = Constants.CELL_SIZE / sw
         lg.setColor(1, 1, 1, alpha)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     else
         lg.setColor(1, 0.35, 0, alpha)
         lg.rectangle('fill', cx - Constants.CELL_SIZE / 2, cy - Constants.CELL_SIZE / 2, Constants.CELL_SIZE, Constants.CELL_SIZE)
@@ -262,7 +264,9 @@ function Mage:drawProjectile(projectile)
         local sw, sh   = img:getWidth(), img:getHeight()
         local scale    = Constants.SCALE * 3
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, cx, cy, projectile.rotation or 0, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     else
         lg.setColor(1, 0.5, 0.1, 0.35)
         lg.circle('fill', cx, cy, 10 * Constants.SCALE)

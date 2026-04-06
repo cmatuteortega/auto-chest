@@ -1,3 +1,4 @@
+local BaseUnit       = require('src.base_unit')
 local BaseUnitRanged = require('src.base_unit_ranged')
 local Constants      = require('src.constants')
 
@@ -18,7 +19,9 @@ local function drawFirePatch(patch, sprites, clipTop, clipH)
         local sw, sh   = img:getWidth(), img:getHeight()
         local scale    = Constants.CELL_SIZE / sw
         lg.setColor(1, 1, 1, alpha)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     else
         lg.setColor(1, 0.35, 0, alpha)
         lg.rectangle('fill', cx - Constants.CELL_SIZE / 2, cy - Constants.CELL_SIZE / 2, Constants.CELL_SIZE, Constants.CELL_SIZE)
@@ -355,7 +358,9 @@ function Migraine:drawGroundEffects()
         local offsetX = math.floor((Constants.CELL_SIZE - sw * scale) / 2)
         local offsetY = math.floor(Constants.CELL_SIZE - (sh - trimBottom + BOTTOM_MARGIN) * scale)
         love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.setShader(BaseUnit.getPaletteShader())
         love.graphics.draw(img, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
+        love.graphics.setShader()
     end
 
     for _, patch in ipairs(self.firePatches) do

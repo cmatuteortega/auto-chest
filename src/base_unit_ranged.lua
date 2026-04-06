@@ -269,7 +269,9 @@ function BaseUnitRanged:drawProjectile(projectile)
         local sh    = self.projectileSprite:getHeight()
         local scale = Constants.SCALE * 3
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(self.projectileSprite, currentX, currentY, angle + self.projectileAngleOffset, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     else
         -- Fallback: procedural arrow
         lg.setColor(0.8, 0.6, 0.3, 1)

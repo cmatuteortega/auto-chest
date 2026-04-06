@@ -1,5 +1,6 @@
 local Class = require('lib.classic')
 local Constants = require('src.constants')
+local BaseUnit = require('src.base_unit')
 local UnitRegistry = require('src.unit_registry')
 
 local Card = Class:extend()
@@ -112,7 +113,9 @@ function Card:draw()
     -- matching the same baseline used in BaseUnit:draw() for grid cells.
     local BOTTOM_MARGIN = 3
     local spriteY = math.floor(self.y + self.height - (spriteHeight - self.trimBottom + BOTTOM_MARGIN) * spriteScale)
+    lg.setShader(BaseUnit.getPaletteShader())
     lg.draw(self.cardSprite, spriteX, spriteY, 0, spriteScale, spriteScale)
+    lg.setShader()
 
     -- Cost display below card (only when not dragging)
     if not self.isDragging then
@@ -146,7 +149,9 @@ function Card:draw()
         local px = math.floor(self.x + self.width  - sw * scale / 2)
         local py = math.floor(self.y               + sh * scale / 2)
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, px, py, 0, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     end
 end
 

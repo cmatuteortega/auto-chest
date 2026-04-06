@@ -18,7 +18,9 @@ local function drawFirePatch(patch, sprites, clipTop, clipH)
         local sw, sh   = img:getWidth(), img:getHeight()
         local scale    = Constants.CELL_SIZE / sw
         lg.setColor(1, 1, 1, alpha)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     else
         lg.setColor(1, 0.35, 0, alpha)
         lg.rectangle('fill', cx - Constants.CELL_SIZE / 2, cy - Constants.CELL_SIZE / 2, Constants.CELL_SIZE, Constants.CELL_SIZE)

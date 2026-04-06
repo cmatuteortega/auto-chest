@@ -1,3 +1,4 @@
+local BaseUnit       = require('src.base_unit')
 local BaseUnitRanged = require('src.base_unit_ranged')
 local Constants      = require('src.constants')
 
@@ -225,7 +226,9 @@ function Marrow:drawAttackVisuals()
         local scale = Constants.SCALE * 3
 
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(lanceSprite, cx, tipY, angle, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     end
 
     lg.setColor(1, 1, 1, 1)

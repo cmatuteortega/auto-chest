@@ -19,7 +19,9 @@ local function drawFirePatch(patch, sprites, clipTop, clipH)
         local sw, sh   = img:getWidth(), img:getHeight()
         local scale    = Constants.CELL_SIZE / sw
         lg.setColor(1, 1, 1, alpha)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+        lg.setShader()
     else
         lg.setColor(1, 0.35, 0, alpha)
         lg.rectangle('fill', cx - Constants.CELL_SIZE / 2, cy - Constants.CELL_SIZE / 2, Constants.CELL_SIZE, Constants.CELL_SIZE)
@@ -299,7 +301,9 @@ function Catapult:drawAttackVisuals()
         local sw, sh = img:getWidth(), img:getHeight()
         local angle  = math.atan2(ey - sy, ex - sx) + (t - 0.5) * math.pi * 0.5
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, cx, cy, angle, sizeScale, sizeScale, sw / 2, sh / 2)
+        lg.setShader()
     else
         -- Fallback: dark circle
         lg.setColor(0.3, 0.2, 0.1, 1)

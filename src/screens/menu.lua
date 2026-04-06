@@ -3,6 +3,7 @@
 
 local Screen         = require('lib.screen')
 local Constants      = require('src.constants')
+local BaseUnit       = require('src.base_unit')
 local UnitRegistry   = require('src.unit_registry')
 local DeckManager    = require('src.deck_manager')
 local SocketManager  = require('src.socket_manager')
@@ -201,8 +202,9 @@ function MenuScreen.new()
         self._tickerWaitTimer  = 1.0
 
         -- Button spring physics (Balatro squish/bounce)
-        self._playSpring = { scale = 1.0, vel = 0.0, pressed = false }
-        self._sbtnSpring = { scale = 1.0, vel = 0.0, pressed = false }
+        self._playSpring     = { scale = 1.0, vel = 0.0, pressed = false }
+        self._sbtnSpring     = { scale = 1.0, vel = 0.0, pressed = false }
+        self._settingsSpring = { scale = 1.0, vel = 0.0, pressed = false }
         self._tradeBtnSprings = {
             { scale = 1.0, vel = 0.0, pressed = false },
             { scale = 1.0, vel = 0.0, pressed = false },
@@ -601,6 +603,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
         updateSpring(self._playSpring, dt)
         updateSpring(self._sbtnSpring, dt)
+        updateSpring(self._settingsSpring, dt)
         for i = 1, 3 do updateSpring(self._tradeBtnSprings[i], dt) end
     end
 
@@ -750,7 +753,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local sx = math.floor(cx + (cardW - iw * sprSc) / 2)
         local sy = math.floor(cy + cardH - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, sx, sy, 0, sprSc, sprSc)
+        lg.setShader()
 
         -- Tap hint
         --lg.setFont(Fonts.tiny)
@@ -798,7 +803,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local sy = math.floor(cy + cardH - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
             -- Dark silhouette tint
             lg.setColor(0.03, 0.04, 0.06, 1)
+            lg.setShader(BaseUnit.getPaletteShader())
             lg.draw(img, sx, sy, 0, sprSc, sprSc)
+            lg.setShader()
         end
 
         -- "?" label at top (name area)
@@ -944,10 +951,14 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 local bgX = math.floor(ox + (W - bw * sprSc) / 2)
                 local bgY = math.floor(baselineY - (bh - trimBottom) * sprSc)
                 lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
                 lg.draw(bgImg, bgX, bgY, 0, sprSc, sprSc)
+                lg.setShader()
             end
             lg.setColor(1, 1, 1, 1)
+            lg.setShader(BaseUnit.getPaletteShader())
             lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
+            lg.setShader()
 
             -- Store sprite zone as drag rect
             self._detailSpriteRect = { x = ox, y = spriteZoneY, w = W, h = spriteZoneH }
@@ -971,12 +982,14 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local fImgX = startX
             local fImgY = baselineY - (fh - frontTrim) * sprSc
             lg.setColor(1, 1, 1, 1)
+            lg.setShader(BaseUnit.getPaletteShader())
             lg.draw(frontImg, fImgX, fImgY, 0, sprSc, sprSc)
 
             -- Back sprite (bottom-aligned)
             local bImgX = startX + fw * sprSc + gap
             local bImgY = baselineY - (bh - backTrim) * sprSc
             lg.draw(backImg, bImgX, bImgY, 0, sprSc, sprSc)
+            lg.setShader()
 
             self._detailSpriteRect = nil
         end
@@ -1116,13 +1129,17 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     local bgOffX = math.floor(cx2 + (cellSize - bw * sprSc) / 2)
                     local bgOffY = math.floor(cy2 + cellSize - (bh - trimBottom + BOTTOM_MARGIN) * sprSc)
                     lg.setColor(1, 1, 1, 1)
+                    lg.setShader(BaseUnit.getPaletteShader())
                     lg.draw(bgImg, bgOffX, bgOffY, 0, sprSc, sprSc)
+                    lg.setShader()
                 end
                 local BOTTOM_MARGIN = 3
                 local sx = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
                 local sy = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
                 lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
+                lg.setShader()
                 table.insert(self._previewUnitRects, {
                     x = cx2 + self.panelOffset, y = cy2, w = cellSize, h = cellSize,
                     utype = entry.unitType
@@ -1414,7 +1431,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 local spriteBase = cy + cardH - stripH - BOTTOM_MARGIN * sc
                 local sy = math.floor(spriteBase - (ih - trimBottom) * sprSc)
                 lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
+                lg.setShader()
             end
 
             -- Bottom strip background
@@ -1512,6 +1531,37 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         s.opening = {}
         for i = 1, 16 do s.opening[i] = entry('src/assets/Chest/Open(GoldLoot)' .. i .. '.png') end
         self._chestSprites = s
+        self._paletteShader = love.graphics.newShader([[
+            vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
+                vec4 pixel = Texel(texture, texture_coords);
+                if (pixel.a < 0.01) { return pixel; }
+                vec3 c0 = vec3(0.0314, 0.0784, 0.1176);
+                vec3 c1 = vec3(0.0588, 0.1647, 0.2471);
+                vec3 c2 = vec3(0.1255, 0.2235, 0.3098);
+                vec3 c3 = vec3(0.9647, 0.8392, 0.7412);
+                vec3 c4 = vec3(0.7647, 0.6392, 0.5412);
+                vec3 c5 = vec3(0.6000, 0.4588, 0.4667);
+                vec3 c6 = vec3(0.5059, 0.3843, 0.4431);
+                vec3 c7 = vec3(0.3059, 0.2863, 0.3725);
+                float d0 = dot(pixel.rgb - c0, pixel.rgb - c0);
+                float d1 = dot(pixel.rgb - c1, pixel.rgb - c1);
+                float d2 = dot(pixel.rgb - c2, pixel.rgb - c2);
+                float d3 = dot(pixel.rgb - c3, pixel.rgb - c3);
+                float d4 = dot(pixel.rgb - c4, pixel.rgb - c4);
+                float d5 = dot(pixel.rgb - c5, pixel.rgb - c5);
+                float d6 = dot(pixel.rgb - c6, pixel.rgb - c6);
+                float d7 = dot(pixel.rgb - c7, pixel.rgb - c7);
+                vec3 best = c0; float bd = d0;
+                if (d1 < bd) { bd = d1; best = c1; }
+                if (d2 < bd) { bd = d2; best = c2; }
+                if (d3 < bd) { bd = d3; best = c3; }
+                if (d4 < bd) { bd = d4; best = c4; }
+                if (d5 < bd) { bd = d5; best = c5; }
+                if (d6 < bd) { bd = d6; best = c6; }
+                if (d7 < bd) { best = c7; }
+                return vec4(best, pixel.a) * color;
+            }
+        ]])
     end
 
     function self:saveChestTimer()
@@ -1711,7 +1761,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local chestY = math.floor(baseline - visH) - math.floor(20 * sc)
 
             lg.setColor(1, 1, 1, 1)
+            lg.setShader(self._paletteShader)
             lg.draw(img, chestX, chestY, 0, pixSc, pixSc)
+            lg.setShader()
 
             local po = self.panelOffset
             self._chestBtnRect = { x = chestX + po, y = chestY, w = drawW, h = visH }
@@ -1775,43 +1827,51 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self._tradeCardRects = {}
         local allUnits = UnitRegistry.getAllUnitTypes()
         if #allUnits >= 3 then
-            local btnH    = math.floor(28 * sc)
-            local btnGap  = math.floor(10 * sc)
+            local btnH    = math.floor(42 * sc)
+            local btnGap  = math.floor(18 * sc)
             local btnShd  = math.floor(4 * sc)
             local cardY   = tradeHdrY + hdrH + math.floor(16 * sc)
-            local trCols  = 3
-            local trTotalW = trCols * cardW + (trCols - 1) * gapX
-            local trStartX = math.floor(ox + (W - trTotalW) / 2)
+            -- Side cards centered between the title margin and the center card
+            local tradeCardX = {
+                math.floor(startX + totalW / 5 - cardW / 2),
+                math.floor(startX + totalW / 2 - cardW / 2),
+                math.floor(startX + totalW * 4 / 5 - cardW / 2),
+            }
 
             for i = 1, 3 do
-                local col  = (i - 1) % trCols
-                local cx   = trStartX + col * (cardW + gapX)
+                local cx   = tradeCardX[i]
                 local cy   = cardY
                 local slot = self._tradeSlots[i]
 
                 if slot then
                     self:drawCollectionCard(cx, cy, cardW, cardH, slot, sc)
                     -- Buy button below the card (sandbox style with spring animation)
-                    local bx   = cx
-                    local by   = cy + cardH + btnGap
-                    local sp   = self._tradeBtnSprings[i]
-                    local ss   = sp.scale
-                    local maxF = math.floor(4 * sc)
-                    local flt  = math.floor(maxF * math.max(0, (ss - 0.93) / 0.07))
+                    local bx      = cx
+                    local by      = cy + cardH + btnGap
+                    local sp      = self._tradeBtnSprings[i]
+                    local ss      = sp.scale
+                    local maxF    = math.floor(4 * sc)
+                    local flt     = math.floor(maxF * math.max(0, (ss - 0.93) / 0.07))
+                    local phase   = (i - 1) * 1.1   -- stagger phase per button
+                    local t_b     = love.timer.getTime()
+                    local idleBob = math.sin(t_b * 1.8 + phase) * 0.5 * sc
+                    local idleRot = math.sin(t_b * 1.3 + phase) * 0.003
+                    local drawY   = by - flt + math.floor(idleBob)
                     -- Shadow (static)
                     lg.setColor(0.031, 0.078, 0.118, 1)
                     roundedRect(bx + math.floor(2 * sc), by + btnShd, cardW, btnH, 8, sc)
-                    -- Face (floats + scales)
+                    -- Face (floats + scales + idle wave)
                     local pivX = bx + cardW / 2
-                    local pivY = (by - flt) + btnH / 2
+                    local pivY = drawY + btnH / 2
                     lg.push()
                     lg.translate(pivX, pivY)
+                    lg.rotate(idleRot)
                     lg.scale(ss, ss)
                     lg.translate(-pivX, -pivY)
                     lg.setColor(0.765, 0.639, 0.541, 1)
-                    roundedRect(bx, by - flt, cardW, btnH, 8, sc)
+                    roundedRect(bx, drawY, cardW, btnH, 8, sc)
                     lg.setColor(0.965, 0.839, 0.741, 1)
-                    roundedRectLine(bx, by - flt, cardW, btnH, 8, sc, 2 * sc)
+                    roundedRectLine(bx, drawY, cardW, btnH, 8, sc, 2 * sc)
                     lg.setFont(Fonts.small)
                     lg.setColor(1, 1, 1, 1)
                     local _iconH  = math.floor(btnH * 0.55)
@@ -1821,7 +1881,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     local _tW     = Fonts.small:getWidth("100")
                     local _totW   = _iconW + _gap + _tW
                     local _cx     = math.floor(bx + (cardW - _totW) / 2)
-                    local _midY   = textCY(Fonts.small, by - flt, btnH)
+                    local _midY   = textCY(Fonts.small, drawY, btnH)
                     local _visH   = Fonts.small:getAscent() - Fonts.small:getDescent()
                     local _iY     = math.floor(_midY + (_visH - _iconH) / 2)
                     lg.draw(self.goldIcon, _cx, _iY, 0, _iconSc, _iconSc)
@@ -1990,7 +2050,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local imgX = math.floor(panX + (panW - iw * sprSc) / 2)
         local imgY = math.floor(panY + vPad)
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
+        lg.setShader()
 
         local textX = panX + math.floor(16 * sc)
         local curY  = imgY + (ih - trimBottom) * sprSc + math.floor(7 * sc)
@@ -2098,20 +2160,42 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
             xCur = xCur + nameW + math.floor(12 * sc)
 
-            -- Settings "+" button (top-right corner)
-            local sbW = stripH
-            local sbX = W - sbW - edgeX
-            local sbY = stripY
-            local sbR = math.max(1, math.floor(3 * sc))
+            -- Settings "+" button (top-right corner, play-button style)
+            local sbW      = stripH
+            local sbX      = W - sbW - edgeX
+            local sbY      = stripY + 2
+            local smaxF    = math.floor(4 * sc)
+            local sshad    = math.floor(4 * sc)
+            local ssp      = self._settingsSpring
+            local sfloatOff = math.floor(smaxF * math.max(0, (ssp.scale - 0.93) / 0.07))
+            local t_s      = love.timer.getTime()
+            local sidleBob = math.sin(t_s * 1.8 + 0.5) * 0.5 * sc
+            local sidleRot = math.sin(t_s * 1.3 + 0.5) * 0.003
+            local sdrawY   = sbY - sfloatOff + math.floor(sidleBob)
+
+            self._settingsBtnRect = { x = sbX, y = sbY - smaxF, w = sbW, h = sbW + smaxF }
+
+            -- Shadow
+            lg.setColor(0.031, 0.078, 0.118, 1)
+            roundedRect(sbX + math.floor(2 * sc), sbY + sshad, sbW, sbW, 8, sc)
+
+            -- Face
+            local spivX = sbX + sbW / 2
+            local spivY = sdrawY + sbW / 2
+            local sbx   = -sbW / 2
+            local sby   = -sbW / 2
+            lg.push()
+            lg.translate(spivX, spivY)
+            lg.rotate(sidleRot)
+            lg.scale(ssp.scale, ssp.scale)
             lg.setColor(0.059, 0.165, 0.247, 1)
-            lg.rectangle('fill', sbX, sbY, sbW, sbW, sbR, sbR)
+            roundedRect(sbx, sby, sbW, sbW, 8, sc)
             lg.setColor(0.125, 0.224, 0.310, 1)
-            lg.setLineWidth(math.max(1, math.floor(sc)))
-            lg.rectangle('line', sbX, sbY, sbW, sbW, sbR, sbR)
+            roundedRectLine(sbx, sby, sbW, sbW, 8, sc, 2 * sc)
             lg.setFont(Fonts.small)
             lg.setColor(0.965, 0.839, 0.741, 1)
-            lg.printf("+", sbX, textCY(Fonts.small, sbY, sbW), sbW, 'center')
-            self._settingsBtnRect = { x = sbX, y = sbY, w = sbW, h = sbW }
+            lg.printf("+", sbx, textCY(Fonts.small, sby, sbW), sbW, 'center')
+            lg.pop()
 
             -- XP bar: same height as settings button, fills 2/3 of gap; coin counter takes remaining 1/3
             local barGap  = math.floor(8 * sc)
@@ -2427,7 +2511,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 local sx = math.floor((cardW - sprW) / 2)
                 local sy = math.floor(topPad + (zoneH - sprH) / 2)
                 lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
                 lg.draw(img, sx, sy, 0, sprSc, sprSc)
+                lg.setShader()
             end
 
             -- Unit name
@@ -2465,6 +2551,14 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self.pressY     = y
         self.hasMoved   = false
         self.isDragging = false
+
+        -- Settings button spring squish (always active, before overlay guard)
+        if self._settingsBtnRect then
+            local r = self._settingsBtnRect
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._settingsSpring.pressed = true
+            end
+        end
 
         -- Overlays absorb all presses
         if self.showDetail or self.showSettings or self._rewardState == "revealing" then return end
@@ -2595,8 +2689,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
     function self:handleRelease(x, y)
         self.isPressed = false
-        self._playSpring.pressed = false
-        self._sbtnSpring.pressed = false
+        self._playSpring.pressed     = false
+        self._sbtnSpring.pressed     = false
+        self._settingsSpring.pressed = false
         for i = 1, 3 do self._tradeBtnSprings[i].pressed = false end
         self._chestPressed = false
         self._detailDragX = nil
