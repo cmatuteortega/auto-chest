@@ -897,7 +897,7 @@ function MenuScreen.new()
             local numRows = math.ceil(#group.units / cols)
             contentH = contentH + headerH + 6 * sc + numRows * (cardH + gapY) + groupGap
         end
-        self.collectionScrollMax = math.max(0, startY + contentH - H)
+        self.collectionScrollMax = math.max(0, startY + contentH + cardH * 0.5 - H)
         local scrollY = math.floor(self.collectionScrollY)
 
         self._collectionCards = {}
@@ -1175,12 +1175,24 @@ function MenuScreen.new()
         end
         self._deckSortRect = { x = sortX + self.panelOffset, y = barY, w = btnW, h = barH }
 
-        -- Total counter (fills remaining space)
-        local counterX = barX + btnW + 4 * sc
-        local counterW = barW - btnW - 4 * sc
+        -- Total counter (shrunk to leave room for Clear button)
+        local clearBtnW = 70 * sc
+        local counterX  = barX + btnW + 4 * sc
+        local counterW  = barW - btnW - 4 * sc - clearBtnW - 4 * sc
         lg.setFont(Fonts.small)
         lg.setColor(total >= 20 and {0.600, 0.459, 0.467, 1} or {0.765, 0.639, 0.541, 1})
         lg.printf(total .. " / 20", counterX, textCY(Fonts.small, barY, barH), counterW, 'center')
+
+        -- CLEAR button
+        local clearX = counterX + counterW + 4 * sc
+        lg.setColor(0.306, 0.286, 0.373, 1)
+        roundedRect(clearX, barY, clearBtnW, barH, 5, sc)
+        lg.setColor(0.506, 0.286, 0.286, 1)
+        roundedRectLine(clearX, barY, clearBtnW, barH, 5, sc, 2 * sc)
+        lg.setFont(Fonts.small)
+        lg.setColor(0.965, 0.639, 0.641, 1)
+        lg.printf("Clear", clearX, textCY(Fonts.small, barY, barH), clearBtnW, 'center')
+        self._deckClearRect = { x = clearX + self.panelOffset, y = barY, w = clearBtnW, h = barH }
 
         -- ── Unit card grid ────────────────────────────────────────────────────
         local cols   = 4
@@ -1642,10 +1654,11 @@ function MenuScreen.new()
             lg.printf("+", sbX, textCY(Fonts.small, sbY, sbW), sbW, 'center')
             self._settingsBtnRect = { x = sbX, y = sbY, w = sbW, h = sbW }
 
-            -- XP bar: same height as settings button, fills gap between name and settings button
-            local barGap = math.floor(8 * sc)
-            local barX   = xCur
-            local barW   = sbX - barGap - barX
+            -- XP bar: same height as settings button, fills 2/3 of gap; coin counter takes remaining 1/3
+            local barGap  = math.floor(8 * sc)
+            local barX    = xCur
+            local totalW  = sbX - barGap - barX
+            local barW    = math.floor(totalW * 2 / 3)
             if barW > 0 then
                 local plevel = _G.PlayerData.level or 1
                 local pxp    = _G.PlayerData.xp    or 0
@@ -1694,10 +1707,45 @@ function MenuScreen.new()
 
                 self._xpBarRect = { x = barX, y = stripY, w = barW, h = stripH }
             end
+
+            -- Coin counter pill (between XP bar and settings button)
+            local coinGap = barGap
+            local coinX   = barX + barW + coinGap
+            local coinW   = sbX - barGap - coinX
+            if coinW > 0 then
+                local barR = math.max(1, math.floor(3 * sc))
+                lg.setColor(0.059, 0.165, 0.247, 1)
+                lg.rectangle('fill', coinX, stripY, coinW, stripH, barR, barR)
+                lg.setColor(0.125, 0.224, 0.310, 1)
+                lg.setLineWidth(math.max(1, math.floor(sc)))
+                lg.rectangle('line', coinX, stripY, coinW, stripH, barR, barR)
+
+                local iconH  = stripH - vPad * 2
+                local iconSc = iconH / self.goldIcon:getHeight()
+                local iconW  = self.goldIcon:getWidth() * iconSc
+                local iconX  = coinX + math.floor(6 * sc)
+                local iconY  = stripY + vPad
+                lg.setColor(1, 1, 1, 1)
+                lg.draw(self.goldIcon, iconX, iconY, 0, iconSc, iconSc)
+
+                local coins  = _G.PlayerData.gold or _G.PlayerData.coins or 0
+                lg.setFont(Fonts.small)
+                lg.setColor(0.965, 0.839, 0.741, 1)
+                local textX  = iconX + iconW + math.floor(4 * sc)
+                local textW  = coinX + coinW - textX - math.floor(4 * sc)
+                if textW > 0 then
+                    lg.printf(tostring(coins), textX, textCY(Fonts.small, stripY, stripH), textW, 'left')
+                end
+            end
         end
 
         -- Bottom tab bar (screen space)
         self:drawBottomBar(W, H, sc)
+
+        -- Version label
+        lg.setFont(Fonts.tiny)
+        lg.setColor(1, 1, 1, 0.35)
+        lg.print("v1.1", math.floor(4 * sc), math.floor(4 * sc))
 
         -- (detail view is now drawn inline within drawCollectionPanel)
 
@@ -2102,7 +2150,7 @@ function MenuScreen.new()
                 -- Check if more pending
                 if unlocks and unlocks.pending_rewards and #unlocks.pending_rewards > 0 then
                     local reward = unlocks.pending_rewards[1]
-                    self._rewardState     = "pending"
+                    self._rewardState     = "revealing"
                     self._rewardUnit      = reward.unit
                     self._rewardType      = reward.type
                     self._rewardLevel     = reward.level
@@ -2339,6 +2387,17 @@ function MenuScreen.new()
                       y >= sr.y and y <= sr.y + sr.h then
                 AudioManager.playTap()
                 self._deckSortByCost = not self._deckSortByCost
+                return
+            end
+            -- Clear deck button
+            local cr2 = self._deckClearRect
+            if cr2 and x >= cr2.x and x <= cr2.x + cr2.w and
+                       y >= cr2.y and y <= cr2.y + cr2.h then
+                AudioManager.playTap()
+                DeckManager.clearDeck(self.selectedDeckSlot)
+                if self.selectedDeckSlot == DeckManager._data.activeDeckIndex then
+                    self:buildPreviewLayout()
+                end
                 return
             end
             -- Card minus/plus strips and card body taps

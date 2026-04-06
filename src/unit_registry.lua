@@ -269,9 +269,20 @@ local function trimBottomRows(path)
     return trim
 end
 
+-- Units that only have legacy sprites (front/back/dead) — skip the filesystem probe
+-- entirely so Android's APK zip filesystem cannot cause a false positive.
+local LEGACY_ONLY_UNITS = {
+    clavicula = true,
+    tomb      = true,
+}
+
 -- Load directional sprites for a unit type (8-direction animation system).
 -- Falls back to loadSprites() if no directional sprites exist for this unit.
 function UnitRegistry.loadDirectionalSprites(unitType)
+    if LEGACY_ONLY_UNITS[unitType] then
+        return UnitRegistry.loadSprites(unitType)
+    end
+
     local basePath = "src/assets/" .. unitType .. "/"
 
     -- Probe: if idle_0_1.png absent, fall back to legacy system

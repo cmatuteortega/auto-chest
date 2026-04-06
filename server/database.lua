@@ -16,6 +16,21 @@ local json = require("lib.json")  -- Load json once at module level
 local Database = {}
 Database.__index = Database
 
+-- Configurable starter pack revealed to new players on first menu visit.
+-- Each entry: { unit=string, type="new_unit"|"card" }.
+-- "new_unit" shows "NEW!" badge (first copy); "card" shows "+1" badge (extra copy).
+-- Edit this table to change what new players receive — no client changes needed.
+local STARTER_REWARDS = {
+    { unit = "boney",  type = "new_unit" },
+    { unit = "boney",  type = "card"     },
+    { unit = "marrow", type = "new_unit" },
+    { unit = "marrow", type = "card"     },
+    { unit = "knight", type = "new_unit" },
+    { unit = "knight", type = "card"     },
+    { unit = "marc",   type = "new_unit" },
+    { unit = "marc",   type = "card"     },
+}
+
 -- Forward-declared helpers (defined in the Unlock / Progression section below)
 local makeLCG, computeLevelReward, computeRandomCardReward, computeMilestoneReward
 
@@ -107,7 +122,7 @@ function Database:registerPlayer(username, password)
     -- Initial unlock state: starter units with 2 copies each
     local starterUnlocks = json.encode({
         cards = { boney = 2, marrow = 2, knight = 2, marc = 2 },
-        pending_rewards = {}
+        pending_rewards = STARTER_REWARDS
     })
 
     stmt = self.db:prepare([[

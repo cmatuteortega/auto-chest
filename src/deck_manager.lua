@@ -40,6 +40,9 @@ function DeckManager.save()
             active_deck_index = DeckManager._data.activeDeckIndex,
             decks = DeckManager._data.decks
         })
+        -- Keep PlayerData in sync so DeckManager.load() gets correct values on re-init
+        _G.PlayerData.activeDeckIndex = DeckManager._data.activeDeckIndex
+        _G.PlayerData.decks = DeckManager._data.decks
     end
 
     -- Always save locally as backup
@@ -140,6 +143,15 @@ function DeckManager.adjustCount(deckIndex, unitType, delta)
     deck.counts[unitType] = newCount
     DeckManager.save()
     return true
+end
+
+-- Zero out all unit counts in a deck slot and save.
+function DeckManager.clearDeck(deckIndex)
+    local deck = DeckManager._data.decks[deckIndex]
+    for utype, _ in pairs(deck.counts) do
+        deck.counts[utype] = 0
+    end
+    DeckManager.save()
 end
 
 -- Set deck at deckIndex as the active battle deck.
