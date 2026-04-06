@@ -254,8 +254,18 @@ function Grid:draw(draggedUnit, hideOwner)
     lg.line(self.offsetX, centerY, self.offsetX + Constants.GRID_WIDTH, centerY)
     lg.setLineWidth(1)
 
+    -- Determine row iteration order: draw far rows first, near rows last
+    -- P1 (perspective 1): row 1 is far (top), row 8 is near (bottom) → iterate 1→8
+    -- P2 (perspective 2): row 8 is far (top), row 1 is near (bottom) → iterate 8→1
+    local rowStart, rowEnd, rowStep
+    if Constants.PERSPECTIVE == 2 then
+        rowStart, rowEnd, rowStep = self.rows, 1, -1
+    else
+        rowStart, rowEnd, rowStep = 1, self.rows, 1
+    end
+
     -- Draw ground effects (fire patches etc.) before any units
-    for row = 1, self.rows do
+    for row = rowStart, rowEnd, rowStep do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
             if cell.unit then
@@ -265,7 +275,7 @@ function Grid:draw(draggedUnit, hideOwner)
     end
 
     -- Draw dead units first so alive units render on top
-    for row = 1, self.rows do
+    for row = rowStart, rowEnd, rowStep do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
             if cell.unit and cell.unit ~= draggedUnit and cell.unit.isDead then
@@ -277,7 +287,7 @@ function Grid:draw(draggedUnit, hideOwner)
     end
 
     -- Draw alive units on top
-    for row = 1, self.rows do
+    for row = rowStart, rowEnd, rowStep do
         for col = 1, self.cols do
             local cell = self.cells[row][col]
             if cell.unit and cell.unit ~= draggedUnit and not cell.unit.isDead then

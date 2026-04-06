@@ -35,7 +35,7 @@ function Burrow:new(row, col, owner, sprites)
     self.upgradeTree = {
         {
             name        = "Counter Strike",
-            description = "Each hit removes 1 hit counter from the target (Mage, Clavicula, etc.)",
+            description = "Each hit removes 1 hit counter from the target (Mage, Migraine, etc.)",
             onApply     = function(unit) end
         },
         {

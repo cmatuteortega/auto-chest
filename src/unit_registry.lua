@@ -8,13 +8,14 @@ local Bull = require('src.units.bull')
 local Mage   = require('src.units.mage')
 local Amalgam = require('src.units.amalgam')
 local Humerus   = require('src.units.humerus')
+local Migraine  = require('src.units.migraine')
+local Bonk      = require('src.units.bonk')
+local Sinner    = require('src.units.sinner')
+local Tomb      = require('src.units.tomb')
 local Clavicula = require('src.units.clavicula')
-local Bonk   = require('src.units.bonk')
-local Sinner = require('src.units.sinner')
-local Tomb   = require('src.units.tomb')
-local Lancer = require('src.units.lancer')
 local Burrow    = require('src.units.burrow')
 local Catapult  = require('src.units.catapult')
+local Mend      = require('src.units.mend')
 
 local UnitRegistry = {}
 
@@ -29,19 +30,21 @@ UnitRegistry.unitClasses = {
     mage   = Mage,
     amalgam = Amalgam,
     humerus   = Humerus,
-    clavicula = Clavicula,
+    migraine = Migraine,
     bonk   = Bonk,
     sinner = Sinner,
     tomb   = Tomb,
-    lancer   = Lancer,
+    clavicula = Clavicula,
     burrow   = Burrow,
-    catapult = Catapult
+    catapult = Catapult,
+    mend   = Mend,
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "burrow", "amalgam", "lancer", "humerus", "clavicula", "tomb"} },
+    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
     { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
+    { name = "Goblin Gang",  groupType = "goblin",   units = {"burrow"} },
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -49,11 +52,13 @@ UnitRegistry.rarity = {
     -- Calcium Clan
     boney     = "common",
     marrow    = "common",
-    burrow    = "common",
+    mend    = "common",
     amalgam   = "common",
-    lancer    = "rare",
+    -- Goblin Gang
+    burrow    = "common",
+    clavicula = "rare",
     humerus   = "rare",
-    clavicula = "epic",
+    migraine  = "epic",
     tomb      = "epic",
     -- Castle Crew
     knight    = "common",
@@ -113,10 +118,10 @@ UnitRegistry.spritePaths = {
         back  = "src/assets/humerus/back.png",
         dead  = "src/assets/humerus/dead.png"
     },
-    clavicula = {
-        front = "src/assets/clavicula/front.png",
-        back  = "src/assets/clavicula/back.png",
-        dead  = "src/assets/clavicula/dead.png"
+    migraine = {
+        front = "src/assets/migraine/front.png",
+        back  = "src/assets/migraine/back.png",
+        dead  = "src/assets/migraine/dead.png"
     },
     bonk = {
         front = "src/assets/bonk/front.png",
@@ -143,15 +148,20 @@ UnitRegistry.spritePaths = {
         back  = "src/assets/catapult/back.png",
         dead  = "src/assets/catapult/dead.png"
     },
-    lancer = {
-        front = "src/assets/lancer/front.png",
-        back  = "src/assets/lancer/back.png",
-        dead  = "src/assets/lancer/dead.png"
+    clavicula = {
+        front = "src/assets/clavicula/front.png",
+        back  = "src/assets/clavicula/back.png",
+        dead  = "src/assets/clavicula/dead.png"
     },
     burrow = {
         front = "src/assets/burrow/front.png",
         back  = "src/assets/burrow/back.png",
         dead  = "src/assets/burrow/dead.png"
+    },
+    mend = {
+        front = "src/assets/mend/front.png",
+        back  = "src/assets/mend/back.png",
+        dead  = "src/assets/mend/dead.png"
     }
 }
 
@@ -166,12 +176,13 @@ UnitRegistry.passiveDescriptions = {
     mage   = "Every 6 hits dealt or received, launches a fireball dealing AoE damage",
     amalgam  = "Cannot die to a single hit; surviving a lethal blow grants 1s invulnerability (10s cooldown)",
     humerus   = "Royal Command: allies attacking the same target gain +20% ATK",
-    clavicula = "Every 8 hits (given or taken), spawns a copy at 50% HP (max 4 on screen)",
+    migraine  = "Every 8 hits (given or taken), spawns a copy at 50% HP (max 4 on screen)",
     bonk   = "Every 3rd hit deals triple damage.",
     sinner = "Every 20 hits (given or taken), breaks free: +ATK SPD and becomes stun immune",
     tomb   = "Friendly units stepping onto a corpse cell heal 2 HP",
-    lancer   = "At battle start, fires a bone lance down the column hitting the first enemy for 5 damage",
+    clavicula = "Every 10 hits (given or taken), spins and deals damage to all adjacent enemies, healing 50% of damage dealt",
     burrow   = "Burrows underground at battle start, reappearing 1s later at the mirrored cell across the field",
+    mend   = "Every 6 hits given or received, heals the lowest HP ally for 2 HP",
     catapult = "At battle start, fires a projectile 4 rows forward dealing 3 damage in a cross. Leaves burning ground for 3s."
 }
 
@@ -215,13 +226,14 @@ UnitRegistry.unitCosts = {
     mage    = 4,
     amalgam = 4,
     humerus   = 5,
-    clavicula = 4,
+    migraine  = 4,
     bonk   = 3,
     sinner = 4,
     tomb   = 1,
-    lancer   = 3,
+    clavicula = 4,
     burrow   = 3,
-    catapult = 2
+    catapult = 2,
+    mend   = 3,
 }
 
 -- Count fully-transparent rows at the top of a sprite file.
@@ -404,12 +416,11 @@ function UnitRegistry.loadAllSprites()
     -- Attach sinner's free-form sprites so the unit can swap at form-change time
     allSprites["sinner"].freeForm = UnitRegistry.loadSprites("sinner-free")
 
-    -- Load lancer lance particle sprite
+    -- Load marrow lance particle sprite
     local lancePath = "src/assets/particles/lance.png"
     if love.filesystem.getInfo(lancePath) then
         local lanceImg = love.graphics.newImage(lancePath)
         lanceImg:setFilter('nearest', 'nearest')
-        allSprites["lancer"].lance = lanceImg
         allSprites["marrow"].lance = lanceImg
     end
 
@@ -463,10 +474,10 @@ function UnitRegistry.loadAllSprites()
         magicImg = love.graphics.newImage(magicPath)
         magicImg:setFilter('nearest', 'nearest')
     end
-    for _, unitType in ipairs({"marc", "marrow", "lancer"}) do
+    for _, unitType in ipairs({"marc", "marrow", "mend"}) do
         if arrowImg then allSprites[unitType].projectile = arrowImg end
     end
-    for _, unitType in ipairs({"clavicula", "mage"}) do
+    for _, unitType in ipairs({"migraine", "mage"}) do
         if magicImg then
             allSprites[unitType].projectile = magicImg
             allSprites[unitType].projectileAngleOffset = math.pi / 2  -- sprite points up, arrow points right
@@ -500,14 +511,14 @@ function UnitRegistry.loadAllSprites()
     if #fireFrames > 0 then
         allSprites["mage"].fireFrames      = fireFrames
         allSprites["catapult"].fireFrames  = fireFrames
-        allSprites["clavicula"].fireFrames = fireFrames
+        allSprites["migraine"].fireFrames  = fireFrames
         allSprites["bull"].fireFrames      = fireFrames
     end
 
-    -- Load clavicula background fire animation frames
+    -- Load migraine background fire animation frames
     local clavBgFrames = {}
     for i = 1, 8 do
-        local path = "src/assets/clavicula/background-anim/background-" .. i .. ".png"
+        local path = "src/assets/migraine/background-anim/background-" .. i .. ".png"
         if love.filesystem.getInfo(path) then
             local img = love.graphics.newImage(path)
             img:setFilter('nearest', 'nearest')
@@ -515,7 +526,7 @@ function UnitRegistry.loadAllSprites()
         end
     end
     if #clavBgFrames > 0 then
-        allSprites["clavicula"].bgAnimFrames = clavBgFrames
+        allSprites["migraine"].bgAnimFrames = clavBgFrames
     end
 
     -- Load catapult projectile sprite
@@ -565,9 +576,10 @@ UnitRegistry.MAX_CARD_COPIES = 4
 
 -- Rarity tiers for milestone unlock ordering (commons exhausted first, then rares, then epics)
 UnitRegistry.rarityTiers = {
-    { tier = "common", units = { "burrow", "amalgam", "mage", "bull" } },
-    { tier = "rare",   units = { "samurai", "bonk", "lancer", "humerus" } },
-    { tier = "epic",   units = { "clavicula", "tomb", "sinner", "catapult" } },
+    { tier = "common", units = { "mend", "amalgam", "mage", "bull" } },
+    { tier = "common", units = { "burrow" } },
+    { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
+    { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }
 
 return UnitRegistry

@@ -199,7 +199,7 @@ function Marrow:attack(target, grid)
     end
 end
 
--- Draw lance visual (same as Lancer)
+-- Draw lance visual (same as Clavicula)
 function Marrow:drawAttackVisuals()
     Marrow.super.drawAttackVisuals(self)  -- draws arrows
 

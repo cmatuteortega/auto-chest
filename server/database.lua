@@ -604,8 +604,8 @@ local MAX_COPIES     = 4
 -- Within a tier, milestone rewards pick randomly.
 local RARITY_TIERS = {
     { tier = "common", units = { "burrow", "amalgam", "mage", "bull" } },
-    { tier = "rare",   units = { "samurai", "bonk", "lancer", "humerus" } },
-    { tier = "epic",   units = { "clavicula", "tomb", "sinner", "catapult" } },
+    { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
+    { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }
 
 local function isMilestone(level)

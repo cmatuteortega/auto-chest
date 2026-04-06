@@ -42,6 +42,11 @@ function MenuScreen.new()
         self._detailSpriteRect = nil
         self._detailRotAngle   = 1    -- 1-6 index into ROTATION_ANGLES
         self._detailDragX      = nil  -- non-nil while dragging sprite
+        -- Collection grid scroll
+        self.collectionScrollY      = 0
+        self.collectionScrollMax    = 0  -- computed each draw
+        self._collectionScrollVel   = 0  -- momentum velocity (px/s)
+        self._collectionScrollDragY = nil  -- non-nil while vertical-scrolling
 
         -- Deck builder state
         DeckManager.load()
@@ -59,6 +64,11 @@ function MenuScreen.new()
         -- Deck detail sub-view ("grid" or "detail")
         self.deckView         = "grid"
         self.deckDetailUnit   = nil
+        -- Deck builder scroll
+        self.deckScrollY      = 0
+        self.deckScrollMax    = 0
+        self._deckScrollVel   = 0
+        self._deckScrollDragY = nil
 
         -- Load front sprites for collection display (sorted for stable ordering).
         -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
@@ -359,6 +369,24 @@ function MenuScreen.new()
                 self.shopNotice    = nil
                 self.shopNoticeTimer = 0
             end
+        end
+
+        -- Deck builder scroll momentum (friction decay)
+        if self._deckScrollVel ~= 0 and self.currentPanel == 2
+           and self.deckView == "grid" and not self._deckScrollDragY then
+            self.deckScrollY = self.deckScrollY + self._deckScrollVel * dt
+            self.deckScrollY = math.max(0, math.min(self.deckScrollMax, self.deckScrollY))
+            self._deckScrollVel = self._deckScrollVel * (1 - math.min(1, 10 * dt))
+            if math.abs(self._deckScrollVel) < 1 then self._deckScrollVel = 0 end
+        end
+
+        -- Collection scroll momentum (friction decay)
+        if self._collectionScrollVel ~= 0 and self.currentPanel == 1
+           and self.collectionView == "grid" and not self._collectionScrollDragY then
+            self.collectionScrollY = self.collectionScrollY + self._collectionScrollVel * dt
+            self.collectionScrollY = math.max(0, math.min(self.collectionScrollMax, self.collectionScrollY))
+            self._collectionScrollVel = self._collectionScrollVel * (1 - math.min(1, 10 * dt))
+            if math.abs(self._collectionScrollVel) < 1 then self._collectionScrollVel = 0 end
         end
 
         -- Reward reveal state machine
@@ -851,6 +879,7 @@ function MenuScreen.new()
             return
         end
 
+        local lg     = love.graphics
         local cols   = 4
         local cardW  = 100 * sc
         local cardH  = 130 * sc
@@ -862,11 +891,28 @@ function MenuScreen.new()
         local startX = ox + (W - totalW) / 2
         local startY = 160 * sc
 
+        -- Compute total content height to know scroll bounds
+        local contentH = 0
+        for _, group in ipairs(UnitRegistry.groups) do
+            local numRows = math.ceil(#group.units / cols)
+            contentH = contentH + headerH + 6 * sc + numRows * (cardH + gapY) + groupGap
+        end
+        self.collectionScrollMax = math.max(0, startY + contentH - H)
+        local scrollY = math.floor(self.collectionScrollY)
+
         self._collectionCards = {}
         local currentY = startY
         local cardIndex = 0
 
         local unlocks = _G.PlayerData and _G.PlayerData.unlocks
+
+        -- Clip scrolled content below the ticker stripe (75*sc + 36*sc = 111*sc)
+        -- ox is in translated space; scissor needs screen-space x
+        local clipTop = math.floor(111 * sc)
+        local clipX   = math.floor(ox + self.panelOffset)
+        lg.setScissor(clipX, clipTop, math.floor(W), math.floor(H) - clipTop)
+        lg.push()
+        lg.translate(0, -scrollY)
 
         for _, group in ipairs(UnitRegistry.groups) do
             self:drawGroupHeader(startX, currentY, totalW, headerH, group.name, sc)
@@ -886,7 +932,7 @@ function MenuScreen.new()
                     cardIndex = cardIndex + 1
                     self._collectionCards[cardIndex] = {
                         x = cx + self.panelOffset,
-                        y = cy,
+                        y = cy - scrollY,  -- screen-space Y for hit testing
                         w = cardW,
                         h = cardH,
                         utype = utype
@@ -907,6 +953,9 @@ function MenuScreen.new()
             end
             currentY = currentY + numRows * (cardH + gapY) + groupGap
         end
+
+        lg.pop()
+        lg.setScissor()
     end
 
     function self:drawPlayPanel(ox, W, H, sc)
@@ -946,7 +995,7 @@ function MenuScreen.new()
                 local iw, ih = img:getDimensions()
                 local cx2 = gridX + (entry.col - 1) * cellSize
                 local cy2 = gridY + (entry.row - 1) * cellSize
-                -- Draw persistent bg animation (e.g. clavicula fire) behind the unit sprite
+                -- Draw persistent bg animation (e.g. migraine fire) behind the unit sprite
                 local bgFrames = self.dirSprites[entry.unitType] and self.dirSprites[entry.unitType].bgAnimFrames
                 if bgFrames then
                     local fps      = 8
@@ -1166,6 +1215,20 @@ function MenuScreen.new()
             end)
         end
 
+        -- Compute total content height to know scroll bounds
+        local numDeckRows = math.ceil(#sortedUnits / cols)
+        local deckContentH = numDeckRows * (cardH + gapY) + cardH * 0.5
+        self.deckScrollMax = math.max(0, startY + deckContentH - H)
+        local scrollY = math.floor(self.deckScrollY)
+
+        -- Clip scrolled cards to the area below the controls bar (sort row bottom)
+        -- ox is in translated space; scissor needs screen-space x
+        local clipTop = math.floor(barY + barH)
+        local clipX   = math.floor(ox + self.panelOffset)
+        lg.setScissor(clipX, clipTop, math.floor(W), math.floor(H) - clipTop)
+        lg.push()
+        lg.translate(0, -scrollY)
+
         self._deckCardRects = {}
 
         for i, entry in ipairs(sortedUnits) do
@@ -1269,21 +1332,24 @@ function MenuScreen.new()
             end
             lg.printf("+", plusX, textCY(Fonts.medium, stripY, stripH), plusW, 'center')
 
-            -- Hit rect (screen space)
+            -- Hit rect (screen space, Y adjusted for scroll)
             self._deckCardRects[i] = {
                 utype  = utype,
                 cardX  = cx + self.panelOffset,
-                cardY  = cy,
+                cardY  = cy - scrollY,
                 cardW  = cardW,
                 cardH  = cardH,
                 minusX = cx + self.panelOffset,
                 minusW = minusW,
                 plusX  = cx + minusW + centerW + self.panelOffset,
                 plusW  = plusW,
-                stripY = stripY,
+                stripY = stripY - scrollY,
                 stripH = stripH,
             }
         end
+
+        lg.pop()
+        lg.setScissor()
     end
 
     function self:drawRankingPanel(ox, W, H)
@@ -1946,6 +2012,40 @@ function MenuScreen.new()
         local dx = x - self.pressX
         local dy = y - self.pressY
 
+        -- Collection grid: vertical scroll (commit once the drag is clearly vertical)
+        if self.currentPanel == 1 and self.collectionView == "grid" then
+            if self._collectionScrollDragY ~= nil then
+                local delta = self._collectionScrollDragY - y
+                self._collectionScrollVel  = delta / math.max(1/60, 1/60)
+                self.collectionScrollY     = math.max(0, math.min(self.collectionScrollMax,
+                                                self.collectionScrollY + delta))
+                self._collectionScrollDragY = y
+                return
+            elseif not self.isDragging and math.abs(dy) > self.SWIPE_THRESH and math.abs(dy) > math.abs(dx) then
+                self._collectionScrollDragY = y
+                self._collectionScrollVel   = 0
+                self.hasMoved = true
+                return
+            end
+        end
+
+        -- Deck builder grid: vertical scroll
+        if self.currentPanel == 2 and self.deckView == "grid" then
+            if self._deckScrollDragY ~= nil then
+                local delta = self._deckScrollDragY - y
+                self._deckScrollVel  = delta / math.max(1/60, 1/60)
+                self.deckScrollY     = math.max(0, math.min(self.deckScrollMax,
+                                           self.deckScrollY + delta))
+                self._deckScrollDragY = y
+                return
+            elseif not self.isDragging and math.abs(dy) > self.SWIPE_THRESH and math.abs(dy) > math.abs(dx) then
+                self._deckScrollDragY = y
+                self._deckScrollVel   = 0
+                self.hasMoved = true
+                return
+            end
+        end
+
         if not self.isDragging then
             if math.abs(dx) > self.SWIPE_THRESH and math.abs(dx) > math.abs(dy) then
                 self.isDragging = true
@@ -1974,6 +2074,16 @@ function MenuScreen.new()
         self._playSpring.pressed = false
         self._sbtnSpring.pressed = false
         self._detailDragX = nil
+        -- End collection scroll drag (keep velocity for momentum)
+        if self._collectionScrollDragY ~= nil then
+            self._collectionScrollDragY = nil
+            self.hasMoved = true
+        end
+        -- End deck scroll drag (keep velocity for momentum)
+        if self._deckScrollDragY ~= nil then
+            self._deckScrollDragY = nil
+            self.hasMoved = true
+        end
         local dx = x - self.pressX
 
         -- Reward reveal overlay: tap to dismiss after 1.5s
@@ -2109,11 +2219,13 @@ function MenuScreen.new()
                 self.collectionView = "grid"
                 self._detailRotAngle = 1
                 self._detailDragX = nil
+                self.collectionScrollY = 0
             end
             -- Leaving Decks panel: reset deck detail sub-view
             if self.currentPanel ~= 2 then
                 self.deckView = "grid"
                 self.deckDetailUnit = nil
+                self.deckScrollY = 0
             end
             return
         end
@@ -2128,10 +2240,12 @@ function MenuScreen.new()
                     self.detailUnit = nil
                     self._detailRotAngle = 1
                     self._detailDragX = nil
+                    self.collectionScrollY = 0
                 elseif i == 2 and self.currentPanel == 2 then
                     -- Re-tap Decks tab: return to grid view
                     self.deckView = "grid"
                     self.deckDetailUnit = nil
+                    self.deckScrollY = 0
                     self._detailRotAngle = 1
                     self._detailDragX = nil
                 elseif i ~= self.currentPanel then
@@ -2142,11 +2256,13 @@ function MenuScreen.new()
                         self.collectionView = "grid"
                         self._detailRotAngle = 1
                         self._detailDragX = nil
+                        self.collectionScrollY = 0
                     end
                     -- Leaving Decks: reset deck detail sub-view
                     if i ~= 2 then
                         self.deckView = "grid"
                         self.deckDetailUnit = nil
+                        self.deckScrollY = 0
                     end
                 end
                 return
@@ -2161,6 +2277,7 @@ function MenuScreen.new()
                 self.detailUnit = nil
                 self._detailRotAngle = 1
                 self._detailDragX = nil
+                self.collectionScrollY = 0
             end
             return
         end
@@ -2171,6 +2288,7 @@ function MenuScreen.new()
             if b and x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
                 self.deckView = "grid"
                 self.deckDetailUnit = nil
+                self.deckScrollY = 0
                 self._detailRotAngle = 1
                 self._detailDragX = nil
             end
@@ -2190,8 +2308,8 @@ function MenuScreen.new()
             end
         end
 
-        -- Tap: collection cards
-        if self.currentPanel == 1 then
+        -- Tap: collection cards (only if finger didn't move — no accidental opens after scroll)
+        if self.currentPanel == 1 and not self.hasMoved then
             for _, card in ipairs(self._collectionCards) do
                 if x >= card.x and x <= card.x + card.w and
                    y >= card.y and y <= card.y + card.h then
@@ -2242,7 +2360,8 @@ function MenuScreen.new()
                         end
                         return
                     end
-                elseif x >= cr.cardX and x <= cr.cardX + cr.cardW and
+                elseif not self.hasMoved and
+                       x >= cr.cardX and x <= cr.cardX + cr.cardW and
                        y >= cr.cardY and y <= cr.cardY + cr.cardH then
                     -- Tap on card body (above strip): open detail view
                     AudioManager.playTap()
