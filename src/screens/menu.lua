@@ -120,6 +120,7 @@ function MenuScreen.new()
         self._settingsSFXRect    = nil
         self._settingsGodModeRect = nil
         self._settingsTitleRect   = nil
+        self._settingsPanelRect   = nil
         self._settingsTitleTaps   = 0
         self._settingsTitleLastTap = 0
         self._showGodModeRow     = false
@@ -2299,8 +2300,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             lg.rectangle('fill', 0, 0, W, H)
 
             -- Panel geometry
-            local panW  = math.floor(240 * sc)
-            local panH  = math.floor(self._showGodModeRow and 280 or 240) * sc
+            local panW  = math.floor(300 * sc)
+            local panH  = math.floor(self._showGodModeRow and 360 or 320) * sc
             local panX  = math.floor((W - panW) / 2)
             local panY  = math.floor((H - panH) / 2)
             local brd   = math.max(1, math.floor(2 * sc))
@@ -2412,6 +2413,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             lg.setColor(0.765, 0.639, 0.541, 1)
             lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
             self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
+            self._settingsPanelRect  = { x = panX, y = panY, w = panW, h = panH }
         end
 
         -- Reward reveal overlay
@@ -2800,8 +2802,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     return
                 end
             end
-            -- Tap anywhere else closes overlay
-            self.showSettings = false
+            -- Tap outside the panel closes overlay
+            if self._settingsPanelRect then
+                local r = self._settingsPanelRect
+                if x < r.x or x > r.x + r.w or y < r.y or y > r.y + r.h then
+                    self.showSettings = false
+                end
+            end
             return
         end
 

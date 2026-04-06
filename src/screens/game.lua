@@ -114,6 +114,7 @@ function GameScreen.new()
         -- Economy
         self.playerCoins = self.isTutorial and 10 or 6
         self.rerollCost = 1
+        self.freeRerollUsed = false
 
         -- Card drafting
         self.cards = {}
@@ -366,6 +367,7 @@ function GameScreen.new()
         self.winner               = nil
         self.localReady           = false
         self.opponentReady        = false
+        self.freeRerollUsed       = false
         self.playerCoins          = self.playerCoins + 6
         self.pendingOpponentMsgs  = {}
         self.draggedUnit          = nil
@@ -988,9 +990,34 @@ function GameScreen.new()
                 local rsz       = self.rerollButtonSize
                 local rsp       = self._rerollSpring
                 local rfloatOff = math.floor(maxFloat * math.max(0, (rsp.scale - 0.93) / 0.07))
-                local canAfford = self.isSandbox or self.playerCoins >= self.rerollCost
+                local canAfford = self.isSandbox or (not self.freeRerollUsed) or self.playerCoins >= self.rerollCost
 
                 self._rerollBtnRect = { x = rx, y = ry - maxFloat, w = rsz, h = rsz + maxFloat }
+
+                -- Cost label above reroll button
+                do
+                    local labelH = Fonts.tiny:getHeight()
+                    local labelY = ry - maxFloat - labelH - math.floor(3 * sc)
+                    lg.setFont(Fonts.tiny)
+                    if not self.freeRerollUsed then
+                        lg.setColor(1, 1, 1, 0.6)
+                        lg.printf("Free", rx, labelY, rsz, 'center')
+                    else
+                        local iconH  = labelH
+                        local iconSc = iconH / self.goldIcon:getHeight()
+                        local iconW  = math.floor(self.goldIcon:getWidth() * iconSc)
+                        local numStr = "1"
+                        local numW   = Fonts.tiny:getWidth(numStr)
+                        local gap    = math.floor(2 * sc)
+                        local totalW = iconW + gap + numW
+                        local startX = rx + math.floor((rsz - totalW) / 2)
+                        lg.setColor(0.9, 0.85, 0.3, 1)
+                        lg.draw(self.goldIcon, startX, labelY, 0, iconSc, iconSc)
+                        lg.setFont(Fonts.tiny)
+                        lg.setColor(1, 1, 1, 1)
+                        lg.print(numStr, startX + iconW + gap, labelY)
+                    end
+                end
 
                 if canAfford then
                     local t       = love.timer.getTime()
@@ -1318,8 +1345,14 @@ function GameScreen.new()
             local rb = self._rerollBtnRect
             if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
                 AudioManager.playTap()
-                if self.isSandbox or self.playerCoins >= self.rerollCost then
-                    if not self.isSandbox then self.playerCoins = self.playerCoins - self.rerollCost end
+                if self.isSandbox or (not self.freeRerollUsed) or self.playerCoins >= self.rerollCost then
+                    if not self.isSandbox then
+                        if not self.freeRerollUsed then
+                            self.freeRerollUsed = true  -- first reroll is free
+                        else
+                            self.playerCoins = self.playerCoins - self.rerollCost
+                        end
+                    end
                     if self.usingDeck then
                         if self.isSandbox and DeckManager.pileSize() < 3 then
                             DeckManager.returnCards(self.drawnCardTypes)
