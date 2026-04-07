@@ -1156,9 +1156,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.rectangle('line', gridX, gridY, gridW, gridH)
 
         -- Unit sprites (idle/attack animated; hit rects stored for tap detection)
+        -- Draw back rows first so front rows overlap them (painter's algorithm)
         local sprSc = cellSize / 16
         self._previewUnitRects = {}
-        for _, entry in ipairs(self.previewLayout) do
+        local sortedLayout = {}
+        for i, e in ipairs(self.previewLayout) do sortedLayout[i] = e end
+        table.sort(sortedLayout, function(a, b) return a.row < b.row end)
+        for _, entry in ipairs(sortedLayout) do
             local img, trimBottom = self:getPreviewFrame(entry.unitType)
             if img then
                 local iw, ih = img:getDimensions()
@@ -1774,7 +1778,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
     end
 
     function self:saveChestTimer()
-        local data = json.encode({ saved_at = love.timer.getTime(), elapsed = self._chestTimer })
+        local data = json.encode({ saved_at = os.time(), elapsed = self._chestTimer })
         love.filesystem.write('chest_timer.json', data)
     end
 
@@ -1792,7 +1796,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             self._chestState = "waiting"
             return
         end
-        local elapsed = (saved.elapsed or 0) + (love.timer.getTime() - (saved.saved_at or 0))
+        local elapsed = (saved.elapsed or 0) + (os.time() - (saved.saved_at or 0))
         if elapsed >= CHEST_DURATION then
             self._chestTimer = CHEST_DURATION
             self._chestState = "ready"
@@ -1804,7 +1808,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
     function self:saveTradeTimer()
         love.filesystem.write('trade_timer.json', json.encode({
-            saved_at = love.timer.getTime(),
+            saved_at = os.time(),
             elapsed  = self._tradeTimer,
             slots    = self._tradeSlots,
         }))
@@ -1823,7 +1827,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             self._tradeSlots = {}
             return
         end
-        local elapsed = (saved.elapsed or 0) + (love.timer.getTime() - (saved.saved_at or 0))
+        local elapsed = (saved.elapsed or 0) + (os.time() - (saved.saved_at or 0))
         if elapsed >= 86400 then
             self._tradeTimer = 86400  -- expired; slots regenerated lazily on next draw
             self._tradeSlots = {}

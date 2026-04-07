@@ -1,13 +1,31 @@
 -- AutoChest – Matchmaking Lobby Screen
 -- Auto-joins queue, waits for match, then launches GameScreen.
 
-local Screen    = require('lib.screen')
-local Constants = require('src.constants')
+local Screen      = require('lib.screen')
+local Constants   = require('src.constants')
+local DeckManager = require('src.deck_manager')
+local UnitRegistry = require('src.unit_registry')
+local BaseUnit    = require('src.base_unit')
 
 local LobbyScreen = {}
 
 function LobbyScreen.new()
     local self = Screen.new()
+
+    -- ── helpers ──────────────────────────────────────────────────────────────
+
+    local function roundedRect(x, y, w, h, r, sc)
+        love.graphics.rectangle('fill', x, y, w, h, r * sc, r * sc)
+    end
+
+    local function roundedRectLine(x, y, w, h, r, sc, lw)
+        love.graphics.setLineWidth(lw or 2)
+        love.graphics.rectangle('line', x, y, w, h, r * sc, r * sc)
+    end
+
+    local function textCY(font, y, h)
+        return y + (h - font:getHeight()) / 2
+    end
 
     -- ── init ────────────────────────────────────────────────────────────────
 
@@ -24,9 +42,45 @@ function LobbyScreen.new()
 
         -- Cancel button hit rect
         self._cancelBtnRect = nil
+        self._cancelPressedInside = false
+
+        -- Random waiting sentence (picked once at init)
+        local sentences = {
+            "Finding a worthy opponent...",
+            "Waiting for the ideal match...",
+            "Looking for a duel...",
+            "Sharpening swords before the battle...",
+            "Scouts are searching the realm...",
+            "Summoning a rival commander...",
+            "The arena awaits a challenger...",
+            "Seeking someone brave enough to face you...",
+        }
+        self.waitingSentence = sentences[math.random(#sentences)]
 
         -- Match delay timer
         self.matchTimer = nil
+
+        -- Deck preview (mirrors menu play-panel)
+        self.unitOrder          = UnitRegistry.getAllUnitTypes()
+        table.sort(self.unitOrder)
+        self.sprites            = {}
+        self.spriteTrimBottoms  = {}
+        self.dirSprites         = {}
+        self.idleAnim           = {}
+        self.attackAnim         = {}
+        self.previewLayout      = {}
+        for _, utype in ipairs(self.unitOrder) do
+            local loaded = UnitRegistry.loadDirectionalSprites(utype)
+            self.sprites[utype]           = loaded.front
+            self.spriteTrimBottoms[utype] = loaded.frontTrimBottom
+            self.dirSprites[utype]        = loaded
+            self.idleAnim[utype]          = { frameIndex = 1, timer = 0 }
+            self.attackAnim[utype]        = { active = false, progress = 0, duration = 0.45 }
+        end
+        self:buildPreviewLayout()
+
+        -- Cancel button spring physics
+        self._cancelSpring = { scale = 1.0, vel = 0.0, pressed = false }
 
         -- Register network callbacks
         self:registerNetworkCallbacks()
@@ -39,6 +93,73 @@ function LobbyScreen.new()
         else
             print("LobbyScreen: Auto-joining matchmaking queue")
         end
+    end
+
+    function self:buildPreviewLayout()
+        self.previewLayout = {}
+        local deck = DeckManager.getActiveDeck()
+        if not deck then return end
+
+        local units = {}
+        for utype, count in pairs(deck.counts) do
+            if count > 0 then
+                table.insert(units, utype)
+            end
+        end
+        if #units == 0 then return end
+
+        local positions = {}
+        for r = 1, 4 do
+            for c = 1, 5 do
+                table.insert(positions, { col = c, row = r })
+            end
+        end
+        for i = #positions, 2, -1 do
+            local j = math.random(i)
+            positions[i], positions[j] = positions[j], positions[i]
+        end
+
+        local n = math.min(#units, #positions)
+        for i = 1, n do
+            table.insert(self.previewLayout, {
+                unitType = units[i],
+                col      = positions[i].col,
+                row      = positions[i].row,
+            })
+        end
+    end
+
+    function self:getPreviewFrame(utype)
+        local d = self.dirSprites[utype]
+        if d and d.hasDirectionalSprites then
+            local atk = self.attackAnim[utype]
+            if atk.active and d.directional.hit and d.directional.hit[0] then
+                local dirData = d.directional.hit[0]
+                local count   = #dirData.frames
+                local p       = atk.progress
+                local idx
+                if count >= 3 then
+                    if     p < 1/3 then idx = 1
+                    elseif p < 2/3 then idx = 2
+                    else                idx = 3 end
+                else
+                    idx = math.min(count, math.floor(p * count) + 1)
+                end
+                return dirData.frames[idx], dirData.trimBottom[idx]
+            end
+            local aio = d.directional.actionIdleOverride
+            if aio and (aio[0] or aio[180]) then
+                local ad  = aio[0] or aio[180]
+                local idx = math.min(self.idleAnim[utype].frameIndex, #ad.frames)
+                return ad.frames[idx], ad.trimBottom[idx] or 0
+            end
+            if d.directional.idle and d.directional.idle[0] then
+                local dirData = d.directional.idle[0]
+                local idx     = self.idleAnim[utype].frameIndex
+                return dirData.frames[idx], dirData.trimBottom[idx]
+            end
+        end
+        return self.sprites[utype], self.spriteTrimBottoms[utype] or 0
     end
 
     function self:registerNetworkCallbacks()
@@ -163,141 +284,221 @@ function LobbyScreen.new()
                 ScreenManager.switch('game', true, self.playerRole, self.client)
             end
         end
+
+        -- Advance idle and attack animations for deck preview
+        local DEFAULT_IDLE_FRAME_DUR = 0.12 * 2
+        local IDLE_FRAME_DUR_OVERRIDE = { marrow = 0.18 }
+        for _, utype in ipairs(self.unitOrder) do
+            local d = self.dirSprites[utype]
+            if d and d.hasDirectionalSprites and d.directional.idle and d.directional.idle[0] then
+                local frames   = d.directional.idle[0].frames
+                local anim     = self.idleAnim[utype]
+                local frameDur = IDLE_FRAME_DUR_OVERRIDE[utype] or DEFAULT_IDLE_FRAME_DUR
+                anim.timer = anim.timer + dt
+                if anim.timer >= frameDur then
+                    anim.timer      = anim.timer - frameDur
+                    anim.frameIndex = (anim.frameIndex % #frames) + 1
+                end
+            end
+            local atk = self.attackAnim[utype]
+            if atk.active then
+                atk.progress = atk.progress + dt / atk.duration
+                if atk.progress >= 1 then atk.active = false; atk.progress = 0 end
+            end
+        end
+
+        -- Spring physics for cancel button (k=480, d=18 — matches menu style)
+        local function updateSpring(sp, dt2)
+            local target = sp.pressed and 0.93 or 1.0
+            local accel  = -480 * (sp.scale - target) - 18 * sp.vel
+            sp.vel   = sp.vel   + accel * dt2
+            sp.scale = sp.scale + sp.vel  * dt2
+            sp.scale = math.max(0.85, math.min(1.12, sp.scale))
+        end
+        updateSpring(self._cancelSpring, dt)
     end
 
     -- ── Draw ─────────────────────────────────────────────────────────────────
 
-    local function roundedRect(x, y, w, h, r, sc)
-        love.graphics.rectangle('fill', x, y, w, h, r * sc, r * sc)
-    end
-
-    local function roundedRectLine(x, y, w, h, r, sc, lw)
-        love.graphics.setLineWidth(lw or 2)
-        love.graphics.rectangle('line', x, y, w, h, r * sc, r * sc)
-    end
-
     function self:draw()
         local lg = love.graphics
-        local W = Constants.GAME_WIDTH
-        local H = Constants.GAME_HEIGHT
+        local W  = Constants.GAME_WIDTH
+        local H  = Constants.GAME_HEIGHT
         local sc = Constants.SCALE
         local cx = W / 2
-        local cy = H / 2
 
         lg.clear(Constants.COLORS.BACKGROUND)
 
-        -- Title
+        -- Title at top
         lg.setFont(Fonts.large)
         lg.setColor(1, 1, 1, 1)
-        lg.printf("Matchmaking", 0, cy - 200 * sc, W, 'center')
+        lg.printf("Matchmaking", 0, 70 * sc, W, 'center')
 
-        -- Status indicator
+        -- Queue timer under title
         if self.status == "queueing" then
-            -- Animated spinner
             local elapsed = love.timer.getTime() - self.queueStartTime
-            local angle = elapsed * math.pi  -- Rotate over time
-            local spinnerR = 40 * sc
+            lg.setFont(Fonts.small)
+            lg.setColor(0.4, 0.4, 0.4, 0.7)
+            lg.printf(string.format("%ds", math.floor(elapsed)), 0, 70 * sc + Fonts.large:getHeight() + 6 * sc, W, 'center')
+        end
 
-            lg.push()
-            lg.translate(cx, cy - 60 * sc)
-            lg.rotate(angle)
-            lg.setColor(0.5, 0.7, 1, 1)
-            lg.setLineWidth(4 * sc)
-            lg.arc('line', 'open', 0, 0, spinnerR, 0, math.pi * 1.5)
-            lg.pop()
+        -- ── Deck preview grid ────────────────────────────────────────────────
+        local cellSize   = Constants.CELL_SIZE
+        local gridW      = 5 * cellSize
+        local gridH      = 4 * cellSize
+        local gridX      = math.floor((W - gridW) / 2)
+        local barH       = 90 * sc
+        local btnY       = (H - barH) * 0.62
+        local contentTop = 100 * sc
+        local gridY      = math.floor(contentTop + (btnY - contentTop - gridH) / 2)
 
-            -- Status text
-            lg.setFont(Fonts.medium)
-            lg.setColor(1, 1, 1, 1)
-            lg.printf(self.statusMsg, 0, cy + 10 * sc, W, 'center')
+        local CDARK  = Constants.COLORS.CHESS_DARK
+        local CLIGHT = Constants.COLORS.CHESS_LIGHT
+        for row = 1, 4 do
+            for col = 1, 5 do
+                local cx2 = gridX + (col - 1) * cellSize
+                local cy2 = gridY + (row - 1) * cellSize
+                lg.setColor((row + col) % 2 == 0 and CDARK or CLIGHT)
+                lg.rectangle('fill', cx2, cy2, cellSize, cellSize)
+            end
+        end
 
-            -- Animated dots
-            local dots = string.rep(".", math.floor(elapsed * 2) % 4)
-            lg.setFont(Fonts.medium)
-            lg.setColor(0.7, 0.7, 0.7, 0.8)
-            lg.printf(dots, 0, cy + 40 * sc, W, 'center')
+        -- Grid border
+        lg.setColor(0.125, 0.224, 0.310, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.rectangle('line', gridX, gridY, gridW, gridH)
 
-            -- Queue time
+        -- Animated unit sprites (draw back rows first so front rows overlap)
+        local sprSc = cellSize / 16
+        local sortedLayout = {}
+        for i, e in ipairs(self.previewLayout) do sortedLayout[i] = e end
+        table.sort(sortedLayout, function(a, b) return a.row < b.row end)
+        for _, entry in ipairs(sortedLayout) do
+            local img, trimBottom = self:getPreviewFrame(entry.unitType)
+            if img then
+                local iw, ih = img:getDimensions()
+                local cx2 = gridX + (entry.col - 1) * cellSize
+                local cy2 = gridY + (entry.row - 1) * cellSize
+                -- Background animation (e.g. fire effects)
+                local bgFrames = self.dirSprites[entry.unitType] and self.dirSprites[entry.unitType].bgAnimFrames
+                if bgFrames then
+                    local fps      = 8
+                    local frameIdx = math.floor(love.timer.getTime() * fps) % #bgFrames + 1
+                    local bgImg    = bgFrames[frameIdx]
+                    local bw, bh   = bgImg:getDimensions()
+                    local BOTTOM_MARGIN = 3
+                    local bgOffX = math.floor(cx2 + (cellSize - bw * sprSc) / 2)
+                    local bgOffY = math.floor(cy2 + cellSize - (bh - trimBottom + BOTTOM_MARGIN) * sprSc)
+                    lg.setColor(1, 1, 1, 1)
+                    lg.setShader(BaseUnit.getPaletteShader())
+                    lg.draw(bgImg, bgOffX, bgOffY, 0, sprSc, sprSc)
+                    lg.setShader()
+                end
+                local BOTTOM_MARGIN = 3
+                local sx = math.floor(cx2 + (cellSize - iw * sprSc) / 2)
+                local sy = math.floor(cy2 + cellSize - (ih - trimBottom + BOTTOM_MARGIN) * sprSc)
+                lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
+                lg.draw(img, sx, sy, 0, sprSc, sprSc)
+                lg.setShader()
+            end
+        end
+
+        if #self.previewLayout == 0 then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.306, 0.286, 0.373, 1)
+            lg.printf("Equip a deck to preview", gridX,
+                gridY + gridH / 2 - Fonts.small:getHeight() / 2, gridW, 'center')
+        end
+
+        -- ── Status area (below grid) ─────────────────────────────────────────
+        local infoY = gridY + gridH + 28 * sc
+
+        if self.status == "queueing" then
             lg.setFont(Fonts.small)
             lg.setColor(0.6, 0.6, 0.7, 1)
-            local queueTime = math.floor(elapsed)
-            lg.printf(string.format("Time in queue: %ds", queueTime), 0, cy + 80 * sc, W, 'center')
+            lg.printf(self.waitingSentence, 0, infoY, W, 'center')
 
-            -- Trophy count and matchmaking range
-            lg.setFont(Fonts.tiny)
-            lg.setColor(0.9, 0.85, 0.3, 1)
-            lg.printf("Your trophies: " .. self.myTrophies, 0, cy + 110 * sc, W, 'center')
-
-            -- Matchmaking range (expands over time)
-            local baseRange = 100
-            local expandStep = 50
-            local expandInterval = 5
-            local maxRange = 500
-            local expandAmount = math.min(math.floor(queueTime / expandInterval) * expandStep, maxRange - baseRange)
-            local currentRange = baseRange + expandAmount
-            local minTrophies = math.max(0, self.myTrophies - currentRange)
-            local maxTrophies = self.myTrophies + currentRange
-
-            lg.setFont(Fonts.tiny)
-            lg.setColor(0.5, 0.8, 1, 0.9)
-            lg.printf(string.format("Searching range: %d - %d (±%d)", minTrophies, maxTrophies, currentRange), 0, cy + 130 * sc, W, 'center')
-
-            -- Debug: Player ID
-            if _G.PlayerData then
-                lg.setColor(0.5, 0.5, 0.5, 0.6)
-                lg.printf("ID: " .. _G.PlayerData.id .. " | User: " .. _G.PlayerData.username, 0, cy + 150 * sc, W, 'center')
+            if self.roomKey then
+                lg.setFont(Fonts.tiny)
+                lg.setColor(0.4, 0.4, 0.4, 0.5)
+                lg.printf("Room: " .. self.roomKey, 0, infoY + Fonts.small:getHeight() + 8 * sc, W, 'center')
             end
 
         elseif self.status == "matched" then
-            -- Match found! Show checkmark
-            lg.setColor(0.4, 1, 0.4, 1)
-            lg.setLineWidth(6 * sc)
-            local checkSc = 60 * sc
-            lg.line(cx - checkSc/2, cy - 70 * sc, cx - checkSc/4, cy - 50 * sc)
-            lg.line(cx - checkSc/4, cy - 50 * sc, cx + checkSc/2, cy - 90 * sc)
+            lg.setFont(Fonts.small)
+            lg.setColor(0.6, 0.6, 0.7, 1)
+            lg.printf("Match Found!", 0, infoY, W, 'center')
 
             lg.setFont(Fonts.large)
-            lg.setColor(0.4, 1, 0.4, 1)
-            lg.printf("Match Found!", 0, cy - 10 * sc, W, 'center')
-
-            -- Opponent info
-            lg.setFont(Fonts.medium)
             lg.setColor(1, 1, 1, 1)
-            lg.printf("vs " .. self.opponentName, 0, cy + 40 * sc, W, 'center')
+            lg.printf("vs " .. self.opponentName, 0, infoY + Fonts.small:getHeight() + 10 * sc, W, 'center')
 
             lg.setFont(Fonts.small)
             lg.setColor(0.9, 0.85, 0.3, 1)
-            lg.printf(self.opponentTrophies .. " trophies", 0, cy + 75 * sc, W, 'center')
-
-            lg.setFont(Fonts.tiny)
-            lg.setColor(0.6, 0.6, 0.7, 1)
-            lg.printf("Starting game...", 0, cy + 110 * sc, W, 'center')
+            lg.printf(self.opponentTrophies .. " trophies", 0, infoY + Fonts.small:getHeight() + 10 * sc + Fonts.large:getHeight() + 8 * sc, W, 'center')
 
         elseif self.status == "error" then
             lg.setFont(Fonts.medium)
             lg.setColor(1, 0.4, 0.4, 1)
-            lg.printf(self.statusMsg, 0, cy, W, 'center')
+            lg.printf(self.statusMsg, 0, infoY, W, 'center')
         end
 
-        -- Cancel button (only while queueing)
+        -- ── Cancel button (sandbox style with spring, only while queueing) ───
         if self.status == "queueing" then
-            local btnW = 180 * sc
-            local btnH = 50 * sc
-            local btnX = cx - btnW / 2
-            local btnY = cy + 160 * sc
+            local btnW     = 240 * sc
+            local sbtnH    = 44  * sc
+            local btnX     = cx - btnW / 2
+            local sbtnY    = H - 150 * sc
+            local maxFloat = math.floor(6 * sc)
+            local shadowH  = math.floor(6 * sc)
+            local ss       = self._cancelSpring.scale
+            local sfloat   = math.floor(maxFloat * math.max(0, (ss - 0.93) / 0.07))
+            local sdrawY   = sbtnY - sfloat
 
-            lg.setColor(0.45, 0.28, 0.08, 1)
-            roundedRect(btnX, btnY, btnW, btnH, 8, sc)
-            lg.setColor(0.70, 0.48, 0.15, 1)
-            roundedRectLine(btnX, btnY, btnW, btnH, 8, sc, 2 * sc)
+            -- Shadow
+            lg.setColor(0.031, 0.078, 0.118, 1)
+            roundedRect(btnX + math.floor(2 * sc), sbtnY + shadowH, btnW, sbtnH, 8, sc)
 
-            lg.setFont(Fonts.medium)
+            -- Face (spring-scaled)
+            lg.push()
+            lg.translate(btnX + btnW / 2, sdrawY + sbtnH / 2)
+            lg.scale(ss, ss)
+            lg.translate(-(btnX + btnW / 2), -(sdrawY + sbtnH / 2))
+            lg.setColor(0.600, 0.459, 0.467, 1)
+            roundedRect(btnX, sdrawY, btnW, sbtnH, 8, sc)
+            lg.setColor(0.700, 0.559, 0.567, 1)
+            roundedRectLine(btnX, sdrawY, btnW, sbtnH, 8, sc, 2 * sc)
+            lg.setFont(Fonts.small)
             lg.setColor(1, 1, 1, 1)
-            lg.printf("Cancel", btnX, btnY + (btnH - Fonts.medium:getHeight()) / 2, btnW, 'center')
+            lg.printf("Cancel", btnX, textCY(Fonts.small, sdrawY, sbtnH), btnW, 'center')
+            lg.pop()
 
-            self._cancelBtnRect = {x = btnX, y = btnY, w = btnW, h = btnH}
+            self._cancelBtnRect = { x = btnX, y = sbtnY - maxFloat, w = btnW, h = sbtnH + maxFloat }
         else
             self._cancelBtnRect = nil
+        end
+
+        -- ── Bottom info strip ────────────────────────────────────────────────
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.4, 0.4, 0.4, 0.5)
+        if self.status == "queueing" then
+            local elapsed2   = love.timer.getTime() - self.queueStartTime
+            local qt         = math.floor(elapsed2)
+            local baseRange  = 100
+            local expandStep = 50
+            local maxRange   = 500
+            local expand     = math.min(math.floor(qt / 5) * expandStep, maxRange - baseRange)
+            local range      = baseRange + expand
+            local lo         = math.max(0, self.myTrophies - range)
+            local hi         = self.myTrophies + range
+            lg.printf(string.format("%d trophies  ·  searching %d – %d", self.myTrophies, lo, hi),
+                0, H - 50 * sc, W, 'center')
+        elseif self.status == "matched" then
+            lg.printf("Starting game...", 0, H - 50 * sc, W, 'center')
+        end
+        if _G.PlayerData then
+            lg.printf("ID: " .. _G.PlayerData.id, 0, H - 30 * sc, W, 'center')
         end
     end
 
@@ -307,12 +508,16 @@ function LobbyScreen.new()
         if button ~= 1 then return end
         if self._cancelBtnRect then
             local r = self._cancelBtnRect
-            self._cancelPressedInside = x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._cancelPressedInside = true
+                self._cancelSpring.pressed = true
+            end
         end
     end
 
     function self:mousereleased(x, y, button)
         if button ~= 1 then return end
+        self._cancelSpring.pressed = false
         if self._cancelPressedInside and self._cancelBtnRect then
             local r = self._cancelBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
@@ -346,7 +551,8 @@ function LobbyScreen.new()
         -- Unregister all socket callbacks so they don't accumulate across sessions
         if self.client then
             local cbs = {self._cb_queueJoined, self._cb_queueLeft, self._cb_matchFound,
-                         self._cb_oppDisconn, self._cb_error, self._cb_loginSuccess}
+                         self._cb_oppDisconn, self._cb_error, self._cb_loginSuccess,
+                         self._cb_privateQueueJoined}
             for _, cb in ipairs(cbs) do
                 if cb then self.client:removeCallback(cb) end
             end

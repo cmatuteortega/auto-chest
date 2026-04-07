@@ -392,8 +392,8 @@ function GameScreen.new()
         local startX = (Constants.GAME_WIDTH - totalWidth) / 2
 
         -- Position cards with 10% bottom margin
-        local bottomMarginPercent = 0.10
-        self.cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+        self.cardY = math.floor((gridBottom + Constants.GAME_HEIGHT) / 2 - cardHeight / 2)
         local cardY = self.cardY
 
         for i = 1, 3 do
@@ -426,8 +426,8 @@ function GameScreen.new()
         local cardSpacing = 30  * Constants.SCALE
         local totalWidth  = (cardWidth * 3) + (cardSpacing * 2)
         local startX      = (Constants.GAME_WIDTH - totalWidth) / 2
-        local bottomMarginPercent = 0.10
-        self.cardY = Constants.GAME_HEIGHT * (1 - bottomMarginPercent) - cardHeight
+        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+        self.cardY = math.floor((gridBottom + Constants.GAME_HEIGHT) / 2 - cardHeight / 2)
         local cardY = self.cardY
 
         for i, unitType in ipairs(unitTypes) do
