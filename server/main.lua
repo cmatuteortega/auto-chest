@@ -15,9 +15,10 @@ local MAX_CONNECTIONS = 16
 
 local host    = nil
 local db      = nil
-local queue   = {}    -- matchmaking queue: {peer, player_id, username, trophies, queue_time}
-local rooms   = {}    -- keyed by connKey (integer): {peer, partnerKey, role, player_id, username, trophies}
-local sessions = {}   -- keyed by connKey (integer): {player_id, username, token}
+local queue        = {}    -- matchmaking queue: {peer, player_id, username, trophies, queue_time}
+local rooms        = {}    -- keyed by connKey (integer): {peer, partnerKey, role, player_id, username, trophies}
+local sessions     = {}    -- keyed by connKey (integer): {player_id, username, token}
+local privateQueue = {}    -- private match queue: keyed by room_key string: {peer, player_id, username, trophies}
 
 -- Per-connection unique IDs — avoids session key collision when ENet reuses peer slots
 local connCounter    = 0
@@ -329,6 +330,58 @@ local function handleMessage(peer, eventName, msgData)
             end
         end
 
+    elseif eventName == "get_leaderboard" then
+        local top = db:getLeaderboard(5)
+        peer:send(encode("leaderboard_data", { players = top }))
+
+    elseif eventName == "private_queue_join" then
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+        local player = db:getPlayer(session.player_id)
+        if not player then
+            peer:send(encode("error", {reason = "Player not found"}))
+            return
+        end
+        local key = msgData.room_key
+        if not key or key == "" then
+            peer:send(encode("error", {reason = "Invalid room key"}))
+            return
+        end
+        -- Remove any existing private queue entry for this player
+        for k, entry in pairs(privateQueue) do
+            if entry.player_id == player.id then privateQueue[k] = nil end
+        end
+        if privateQueue[key] and privateQueue[key].player_id ~= player.id then
+            -- Match found — create room
+            local p1 = privateQueue[key]
+            privateQueue[key] = nil
+            local ck1 = connKey(p1.peer)
+            local ck2 = ck
+            rooms[ck1] = { peer=p1.peer, partnerKey=ck2, role=1, player_id=p1.player_id, username=p1.username, trophies=p1.trophies }
+            rooms[ck2] = { peer=peer, partnerKey=ck1, role=2, player_id=player.id, username=player.username, trophies=player.trophies }
+            p1.peer:send(encode("match_found", { role=1, opponent_name=player.username, opponent_trophies=player.trophies, my_trophies=p1.trophies }))
+            peer:send(encode("match_found", { role=2, opponent_name=p1.username, opponent_trophies=p1.trophies, my_trophies=player.trophies }))
+            pushLog("Private match: " .. p1.username .. " vs " .. player.username .. " (key=" .. key .. ")")
+        else
+            -- First player with this key — wait
+            privateQueue[key] = { peer=peer, player_id=player.id, username=player.username, trophies=player.trophies }
+            peer:send(encode("private_queue_joined", {}))
+            pushLog("Private queue: " .. player.username .. " waiting on key=" .. key)
+        end
+
+    elseif eventName == "private_queue_leave" then
+        for k, entry in pairs(privateQueue) do
+            if entry.peer == peer then
+                privateQueue[k] = nil
+                peer:send(encode("queue_left", {}))
+                pushLog("Private queue leave: " .. entry.username)
+                break
+            end
+        end
+
     elseif eventName == "update_deck_slot" then
         local session = sessions[ck]
         if not session then
@@ -594,6 +647,13 @@ handleDisconnect = function(peer)
         if connKeys[tostring(queue[i].peer)] == ck then
             pushLog("Queue player disconnected: " .. queue[i].username)
             table.remove(queue, i)
+        end
+    end
+
+    -- Remove from private queue
+    for k, entry in pairs(privateQueue) do
+        if connKeys[tostring(entry.peer)] == ck then
+            privateQueue[k] = nil
         end
     end
 

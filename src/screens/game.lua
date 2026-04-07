@@ -118,6 +118,7 @@ function GameScreen.new()
 
         -- Card drafting
         self.cards = {}
+        self.exitingCards = {}
         self.draggedCard = nil
 
         -- Deck draw pile (populated from DeckManager; false = fallback to random)
@@ -448,6 +449,21 @@ function GameScreen.new()
         self.emoteButtonY = self.rerollButtonY
     end
 
+    -- Trigger exit animations on current cards and deal-in animations on new ones.
+    -- Old cards slide down off screen; new cards slide in from the right with stagger.
+    function self:_launchExitAndEnter(unitTypes)
+        self.exitingCards = self.exitingCards or {}
+        for i, card in ipairs(self.cards) do
+            card:startExitAnim((i % 2 == 0) and 1 or -1)
+            table.insert(self.exitingCards, card)
+        end
+        self:_rebuildCardsFromTypes(unitTypes)
+        local offscreenX = Constants.GAME_WIDTH + 80 * Constants.SCALE
+        for i, card in ipairs(self.cards) do
+            card:setEnterAnim(offscreenX, card.x, card.y, 0.05 + (i - 1) * 0.06)
+        end
+    end
+
     -- Draw cards from the deck pile (or fall back to random) and display them.
     -- Returns any leftover unplayed drawn cards from the previous call to the pile first.
     function self:dealSetupCards()
@@ -484,7 +500,7 @@ function GameScreen.new()
         end
 
         self.drawnCardTypes = unitTypes
-        self:_rebuildCardsFromTypes(unitTypes)
+        self:_launchExitAndEnter(unitTypes)
     end
 
     -- Helper: Enter finished state with trophy calculation
@@ -629,6 +645,17 @@ function GameScreen.new()
             end
         end
 
+        -- Update and prune exiting cards (run every frame so they animate even outside setup)
+        if self.exitingCards and #self.exitingCards > 0 then
+            for i = #self.exitingCards, 1, -1 do
+                local card = self.exitingCards[i]
+                card:update(dt)
+                if not card.isExiting then
+                    table.remove(self.exitingCards, i)
+                end
+            end
+        end
+
         if self.state == "battle" then
             -- Fixed timestep simulation: accumulate real dt and drain in discrete steps.
             -- Both clients run the exact same number of steps per battle, eliminating
@@ -748,12 +775,28 @@ function GameScreen.new()
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
 
+        -- Draw entering cards behind the UI (behind reroll button)
+        if self.cards then
+            for _, card in ipairs(self.cards) do
+                if card.isEntering and card ~= self.draggedCard then
+                    card:draw()
+                end
+            end
+        end
+
         -- Draw UI
         self:drawUI()
 
-        -- Draw cards (non-dragged first, dragged last so it's on top)
+        -- Draw exiting cards behind the active hand
+        if self.exitingCards then
+            for _, card in ipairs(self.exitingCards) do
+                card:draw()
+            end
+        end
+
+        -- Draw settled/non-entering cards (non-dragged first, dragged last so it's on top)
         for _, card in ipairs(self.cards) do
-            if card ~= self.draggedCard then
+            if not card.isEntering and card ~= self.draggedCard then
                 card:draw()
             end
         end
@@ -1359,11 +1402,11 @@ function GameScreen.new()
                             self.drawnCardTypes = {}
                             DeckManager.initDrawPile()
                             self.drawnCardTypes = DeckManager.drawCards(3)
-                            self:_rebuildCardsFromTypes(self.drawnCardTypes)
+                            self:_launchExitAndEnter(self.drawnCardTypes)
                         else
                             local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
                             self.drawnCardTypes = newTypes
-                            self:_rebuildCardsFromTypes(newTypes)
+                            self:_launchExitAndEnter(newTypes)
                         end
                     else
                         self:dealSetupCards()

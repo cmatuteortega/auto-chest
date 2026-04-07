@@ -412,6 +412,20 @@ function Database:getPlayer(playerId)
     }
 end
 
+-- Get top N players by trophy count
+function Database:getLeaderboard(limit)
+    local stmt = self.db:prepare(
+        "SELECT username, trophies FROM players ORDER BY trophies DESC LIMIT ?"
+    )
+    stmt:bind_values(limit or 5)
+    local result = {}
+    while stmt:step() == sqlite3.ROW do
+        table.insert(result, { username = stmt:get_value(0), trophies = stmt:get_value(1) })
+    end
+    stmt:finalize()
+    return result
+end
+
 -- Update player trophies
 function Database:updateTrophies(playerId, delta)
     local stmt = self.db:prepare([[

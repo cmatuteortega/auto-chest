@@ -11,8 +11,9 @@ function LobbyScreen.new()
 
     -- ── init ────────────────────────────────────────────────────────────────
 
-    function self:init(client)
+    function self:init(client, roomKey)
         self.client = client  -- Authenticated socket from login/menu
+        self.roomKey = roomKey or nil  -- nil = public queue, string = private match key
         self.status = "queueing"  -- queueing | matched | error
         self.statusMsg = "Finding match..."
         self.queueStartTime = love.timer.getTime()
@@ -30,10 +31,14 @@ function LobbyScreen.new()
         -- Register network callbacks
         self:registerNetworkCallbacks()
 
-        -- Auto-join queue
+        -- Auto-join queue (private or public)
         self:joinQueue()
 
-        print("LobbyScreen: Auto-joining matchmaking queue")
+        if self.roomKey then
+            print("LobbyScreen: Joining private queue with key=" .. self.roomKey)
+        else
+            print("LobbyScreen: Auto-joining matchmaking queue")
+        end
     end
 
     function self:registerNetworkCallbacks()
@@ -41,6 +46,12 @@ function LobbyScreen.new()
             self.status = "queueing"
             self.statusMsg = "Finding match..."
             print("Queue joined")
+        end)
+
+        self._cb_privateQueueJoined = self.client:on("private_queue_joined", function()
+            self.status = "queueing"
+            self.statusMsg = "Waiting for friend..."
+            print("Private queue joined")
         end)
 
         self._cb_queueLeft = self.client:on("queue_left", function()
@@ -95,15 +106,23 @@ function LobbyScreen.new()
             return
         end
 
-        self.client:send("queue_join", {
-            player_id = _G.PlayerData.id,
-            trophies = _G.PlayerData.trophies
-        })
+        if self.roomKey then
+            self.client:send("private_queue_join", {
+                player_id = _G.PlayerData.id,
+                room_key  = self.roomKey
+            })
+        else
+            self.client:send("queue_join", {
+                player_id = _G.PlayerData.id,
+                trophies  = _G.PlayerData.trophies
+            })
+        end
     end
 
     function self:leaveQueue()
         if self.client then
-            self.client:send("queue_leave", {})
+            local msg = self.roomKey and "private_queue_leave" or "queue_leave"
+            self.client:send(msg, {})
         end
     end
 

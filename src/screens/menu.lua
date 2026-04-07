@@ -98,7 +98,7 @@ function MenuScreen.new()
 
         -- Bottom tab bar icons (order matches panel indices)
         self.uiIcons = {}
-        for i, name in ipairs({ 'collection', 'decks', 'battle', 'shop', 'ranking' }) do
+        for i, name in ipairs({ 'collection', 'decks', 'battle', 'ranking', 'shop' }) do
             local img = love.graphics.newImage('src/assets/ui/' .. name .. '.png')
             img:setFilter('nearest', 'nearest')
             self.uiIcons[i] = img
@@ -154,6 +154,9 @@ function MenuScreen.new()
         self._chestAnimTimer = 0      -- frame-advance timer within breaking/open anims
         self._chestAnimFrame = 1      -- current sprite frame index
         self._chestSaveThrottle = 0   -- seconds since last persistence write
+        self._chestHitFlash  = 0      -- countdown for brief hit-frame flash on tap
+        self._chestTapCount  = 0      -- consecutive taps for joke easter egg
+        self._chestTapTimer  = 0      -- time since last tap (resets combo if too slow)
         self._chestSprites   = nil    -- loaded lazily
         self._chestBtnRect   = nil    -- hit rect for the chest sprite
         self._chestSkipRect  = nil    -- hit rect for god-mode skip button
@@ -205,6 +208,7 @@ function MenuScreen.new()
         -- Button spring physics (Balatro squish/bounce)
         self._playSpring     = { scale = 1.0, vel = 0.0, pressed = false }
         self._sbtnSpring     = { scale = 1.0, vel = 0.0, pressed = false }
+        self._joinSpring     = { scale = 1.0, vel = 0.0, pressed = false }
         self._settingsSpring = { scale = 1.0, vel = 0.0, pressed = false }
         self._tradeBtnSprings = {
             { scale = 1.0, vel = 0.0, pressed = false },
@@ -215,6 +219,18 @@ function MenuScreen.new()
         -- Online player count
         self._onlineCount     = nil  -- nil until first response
         self._onlinePollTimer = 30   -- start at max so first poll fires immediately
+
+        -- Leaderboard (ranking panel)
+        self._leaderboard        = nil   -- array of {username, trophies} once fetched
+        self._leaderboardLoading = false
+        self._leaderboardFetched = false -- reset when leaving panel 5 to refresh next visit
+
+        -- Private room (ranking panel)
+        self._roomKeyText   = ""
+        self._roomKeyActive = false
+        self._roomKeyRect   = nil   -- set during draw, used for hit testing
+        self._roomKeyJoinRect = nil
+        self._cursorTimer   = 0
     end
 
     function self:registerSocketHandlers()
@@ -274,6 +290,11 @@ function MenuScreen.new()
                 if data.gold    then _G.PlayerData.gold    = data.gold    end
             end
         end)
+
+        self._cb_leaderboard = _G.GameSocket:on("leaderboard_data", function(data)
+            self._leaderboard = data.players
+            self._leaderboardLoading = false
+        end)
     end
 
     function self:removeSocketHandlers()
@@ -286,6 +307,7 @@ function MenuScreen.new()
             if self._cb_onlineCount    then _G.GameSocket:removeCallback(self._cb_onlineCount) end
             if self._cb_rewardClaimed  then _G.GameSocket:removeCallback(self._cb_rewardClaimed) end
             if self._cb_cardAwarded    then _G.GameSocket:removeCallback(self._cb_cardAwarded) end
+            if self._cb_leaderboard    then _G.GameSocket:removeCallback(self._cb_leaderboard) end
         end
         self._cb_currencyUpdate = nil
         self._cb_shopError      = nil
@@ -295,6 +317,7 @@ function MenuScreen.new()
         self._cb_onlineCount    = nil
         self._cb_rewardClaimed  = nil
         self._cb_cardAwarded    = nil
+        self._cb_leaderboard    = nil
     end
 
     function self:startReconnect()
@@ -392,6 +415,20 @@ function MenuScreen.new()
             end
         end
 
+        -- Leaderboard fetch when ranking panel is active
+        if self.currentPanel == 4 then
+            if not self._leaderboardFetched and _G.GameSocket and _G.GameSocket:isConnected() then
+                self._leaderboardFetched = true
+                self._leaderboardLoading = true
+                _G.GameSocket:send("get_leaderboard", {})
+            end
+        else
+            self._leaderboardFetched = false  -- reset so it refreshes next visit
+        end
+
+        -- Cursor blink timer for room key input
+        self._cursorTimer = (self._cursorTimer or 0) + dt
+
         -- Online count polling (every 30s)
         if _G.GameSocket and _G.GameSocket:isConnected() then
             self._onlinePollTimer = self._onlinePollTimer + dt
@@ -411,9 +448,19 @@ function MenuScreen.new()
         end
 
         -- Daily chest update
+        if self._chestHitFlash > 0 then
+            self._chestHitFlash = self._chestHitFlash - dt
+        end
+        if self._chestTapCount > 0 then
+            self._chestTapTimer = self._chestTapTimer + dt
+            if self._chestTapTimer > 0.4 then
+                self._chestTapCount = 0
+                self._chestTapTimer = 0
+            end
+        end
         local CHEST_DURATION  = 86400
 local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
-        if self._chestState == "waiting" then
+        if self._chestState == "waiting" or self._chestState == "broken" then
             self._chestTimer = self._chestTimer + dt
             if self._chestTimer >= CHEST_DURATION then
                 self._chestTimer = CHEST_DURATION
@@ -427,12 +474,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     self:saveChestTimer()
                 end
             end
-        elseif self._chestState == "hit" then
-            self._chestAnimTimer = self._chestAnimTimer + dt
-            if self._chestAnimTimer >= 0.15 then
-                self._chestState     = "open"
-                self._chestAnimTimer = 0
-                self._chestAnimFrame = 1
+            if self._chestState == "broken" then
+                self._chestAnimTimer = self._chestAnimTimer + dt
+                local frame = math.floor(self._chestAnimTimer / 0.1) % 6 + 1
+                self._chestAnimFrame = frame
             end
         elseif self._chestState == "open" then
             if self._chestAnimFrame <= 16 then
@@ -604,6 +649,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
         updateSpring(self._playSpring, dt)
         updateSpring(self._sbtnSpring, dt)
+        updateSpring(self._joinSpring, dt)
         updateSpring(self._settingsSpring, dt)
         for i = 1, 3 do updateSpring(self._tradeBtnSprings[i], dt) end
     end
@@ -1494,10 +1540,170 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
     end
 
     function self:drawRankingPanel(ox, W, H)
-        local lg = love.graphics
+        local lg     = love.graphics
+        local sc     = Constants.SCALE
+
+        -- ── Shared grid geometry (matches collection/shop panels) ─────────────
+        local cols   = 4
+        local cardW  = math.floor(100 * sc)
+        local gapX   = math.floor(12  * sc)
+        local totalW = cols * cardW + (cols - 1) * gapX
+        local startX = math.floor(ox + (W - totalW) / 2)
+        local hdrH   = math.floor(40  * sc)
+        local rowH   = math.floor(40  * sc)
+        local y      = math.floor(130 * sc)
+
+        -- ── Leaderboard section ───────────────────────────────────────────────
+
+        self:drawGroupHeader(startX, y, totalW, hdrH, "Leaderboard", sc)
+        y = y + hdrH + math.floor(6 * sc)
+
+        if self._leaderboardLoading then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.306, 0.286, 0.373, 1)  -- #4e495f
+            lg.printf("Loading...", ox, y + math.floor(rowH * 2.5), W, 'center')
+            y = y + rowH * 5
+        elseif not self._leaderboard or #self._leaderboard == 0 then
+            lg.setFont(Fonts.small)
+            lg.setColor(0.306, 0.286, 0.373, 1)  -- #4e495f
+            lg.printf("No data available", ox, y + math.floor(rowH * 2.5), W, 'center')
+            y = y + rowH * 5
+        else
+            for i, entry in ipairs(self._leaderboard) do
+                local ry = y + (i - 1) * rowH
+                -- Highlight current player
+                if _G.PlayerData and entry.username == _G.PlayerData.username then
+                    lg.setColor(0.125, 0.224, 0.310, 0.35)  -- #20394f
+                    lg.rectangle('fill', startX, ry, totalW, rowH)
+                end
+                -- Separator line
+                if i > 1 then
+                    lg.setColor(0.125, 0.224, 0.310, 1)  -- #20394f
+                    lg.setLineWidth(1)
+                    lg.line(startX, ry, startX + totalW, ry)
+                end
+                -- Rank number (palette tiers for top 3)
+                lg.setFont(Fonts.small)
+                local rankColor = i == 1 and {0.965, 0.839, 0.741, 1}  -- #f6d6bd
+                               or i == 2 and {0.765, 0.639, 0.541, 1}  -- #c3a38a
+                               or i == 3 and {0.600, 0.459, 0.467, 1}  -- #997577
+                               or             {0.506, 0.384, 0.443, 1}  -- #816271
+                lg.setColor(rankColor[1], rankColor[2], rankColor[3], rankColor[4])
+                lg.print("#" .. i, startX + math.floor(6 * sc), textCY(Fonts.small, ry, rowH))
+                -- Username
+                lg.setColor(0.965, 0.839, 0.741, 1)  -- #f6d6bd
+                lg.print(entry.username, startX + math.floor(46 * sc), textCY(Fonts.small, ry, rowH))
+                -- Trophy count (right-aligned)
+                local tStr = tostring(entry.trophies) .. " trophies"
+                local tW   = Fonts.small:getWidth(tStr)
+                lg.setColor(0.765, 0.639, 0.541, 1)  -- #c3a38a
+                lg.print(tStr, startX + totalW - tW - math.floor(6 * sc), textCY(Fonts.small, ry, rowH))
+            end
+            y = y + #self._leaderboard * rowH
+        end
+
+        -- Bottom border of leaderboard table
+        lg.setColor(0.125, 0.224, 0.310, 1)  -- #20394f
+        lg.setLineWidth(1)
+        lg.line(startX, y, startX + totalW, y)
+        y = y + math.floor(20 * sc)
+
+        -- ── Create Room section ───────────────────────────────────────────────
+
+        self:drawGroupHeader(startX, y, totalW, hdrH, "Create Room", sc)
+        y = y + hdrH + math.floor(20 * sc)
+
+        local inputH = math.floor(56 * sc)
+        local inputW = math.floor(totalW * 0.82)
+        local inputX = math.floor(ox + (W - inputW) / 2)
+
+        -- Input box (full totalW width)
+        if self._roomKeyActive then
+            lg.setColor(0.2, 0.2, 0.25, 1)
+        else
+            lg.setColor(0.059, 0.165, 0.247, 1)
+        end
+        lg.rectangle('fill', inputX, y, inputW, inputH, 4 * sc, 4 * sc)
+        if self._roomKeyActive then
+            lg.setColor(0.965, 0.839, 0.741, 0.9)
+        else
+            lg.setColor(0.765, 0.639, 0.541, 0.5)
+        end
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.rectangle('line', inputX, y, inputW, inputH, 4 * sc, 4 * sc)
+
+        -- Text inside input (centered)
         lg.setFont(Fonts.medium)
-        lg.setColor(0.4, 0.4, 0.45, 1)
-        lg.printf("Coming Soon", ox, H * 0.42, W, 'center')
+        local cursor = (self._roomKeyActive and math.floor(self._cursorTimer * 2) % 2 == 0) and "|" or ""
+        if self._roomKeyText == "" and not self._roomKeyActive then
+            lg.setColor(0.4, 0.4, 0.45, 1)
+            lg.printf("Enter code...", inputX, textCY(Fonts.medium, y, inputH), inputW, 'center')
+        else
+            lg.setColor(0.965, 0.839, 0.741, 1)
+            local txt = self._roomKeyText .. cursor
+            local tw  = Fonts.medium:getWidth(txt)
+            lg.print(txt, inputX + math.floor((inputW - tw) / 2), textCY(Fonts.medium, y, inputH))
+        end
+
+        -- Store hit rect
+        self._roomKeyRect = { x = inputX + self.panelOffset, y = y, w = inputW, h = inputH }
+        y = y + inputH + math.floor(6 * sc)
+
+        -- Helper text (immediately below input, tiny font)
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.5, 0.5, 0.55, 1)
+        lg.printf("Share a code with a friend to play a private match.", inputX, y, inputW, 'center')
+        local inputBottom = y + Fonts.tiny:getHeight()
+
+        -- JOIN button: vertically centred between input bottom and the tab bar (H)
+        local joinW    = math.floor(200 * sc)
+        local joinH    = math.floor(72  * sc)
+        local maxFloat = math.floor(6   * sc)
+        local shadowH  = math.floor(6   * sc)
+        local cx       = ox + W / 2
+        local joinX    = math.floor(cx - joinW / 2)
+        local joinAnchorY = math.floor(inputBottom + (H - inputBottom - joinH - shadowH) / 4)
+
+        local t        = love.timer.getTime()
+        local idleBob  = math.sin(t * 1.8) * 2 * sc
+        local idleRot  = math.sin(t * 1.3) * 0.012
+        local s        = self._joinSpring.scale
+        local floatOff = math.floor(maxFloat * math.max(0, (s - 0.93) / 0.07))
+        local drawY    = joinAnchorY - floatOff + math.floor(idleBob)
+
+        -- Shadow (static at anchor)
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        roundedRect(joinX + math.floor(2 * sc), joinAnchorY + shadowH, joinW, joinH, 8, sc)
+
+        -- Button face: pivot at center, rotate then scale
+        local pivX    = joinX + joinW / 2
+        local pivY    = drawY + joinH / 2
+        local bx      = -joinW / 2
+        local by      = -joinH / 2
+        local isEmpty = self._roomKeyText == ""
+        lg.push()
+        lg.translate(pivX, pivY)
+        lg.rotate(idleRot)
+        lg.scale(s, s)
+        if isEmpty then
+            lg.setColor(0.600, 0.459, 0.467, 1)
+        else
+            lg.setColor(0.765, 0.639, 0.541, 1)
+        end
+        roundedRect(bx, by, joinW, joinH, 8, sc)
+        if isEmpty then
+            lg.setColor(0.600, 0.459, 0.467, 1)
+        else
+            lg.setColor(0.965, 0.839, 0.741, 1)
+        end
+        roundedRectLine(bx, by, joinW, joinH, 8, sc, 2 * sc)
+        lg.setFont(Fonts.large)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf("JOIN", bx, textCY(Fonts.large, by, joinH), joinW, 'center')
+        lg.pop()
+
+        -- Hit rect covers full float range
+        self._roomKeyJoinRect = { x = joinX + self.panelOffset, y = joinAnchorY - maxFloat, w = joinW, h = joinH + maxFloat }
     end
 
     -- ── Daily chest helpers ──────────────────────────────────────────────────
@@ -1531,6 +1737,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         s.open    = entry('src/assets/Chest/ChestOpen.png')
         s.opening = {}
         for i = 1, 16 do s.opening[i] = entry('src/assets/Chest/Open(GoldLoot)' .. i .. '.png') end
+        s.broken = {}
+        for i = 1, 6 do s.broken[i] = entry('src/assets/Chest/Broken' .. i .. '.png') end
         self._chestSprites = s
         self._paletteShader = love.graphics.newShader([[
             vec4 effect(vec4 color, Image texture, vec2 texture_coords, vec2 screen_coords) {
@@ -1730,11 +1938,11 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         -- ── Chest sprite selection ────────────────────────────────────────────
         local chestEntry
         if state == "waiting" then
-            chestEntry = sprites.closed
+            chestEntry = (self._chestHitFlash > 0) and sprites.hit or sprites.closed
         elseif state == "ready" then
-            chestEntry = self._chestPressed and sprites.hit or sprites.closed
-        elseif state == "hit" then
-            chestEntry = sprites.hit
+            chestEntry = sprites.closed
+        elseif state == "broken" then
+            chestEntry = sprites.broken[self._chestAnimFrame] or sprites.broken[1]
         elseif state == "open" then
             chestEntry = (self._chestAnimFrame <= 16)
                 and (sprites.opening[self._chestAnimFrame] or sprites.open)
@@ -1754,9 +1962,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         if chestEntry then
             local img  = chestEntry.image
-            local trim = chestEntry.trimBottom
             local iw, ih = img:getDimensions()
-            local visH = (ih - trim) * pixSc
+            local visH = ih * pixSc
             local drawW = iw * pixSc
             local chestX = math.floor(rightZoneX + (rightZoneW - drawW) / 2)
             local chestY = math.floor(baseline - visH) - math.floor(20 * sc)
@@ -1773,12 +1980,12 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- ── Timer or CLAIM button: left 45%, vertically centred on chest ──────
-        local leftZoneX = ox
-        local leftZoneW = math.floor(W * 0.45)
+        local leftZoneX = ox + math.floor(W * 0.06)
+        local leftZoneW = math.floor(W * 0.39)
         local po        = self.panelOffset
         local midY      = math.floor(chestTopY + slotH / 2)
 
-        if state == "waiting" then
+        if state == "waiting" or state == "broken" then
             local remaining = math.max(0, CHEST_DURATION - self._chestTimer)
             local hh = math.floor(remaining / 3600)
             local mm = math.floor((remaining % 3600) / 60)
@@ -1831,7 +2038,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local btnH    = math.floor(42 * sc)
             local btnGap  = math.floor(18 * sc)
             local btnShd  = math.floor(4 * sc)
-            local cardY   = tradeHdrY + hdrH + math.floor(16 * sc)
+            local cardY   = tradeHdrY + hdrH + math.floor(28 * sc)
             -- Side cards centered between the title margin and the center card
             local tradeCardX = {
                 math.floor(startX + totalW / 5 - cardW / 2),
@@ -1903,7 +2110,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local BAR_H = 100 * sc
         local barY  = H - BAR_H
         local tabW  = W / self.NUM_PANELS
-        local labels = { "Collection", "Decks", "Battle", "Shop", "Ranking" }
+        local labels = { "Collection", "Decks", "Battle", "Ranking", "Shop" }
 
         -- Bar background
         lg.setColor(0.031, 0.078, 0.118, 1)
@@ -2123,8 +2330,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self:drawCollectionPanel(0,       W, H - barH, sc)
         self:drawDecksPanel(     W,       W, H - barH, sc)
         self:drawPlayPanel(      2 * W,   W, H - barH, sc)
-        self:drawShopPanel(      3 * W,   W, H - barH)
-        self:drawRankingPanel(   4 * W,   W, H - barH)
+        self:drawRankingPanel(   3 * W,   W, H - barH)
+        self:drawShopPanel(      4 * W,   W, H - barH)
 
         lg.pop()
         lg.setScissor()
@@ -2581,16 +2788,24 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             end
         end
 
-        -- Chest press: show HitChest sprite immediately on touch-down
-        if self.currentPanel == 4 and self._chestState == "ready" and self._chestBtnRect then
+        -- Chest press: flash HitChest briefly on touch-down (waiting state only)
+        if self.currentPanel == 5 and self._chestState == "waiting" and self._chestBtnRect then
             local r = self._chestBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                self._chestPressed = true
+                self._chestHitFlash = 0.12
+                self._chestTapCount = self._chestTapCount + 1
+                self._chestTapTimer = 0
+                if self._chestTapCount >= 3 then
+                    self._chestState     = "broken"
+                    self._chestAnimTimer = 0
+                    self._chestAnimFrame = 1
+                    self._chestTapCount  = 0
+                end
             end
         end
 
         -- Spring press: trade buy buttons (shop panel)
-        if self.currentPanel == 4 then
+        if self.currentPanel == 5 then
             for _, r in ipairs(self._tradeCardRects) do
                 if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                     self._tradeBtnSprings[r.slotIndex].pressed = true
@@ -2609,6 +2824,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
                         y >= sbtn.y and y <= sbtn.y + sbtn.h then
                 self._sbtnSpring.pressed = true
+            end
+        end
+        if self.currentPanel == 4 and self._roomKeyText ~= "" then
+            local jbtn = self._roomKeyJoinRect
+            if jbtn and x >= jbtn.x and x <= jbtn.x + jbtn.w and
+                        y >= jbtn.y and y <= jbtn.y + jbtn.h then
+                self._joinSpring.pressed = true
             end
         end
     end
@@ -2693,9 +2915,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self.isPressed = false
         self._playSpring.pressed     = false
         self._sbtnSpring.pressed     = false
+        self._joinSpring.pressed     = false
         self._settingsSpring.pressed = false
         for i = 1, 3 do self._tradeBtnSprings[i].pressed = false end
-        self._chestPressed = false
         self._detailDragX = nil
         -- End collection scroll drag (keep velocity for momentum)
         if self._collectionScrollDragY ~= nil then
@@ -2833,7 +3055,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- Shop panel: daily chest input
-        if self.currentPanel == 4 then
+        if self.currentPanel == 5 then
             -- God Mode skip timer button
             if _G.GodMode and self._chestSkipRect and self._chestState == "waiting" then
                 local r = self._chestSkipRect
@@ -2849,7 +3071,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             if self._chestState == "ready" and self._chestBtnRect then
                 local r = self._chestBtnRect
                 if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                    self._chestState     = "hit"
+                    self._chestState     = "open"
                     self._chestAnimTimer = 0
                     self._chestAnimFrame = 1
                     AudioManager.playTap()
@@ -2899,6 +3121,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             end
             self.targetOffset = -(self.currentPanel - 1) * W
             self.isDragging   = false
+            -- Leaving Shop panel: reset broken easter egg
+            if self.currentPanel ~= 4 and self._chestState == "broken" then
+                self._chestState     = "waiting"
+                self._chestAnimTimer = 0
+                self._chestAnimFrame = 1
+            end
+            self._chestTapCount = 0
             -- Leaving Collection panel: reset sub-view to grid
             if self.currentPanel ~= 1 then
                 self.collectionView = "grid"
@@ -2936,6 +3165,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 elseif i ~= self.currentPanel then
                     self.currentPanel = i
                     self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
+                    -- Leaving Shop panel: reset broken easter egg
+                    if i ~= 4 and self._chestState == "broken" then
+                        self._chestState     = "waiting"
+                        self._chestAnimTimer = 0
+                        self._chestAnimFrame = 1
+                    end
+                    self._chestTapCount = 0
                     -- Leaving Collection: reset its sub-view
                     if i ~= 1 then
                         self.collectionView = "grid"
@@ -3069,8 +3305,29 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             end
         end
 
-        -- Tap: shop buttons
+        -- Tap: ranking panel (room key input + join button)
         if self.currentPanel == 4 then
+            local rk = self._roomKeyRect
+            if rk and x >= rk.x and x <= rk.x + rk.w and y >= rk.y and y <= rk.y + rk.h then
+                self._roomKeyActive = true
+                self._cursorTimer = 0
+                love.keyboard.setTextInput(true, rk.x, rk.y, rk.w, rk.h)
+                return
+            end
+            local jn = self._roomKeyJoinRect
+            if jn and x >= jn.x and x <= jn.x + jn.w and y >= jn.y and y <= jn.y + jn.h then
+                self:tryJoinPrivateRoom()
+                return
+            end
+            -- Tap anywhere else → deactivate input
+            if self._roomKeyActive then
+                self._roomKeyActive = false
+                love.keyboard.setTextInput(false)
+            end
+        end
+
+        -- Tap: shop buttons
+        if self.currentPanel == 5 then
             -- Gem purchase buttons (placeholder)
             for _, btn in ipairs(self._shopGemBtns) do
                 if x >= btn.x and x <= btn.x + btn.w and
@@ -3142,6 +3399,19 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
     end
 
     function self:keypressed(key)
+        -- Room key input handling
+        if self._roomKeyActive then
+            if key == "backspace" then
+                self._roomKeyText = self._roomKeyText:sub(1, -2)
+            elseif key == "return" or key == "kpenter" then
+                self:tryJoinPrivateRoom()
+            elseif key == "escape" then
+                self._roomKeyActive = false
+                love.keyboard.setTextInput(false)
+            end
+            return
+        end
+
         if key == "escape" then
             if self.showDetail then
                 self.showDetail = false
@@ -3149,6 +3419,25 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             end
             return
         end
+    end
+
+    function self:textinput(t)
+        if self._roomKeyActive then
+            if t:match("^[%w]+$") and #self._roomKeyText < 12 then
+                self._roomKeyText = self._roomKeyText .. t:upper()
+            end
+        end
+    end
+
+    function self:tryJoinPrivateRoom()
+        local key = self._roomKeyText:match("^%s*(.-)%s*$")
+        if #key < 1 then return end
+        if not (_G.GameSocket and _G.GameSocket:isConnected()) then return end
+        self._roomKeyActive = false
+        love.keyboard.setTextInput(false)
+        self:removeSocketHandlers()
+        local ScreenManager = require('lib.screen_manager')
+        ScreenManager.switch('lobby', _G.GameSocket, key)
     end
 
     return self
