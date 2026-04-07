@@ -16,7 +16,7 @@ function MenuScreen.new()
 
     -- ── init ────────────────────────────────────────────────────────────────
 
-    function self:init()
+    function self:init(entering)
         local W = Constants.GAME_WIDTH
 
         -- Panel state (1=Collection, 2=Decks, 3=Battle, 4=Shop, 5=Ranking); start on Battle
@@ -181,6 +181,14 @@ function MenuScreen.new()
 
         -- Register socket handlers
         self:registerSocketHandlers()
+
+        -- Exit transition animation (header slides up, tab bar slides down)
+        -- direction: 1 = exit (0→1), -1 = enter (1→0)
+        if entering then
+            self._exitAnim = { active = true, progress = 1, duration = 0.28, callback = nil, direction = -1 }
+        else
+            self._exitAnim = { active = false, progress = 0, duration = 0.28, callback = nil, direction = 1 }
+        end
 
         love.keyboard.setKeyRepeat(true)
 
@@ -399,6 +407,27 @@ function MenuScreen.new()
 
     function self:update(dt)
         dt = math.min(dt, 1/30)  -- cap spikes from app backgrounding
+
+        -- Exit/enter transition animation
+        if self._exitAnim.active then
+            local dir = self._exitAnim.direction or 1
+            self._exitAnim.progress = self._exitAnim.progress + dir * dt / self._exitAnim.duration
+            if dir == 1 then
+                self._exitAnim.progress = math.min(1, self._exitAnim.progress)
+                if self._exitAnim.progress >= 1 and self._exitAnim.callback then
+                    local cb = self._exitAnim.callback
+                    self._exitAnim.callback = nil
+                    if cb then cb() end
+                    return
+                end
+            else
+                self._exitAnim.progress = math.max(0, self._exitAnim.progress)
+                if self._exitAnim.progress <= 0 then
+                    self._exitAnim.active = false
+                end
+            end
+        end
+
         -- Keep socket connection alive, or reconnect if dead
         if self._reconnecting and self._reconnectHandle then
             SocketManager.updateReconnect(self._reconnectHandle, dt)
@@ -2323,6 +2352,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local H    = Constants.GAME_HEIGHT
         local sc   = Constants.SCALE
 
+        -- Exit animation: ease-in slide offset (0 → 1)
+        local exitT = self._exitAnim.progress
+        local exitEase = exitT * exitT  -- quadratic ease-in
+
         lg.clear(Constants.COLORS.BACKGROUND)
 
         -- Clip panel strip above the bottom bar
@@ -2344,6 +2377,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self:drawTickerStripe(W, sc)
 
         -- Top-left header: player name + trophies + XP bar + settings button
+        -- (slides upward during exit animation)
+        local headerSlideH = math.floor((80 * sc + H * 0.05) * exitEase)
+        lg.push()
+        lg.translate(0, -headerSlideH)
         if _G.PlayerData then
             local vPad   = math.floor(5 * sc)
             local edgeX  = math.floor(8 * sc)
@@ -2493,9 +2530,14 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 end
             end
         end
+        lg.pop()
 
-        -- Bottom tab bar (screen space)
+        -- Bottom tab bar (slides downward during exit animation)
+        local tabSlideH = math.floor(200 * sc * exitEase)
+        lg.push()
+        lg.translate(0, tabSlideH)
         self:drawBottomBar(W, H, sc)
+        lg.pop()
 
         -- Version label
         lg.setFont(Fonts.tiny)
@@ -2759,6 +2801,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
     -- ── input ───────────────────────────────────────────────────────────────
 
     function self:handlePress(x, y)
+        if self._exitAnim.active then return end
         self.isPressed  = true
         self.pressX     = x
         self.pressY     = y
@@ -3369,15 +3412,20 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 AudioManager.playTap()
                 if _G.GameSocket and _G.GameSocket:isConnected() then
                     self:removeSocketHandlers()
-                    local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('lobby', _G.GameSocket)
+                    local sock = _G.GameSocket
+                    self:startExitAnim(function()
+                        local ScreenManager = require('lib.screen_manager')
+                        ScreenManager.switch('lobby', sock)
+                    end)
                 elseif _G.GameSocket then
                     -- Socket exists but dead — reconnect first
                     self:startReconnect()
                 else
                     -- Not logged in, go to login screen
-                    local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('login')
+                    self:startExitAnim(function()
+                        local ScreenManager = require('lib.screen_manager')
+                        ScreenManager.switch('login')
+                    end)
                 end
                 return
             end
@@ -3385,8 +3433,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
                         y >= sbtn.y and y <= sbtn.y + sbtn.h then
                 AudioManager.playTap()
-                local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('game', false, 1, false, true)
+                self:startExitAnim(function()
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('game', false, 1, false, true)
+                end)
                 return
             end
         end
@@ -3440,8 +3490,18 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self._roomKeyActive = false
         love.keyboard.setTextInput(false)
         self:removeSocketHandlers()
-        local ScreenManager = require('lib.screen_manager')
-        ScreenManager.switch('lobby', _G.GameSocket, key)
+        local sock = _G.GameSocket
+        self:startExitAnim(function()
+            local ScreenManager = require('lib.screen_manager')
+            ScreenManager.switch('lobby', sock, key)
+        end)
+    end
+
+    function self:startExitAnim(callback)
+        self._exitAnim.active    = true
+        self._exitAnim.progress  = 0
+        self._exitAnim.direction = 1
+        self._exitAnim.callback  = callback
     end
 
     return self

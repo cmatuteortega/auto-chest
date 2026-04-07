@@ -82,6 +82,11 @@ function LobbyScreen.new()
         -- Cancel button spring physics
         self._cancelSpring = { scale = 1.0, vel = 0.0, pressed = false }
 
+        -- Ticker stripe
+        self._tickerOffset = 0
+        self._tickerMsg    = "matchmaking  -  matchmaking  -  matchmaking  -  matchmaking  -  "
+        self._tickerMsgPx  = 0  -- computed lazily once font is available
+
         -- Register network callbacks
         self:registerNetworkCallbacks()
 
@@ -100,32 +105,67 @@ function LobbyScreen.new()
         local deck = DeckManager.getActiveDeck()
         if not deck then return end
 
+        -- Collect unit types with at least 1 card, in stable sorted order
         local units = {}
         for utype, count in pairs(deck.counts) do
-            if count > 0 then
-                table.insert(units, utype)
-            end
+            if count > 0 then table.insert(units, utype) end
         end
+        table.sort(units)
         if #units == 0 then return end
 
-        local positions = {}
-        for r = 1, 4 do
-            for c = 1, 5 do
-                table.insert(positions, { col = c, row = r })
-            end
-        end
-        for i = #positions, 2, -1 do
-            local j = math.random(i)
-            positions[i], positions[j] = positions[j], positions[i]
+        local occupied = {}
+        local placed   = 0
+        local function occupy(r, c)
+            placed = placed + 1
+            occupied[r * 10 + c] = true
+            table.insert(self.previewLayout, { unitType = units[placed], col = c, row = r })
         end
 
-        local n = math.min(#units, #positions)
-        for i = 1, n do
-            table.insert(self.previewLayout, {
-                unitType = units[i],
-                col      = positions[i].col,
-                row      = positions[i].row,
-            })
+        -- Phase 1: V formation — tip at front-center, arms extending back-outward
+        --   Row 4 (front): col 3  — tip
+        --   Row 3:         col 2, col 4
+        --   Row 2:         col 1, col 5
+        --   Row 1 (back):  col 1, col 5
+        local vPos = {
+            {4,3}, {3,2},{3,4}, {2,1},{2,5}, {1,1},{1,5},
+        }
+        for _, p in ipairs(vPos) do
+            if placed >= #units then break end
+            occupy(p[1], p[2])
+        end
+
+        -- Phase 2: spaced positions — no occupied cardinal neighbour (1-cell gap)
+        if placed < #units then
+            local function cardinalHit(r, c)
+                return occupied[(r-1)*10+c] or occupied[(r+1)*10+c]
+                    or occupied[r*10+(c-1)] or occupied[r*10+(c+1)]
+            end
+            for r = 1, 4 do
+                for c = 1, 5 do
+                    if placed >= #units then break end
+                    if not occupied[r*10+c] and not cardinalHit(r, c) then
+                        occupy(r, c)
+                    end
+                end
+            end
+        end
+
+        -- Phase 3: no more spaced room — fill remaining cells randomly
+        if placed < #units then
+            local rem = {}
+            for r = 1, 4 do
+                for c = 1, 5 do
+                    if not occupied[r*10+c] then table.insert(rem, {r,c}) end
+                end
+            end
+            for i = #rem, 2, -1 do
+                local j = math.random(i)
+                rem[i], rem[j] = rem[j], rem[i]
+            end
+            for _, p in ipairs(rem) do
+                if placed >= #units then break end
+                occupy(p[1], p[2])
+            end
         end
     end
 
@@ -316,6 +356,55 @@ function LobbyScreen.new()
             sp.scale = math.max(0.85, math.min(1.12, sp.scale))
         end
         updateSpring(self._cancelSpring, dt)
+
+        -- Ticker stripe: swap message on status change, scroll continuously
+        local tickerMsg = (self.status == "matched")
+            and "match found!  -  match found!  -  match found!  -  match found!  -  "
+            or  "matchmaking  -  matchmaking  -  matchmaking  -  matchmaking  -  "
+        if tickerMsg ~= self._tickerMsg then
+            self._tickerMsg    = tickerMsg
+            self._tickerMsgPx  = 0
+            self._tickerOffset = 0
+        end
+        if self._tickerMsgPx == 0 and Fonts and Fonts.small then
+            self._tickerMsgPx = Fonts.small:getWidth(self._tickerMsg)
+        end
+        local tickerSpeed = 60 * Constants.SCALE
+        self._tickerOffset = self._tickerOffset + tickerSpeed * dt
+        -- Loop at exactly one message width so two copies tile seamlessly
+        if self._tickerMsgPx > 0 and self._tickerOffset >= self._tickerMsgPx then
+            self._tickerOffset = self._tickerOffset - self._tickerMsgPx
+        end
+    end
+
+    function self:drawTickerStripe(W, sc)
+        local lg      = love.graphics
+        local stripeY = math.floor(75 * sc)
+        local stripeH = math.floor(36 * sc)
+
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        lg.rectangle('fill', 0, stripeY, W, stripeH)
+
+        lg.setColor(0.125, 0.224, 0.310, 1)
+        lg.setLineWidth(math.max(1, math.floor(sc)))
+        lg.line(0, stripeY, W, stripeY)
+        lg.line(0, stripeY + stripeH, W, stripeY + stripeH)
+
+        if self._tickerMsg and self._tickerMsgPx > 0 then
+            lg.setScissor(0, stripeY, W, stripeH)
+            lg.setFont(Fonts.small)
+            if self.status == "matched" then
+                lg.setColor(0.9, 0.85, 0.3, 1)
+            else
+                lg.setColor(0.965, 0.839, 0.741, 1)
+            end
+            local textY = math.floor(stripeY + (stripeH - (Fonts.small:getAscent() - Fonts.small:getDescent())) / 2)
+            local x0 = math.floor(-self._tickerOffset)
+            -- Draw two copies staggered by one message width for seamless tiling
+            lg.print(self._tickerMsg, x0, textY)
+            lg.print(self._tickerMsg, x0 + self._tickerMsgPx, textY)
+            lg.setScissor()
+        end
     end
 
     -- ── Draw ─────────────────────────────────────────────────────────────────
@@ -329,18 +418,16 @@ function LobbyScreen.new()
 
         lg.clear(Constants.COLORS.BACKGROUND)
 
-        -- Title at top
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("Matchmaking", 0, 70 * sc, W, 'center')
-
-        -- Queue timer under title
+        -- Queue timer
         if self.status == "queueing" then
             local elapsed = love.timer.getTime() - self.queueStartTime
             lg.setFont(Fonts.small)
             lg.setColor(0.4, 0.4, 0.4, 0.7)
-            lg.printf(string.format("%ds", math.floor(elapsed)), 0, 70 * sc + Fonts.large:getHeight() + 6 * sc, W, 'center')
+            lg.printf(string.format("%ds", math.floor(elapsed)), 0, math.floor(30 * sc), W, 'center')
         end
+
+        -- Ticker stripe (scrolling status text)
+        self:drawTickerStripe(W, sc)
 
         -- ── Deck preview grid ────────────────────────────────────────────────
         local cellSize   = Constants.CELL_SIZE
@@ -444,34 +531,44 @@ function LobbyScreen.new()
             lg.printf(self.statusMsg, 0, infoY, W, 'center')
         end
 
-        -- ── Cancel button (sandbox style with spring, only while queueing) ───
+        -- ── Cancel button (matches JOIN button in ranking panel) ────────────
         if self.status == "queueing" then
-            local btnW     = 240 * sc
-            local sbtnH    = 44  * sc
-            local btnX     = cx - btnW / 2
-            local sbtnY    = H - 150 * sc
-            local maxFloat = math.floor(6 * sc)
-            local shadowH  = math.floor(6 * sc)
+            local btnW     = math.floor(200 * sc)
+            local sbtnH    = math.floor(72  * sc)
+            local maxFloat = math.floor(6   * sc)
+            local shadowH  = math.floor(6   * sc)
+            -- Centre between bottom of deck grid and bottom of screen
+            local deckBottom = gridY + gridH
+            local sbtnY    = math.floor(deckBottom + (H - deckBottom - sbtnH) / 2)
+            local btnX     = math.floor(cx - btnW / 2)
+
+            local t        = love.timer.getTime()
+            local idleBob  = math.sin(t * 1.8) * 2 * sc
+            local idleRot  = math.sin(t * 1.3) * 0.012
             local ss       = self._cancelSpring.scale
             local sfloat   = math.floor(maxFloat * math.max(0, (ss - 0.93) / 0.07))
-            local sdrawY   = sbtnY - sfloat
+            local sdrawY   = sbtnY - sfloat + math.floor(idleBob)
 
             -- Shadow
             lg.setColor(0.031, 0.078, 0.118, 1)
             roundedRect(btnX + math.floor(2 * sc), sbtnY + shadowH, btnW, sbtnH, 8, sc)
 
-            -- Face (spring-scaled)
+            -- Face: pivot at center, rotate then scale (matches JOIN exactly)
+            local pivX = btnX + btnW / 2
+            local pivY = sdrawY + sbtnH / 2
+            local bx   = -btnW / 2
+            local by   = -sbtnH / 2
             lg.push()
-            lg.translate(btnX + btnW / 2, sdrawY + sbtnH / 2)
+            lg.translate(pivX, pivY)
+            lg.rotate(idleRot)
             lg.scale(ss, ss)
-            lg.translate(-(btnX + btnW / 2), -(sdrawY + sbtnH / 2))
             lg.setColor(0.600, 0.459, 0.467, 1)
-            roundedRect(btnX, sdrawY, btnW, sbtnH, 8, sc)
+            roundedRect(bx, by, btnW, sbtnH, 8, sc)
             lg.setColor(0.700, 0.559, 0.567, 1)
-            roundedRectLine(btnX, sdrawY, btnW, sbtnH, 8, sc, 2 * sc)
-            lg.setFont(Fonts.small)
+            roundedRectLine(bx, by, btnW, sbtnH, 8, sc, 2 * sc)
+            lg.setFont(Fonts.large)
             lg.setColor(1, 1, 1, 1)
-            lg.printf("Cancel", btnX, textCY(Fonts.small, sdrawY, sbtnH), btnW, 'center')
+            lg.printf("Cancel", bx, textCY(Fonts.large, by, sbtnH), btnW, 'center')
             lg.pop()
 
             self._cancelBtnRect = { x = btnX, y = sbtnY - maxFloat, w = btnW, h = sbtnH + maxFloat }
@@ -524,7 +621,7 @@ function LobbyScreen.new()
                 self._cancelPressedInside = false
                 self:leaveQueue()
                 local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('menu')
+                ScreenManager.switch('menu', true)
                 return
             end
         end
