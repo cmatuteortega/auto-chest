@@ -16,6 +16,8 @@ function Samurai:new(row, col, owner, sprites)
 
     Samurai.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "sword-hit.mp3"
+
     -- Upgrade tracking fields
     self.damageFromAlliedDeaths = 0  -- Track cumulative damage bonus from ally deaths
     self.allyDeathsObserved = {}  -- Track which allies already counted

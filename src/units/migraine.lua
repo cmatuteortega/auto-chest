@@ -72,6 +72,8 @@ function Migraine:new(row, col, owner, sprites)
 
     Migraine.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "poof.mp3"
+
     -- Spectral Mitosis: track combined hits (given + taken)
     self.hitCounter      = 0
     self.mitosisFlag     = false   -- consumed in update() where grid is available
@@ -237,6 +239,7 @@ function Migraine:doExplosion(grid)
             local dist = math.sqrt(dx * dx + dy * dy)
             if dist <= EXPLOSION_RADIUS then
                 unit:takeDamage(EXPLOSION_DAMAGE)
+                AudioManager.playSFX("fireball.mp3")
                 if unit.isDead then
                     local cell = grid:getCell(unit.col, unit.row)
                     if cell then cell.occupied = false end

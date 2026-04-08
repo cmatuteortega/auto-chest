@@ -299,6 +299,7 @@ function GameScreen.new()
         self.timer = 0
         self.state = "battle"
         AudioManager.setBattleMode(true)
+        AudioManager.playSFX("battle-start.mp3")
         self.battleAccumulator = 0
         self.battleStepCount   = 0
 
@@ -322,6 +323,18 @@ function GameScreen.new()
             unit.homeRow = unit.row
             table.insert(self.battleUnitsSnapshot, unit)
             unit:onBattleStart(self.grid)
+        end
+
+        -- Set up death sound callbacks (relative to local player's perspective)
+        for _, unit in ipairs(allUnits) do
+            local isAlly = (unit.owner == self.playerRole)
+            unit.onDeathCallback = function()
+                if isAlly then
+                    AudioManager.playSFX("ally-death.mp3")
+                else
+                    AudioManager.playSFX("enemy-death.mp3", 0.75)
+                end
+            end
         end
 
         -- ACTION move system: delay non-action units until all ACTION moves complete
@@ -721,6 +734,7 @@ function GameScreen.new()
                     end
 
                     -- Leave bodies on board; apply life deduction after intermission
+                    AudioManager.playSFX("battle-end.mp3")
                     self.pendingWinner     = self.winner
                     self.state             = "intermission"
                     self.intermissionTimer = 2.5
@@ -1387,14 +1401,17 @@ function GameScreen.new()
         if self.state == "setup" and self._rerollBtnRect then
             local rb = self._rerollBtnRect
             if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                AudioManager.playTap()
                 if self.isSandbox or (not self.freeRerollUsed) or self.playerCoins >= self.rerollCost then
                     if not self.isSandbox then
                         if not self.freeRerollUsed then
                             self.freeRerollUsed = true  -- first reroll is free
+                            AudioManager.playTap()
                         else
                             self.playerCoins = self.playerCoins - self.rerollCost
+                            AudioManager.playSFX("reroll.mp3")
                         end
+                    else
+                        AudioManager.playTap()
                     end
                     if self.usingDeck then
                         if self.isSandbox and DeckManager.pileSize() < 3 then
@@ -1506,6 +1523,7 @@ function GameScreen.new()
                 self.draggedUnit.col = col
                 self.draggedUnit.row = row
                 self.grid:placeUnit(col, row, self.draggedUnit)
+                AudioManager.playSFX("place.mp3")
                 -- Sync: tell opponent to mirror the move
                 self:sendMsg({type = "remove_unit", col = origCol, row = origRow})
                 self:sendMsg({type = "place_unit",
@@ -1600,6 +1618,7 @@ function GameScreen.new()
                         local unitSprites = self.sprites[unitType]
                         local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
                         if self.grid:placeUnit(col, row, unit) then
+                            AudioManager.playSFX("place.mp3")
                             if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
                             for i, card in ipairs(self.cards) do
                                 if card == self.draggedCard then

@@ -47,6 +47,8 @@ function Mage:new(row, col, owner, sprites)
 
     Mage.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "magic-projectile.mp3"
+
     -- Hit counter: increments on attacks made and damage received
     self.hitCounter    = 0
     self.fireballReady = false  -- next ranged attack will be a fireball
@@ -165,6 +167,7 @@ function Mage:onProjectileHit(projectile, grid)
             end
         end
     end
+    AudioManager.playSFX("fireball.mp3")
 
     -- Burning Ground: leave fire patch on every cell in the blast radius
     if self:hasUpgrade(1) then

@@ -162,6 +162,7 @@ function Marc:attack(target, grid)
 
     self.currentTarget = nil
     table.insert(self.arrows, projectile)
+    AudioManager.playSFX("bow.mp3", 0.3)
 end
 
 -- ============================================================

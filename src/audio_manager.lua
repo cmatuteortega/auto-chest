@@ -8,6 +8,7 @@ local AM = {
     sfxEnabled   = true,
     _music       = nil,   -- streaming Source for OST
     _taps        = {},    -- 3 static Sources for UI taps
+    _sfx         = {},    -- cache: filename → static Source
     _battleMode  = false,
     _wasMusicPlaying = false,  -- tracks music state across focus loss/gain
 }
@@ -89,6 +90,16 @@ function AM.playTap()
         local clone = src:clone()
         clone:play()
     end
+end
+
+function AM.playSFX(name, volume)
+    if not AM.sfxEnabled then return end
+    if not AM._sfx[name] then
+        AM._sfx[name] = love.audio.newSource("src/audio/" .. name, "static")
+    end
+    local clone = AM._sfx[name]:clone()
+    clone:setVolume(volume or 0.5)
+    clone:play()
 end
 
 -- ── focus pause / resume (background handling) ──────────────────────────────

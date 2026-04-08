@@ -15,6 +15,7 @@ function Clavicula:new(row, col, owner, sprites)
 
     Clavicula.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "slice.mp3"
     self.hitCounter      = 0
     self.spinFlag        = false   -- consumed in update() where grid is available
     self.killDamageBonus = 0       -- War Spoils: +1 damage per kill, resets each round
@@ -91,6 +92,7 @@ function Clavicula:doSpin(grid)
             local dy = math.abs(unit.row - self.row)
             if dx <= 1 and dy <= 1 then
                 unit:takeDamage(dmg)
+                AudioManager.playSFX("slice.mp3")
                 if unit.isDead then
                     local cell = grid:getCell(unit.col, unit.row)
                     if cell then cell.occupied = false end

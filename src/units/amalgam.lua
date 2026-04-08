@@ -42,6 +42,8 @@ function Amalgam:new(row, col, owner, sprites)
 
     Amalgam.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "bite.mp3"
+
     -- Invulnerability state
     self.invulnTimer    = 0   -- active invulnerability countdown (seconds)
     self.invulnCooldown = 0   -- cooldown until passive can trigger again

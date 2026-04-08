@@ -148,6 +148,8 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.upgradeTree = {}  -- Defined in subclasses: {name, description, apply function}
 
     self.isDead = false
+    self.onDeathCallback = nil
+    self.hitSound = nil  -- SFX played on successful hit (set per unit)
 
     -- Combat stats
     self.attackCooldown = 0
@@ -667,6 +669,7 @@ function BaseUnit:takeDamage(amount)
     if self.health <= 0 then
         self.health = 0
         self.isDead = true
+        if self.onDeathCallback then self.onDeathCallback(self) end
     end
 
     -- Trigger hit animation (scaled)
@@ -1123,6 +1126,7 @@ end
 function BaseUnit:attack(target, grid)
     if not target or target.isDead then return end
     target:takeDamage(self:getDamage(grid))
+    if self.hitSound then AudioManager.playSFX(self.hitSound) end
     if target.isDead then
         local cell = grid:getCell(target.col, target.row)
         if cell then

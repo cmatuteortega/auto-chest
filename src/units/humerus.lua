@@ -90,6 +90,7 @@ function Humerus:attack(target, grid)
     if not target or target.isDead then return end
 
     target:takeDamage(self:getDamage(grid))
+    AudioManager.playSFX("big-hit.mp3")
     self.hitCounter = self.hitCounter + 1
 
     if target.isDead then
@@ -113,6 +114,7 @@ function Humerus:attack(target, grid)
                     end
                     cleaveDmg = math.floor(cleaveDmg * (self.royalCommandBonus or 1))
                     unit:takeDamage(cleaveDmg)
+                    AudioManager.playSFX("big-hit.mp3")
                     if unit.isDead then
                         local deadCell = grid:getCell(unit.col, unit.row)
                         if deadCell then deadCell.occupied = false end

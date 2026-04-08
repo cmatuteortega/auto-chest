@@ -44,6 +44,8 @@ function Bull:new(row, col, owner, sprites)
 
     Bull.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "bite.mp3"
+
     -- ACTION move identification
     self.isActionUnit   = true
     self.actionDuration = 0.5  -- charge animation takes 0.5s
