@@ -48,6 +48,7 @@ function Bonk:attack(target, grid)
 
     -- Deal damage to primary target
     target:takeDamage(dmg)
+    AudioManager.playSFX(isPowerStrike and "big-hit.mp3" or "mid-hit.mp3")
 
     -- Cleave: hit adjacent side columns on Power Strike
     if isPowerStrike and self:hasUpgrade(2) then
@@ -58,6 +59,7 @@ function Bonk:attack(target, grid)
                 and math.abs(u.col - target.col) == 1
             then
                 u:takeDamage(dmg)
+                AudioManager.playSFX("big-hit.mp3")
                 -- Brute Force stun also applies to cleaved targets
                 if self:hasUpgrade(1) then
                     u.stunTimer = 1.5

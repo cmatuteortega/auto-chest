@@ -23,6 +23,7 @@ function Burrow:new(row, col, owner, sprites)
 
     Burrow.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "soft-hit.mp3"
     self.actionDuration = 2.0   -- seconds underground before emerging
 
     -- Per-round burrow state
@@ -121,6 +122,7 @@ function Burrow:update(dt, grid)
                         local dist = math.sqrt(dx * dx + dy * dy)
                         if dist <= 1.5 then
                             unit:takeDamage(2)
+                            AudioManager.playSFX("soft-hit.mp3")
                             unit.stunTimer = 0.8
                         end
                     end

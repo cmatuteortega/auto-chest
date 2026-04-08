@@ -127,6 +127,7 @@ function Catapult:explodeShot(grid)
                 if unit.owner ~= self.owner and not unit.isDead
                    and unit.col == tc and unit.row == tr then
                     unit:takeDamage(dmg)
+                    AudioManager.playSFX("fireball.mp3")
                     if unit.isDead then
                         local cell = grid:getCell(unit.col, unit.row)
                         if cell then cell.occupied = false end

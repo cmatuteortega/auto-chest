@@ -159,6 +159,7 @@ function BaseUnitRanged:attack(target, grid)
         -- Create projectile (flies directly to target, ignoring obstacles)
         local projectile = self:createProjectile(target, grid)
         table.insert(self.arrows, projectile)
+        if self.hitSound then AudioManager.playSFX(self.hitSound) end
 
         -- Note: Damage is applied when projectile reaches target, not instantly
     end

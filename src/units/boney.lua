@@ -16,6 +16,8 @@ function Boney:new(row, col, owner, sprites)
 
     Boney.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "slice.mp3"
+
     -- Boney-specific upgrade flags
     self.hasHealed = false  -- Track if one-time heal has been used
     self.wasAboveHalfHealth = true  -- Track HP threshold crossing

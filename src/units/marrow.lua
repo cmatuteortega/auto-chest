@@ -19,6 +19,8 @@ function Marrow:new(row, col, owner, sprites)
 
     Marrow.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "arrow.mp3"
+
     -- Lance passive (fires at battle start)
     self.isActionUnit      = true
     self.actionDuration    = 0.6
@@ -120,6 +122,7 @@ function Marrow:update(dt, grid)
                     done     = false,
                 }
                 self.pendingLance = nil
+                AudioManager.playSFX("throw.mp3")
             end
         end
         return  -- skip normal combat AI during windup

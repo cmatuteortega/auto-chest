@@ -42,6 +42,8 @@ function Sinner:new(row, col, owner, sprites)
 
     Sinner.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "big-hit.mp3"
+
     -- Form state
     self.hitCounter        = 0
     self.isFree            = false

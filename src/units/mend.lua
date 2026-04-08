@@ -22,6 +22,8 @@ function Mend:new(row, col, owner, sprites)
 
     Mend.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "poof.mp3"
+
     -- Hit counter (given + received); triggers heal at 6
     self.hitCounter = 0
 

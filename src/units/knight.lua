@@ -16,6 +16,8 @@ function Knight:new(row, col, owner, sprites)
 
     Knight.super.new(self, row, col, owner, sprites, stats)
 
+    self.hitSound = "mid-hit.mp3"
+
     -- ACTION move identification (taunt resolves at battle start)
     self.isActionUnit   = true
     self.actionDuration = 0.6  -- windup animation, taunt fires when complete
