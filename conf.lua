@@ -34,6 +34,8 @@ function love.conf(t)
         local os = love.system.getOS()
         if os == "Android" or os == "iOS" then
             t.window.orientation = "portrait"   -- Lock to portrait (Love2D hint)
+            t.window.fullscreen = true           -- Extend window behind system bars
+            t.window.fullscreentype = "desktop"  -- Borderless/immersive style
         end
     end
 
