@@ -10,6 +10,8 @@ require('lib.audio')  -- overrides love.audio.play/stop with source-tracking wra
 -- Global audio manager (music + SFX)
 AudioManager = require('src.audio_manager')
 
+local UnitRegistry = require('src.unit_registry')
+
 -- Load screens
 local LoginScreen   = require('src.screens.login')
 local LoadingScreen = require('src.screens.loading')
@@ -93,6 +95,10 @@ function love.load()
         _G.DeviceId = id
         love.filesystem.write("device_id.dat", id)
     end
+
+    -- Preload all sprites once at startup so screen transitions are instant.
+    -- Subsequent calls in menu/lobby/game screens return from cache immediately.
+    UnitRegistry.loadAllSprites()
 
     -- Initialize screen manager with screen table
     local screens = {

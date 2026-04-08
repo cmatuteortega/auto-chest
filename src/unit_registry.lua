@@ -189,6 +189,11 @@ UnitRegistry.passiveDescriptions = {
 -- Returns display info for a unit type by reading it directly from a dummy
 -- instance. Results are cached so each unit is only instantiated once.
 local _displayInfoCache = {}
+
+-- Sprite caches: populated on first load, reused on every subsequent call.
+-- Eliminates redundant disk I/O + pixel-scanning when screens are recreated.
+local _directionalSpriteCache = {}
+local _allSpritesCache = nil
 function UnitRegistry.getUnitDisplayInfo(unitType)
     if _displayInfoCache[unitType] then
         return _displayInfoCache[unitType]
@@ -278,20 +283,26 @@ local LEGACY_ONLY_UNITS = {
 
 -- Load directional sprites for a unit type (8-direction animation system).
 -- Falls back to loadSprites() if no directional sprites exist for this unit.
+-- Results are cached so each unit is only loaded from disk once per session.
 function UnitRegistry.loadDirectionalSprites(unitType)
+    if _directionalSpriteCache[unitType] then
+        return _directionalSpriteCache[unitType]
+    end
+
+    local result
+
     if LEGACY_ONLY_UNITS[unitType] then
-        return UnitRegistry.loadSprites(unitType)
-    end
+        result = UnitRegistry.loadSprites(unitType)
+    else
+        local basePath = "src/assets/" .. unitType .. "/"
 
-    local basePath = "src/assets/" .. unitType .. "/"
-
-    -- Probe: if idle_0_1.png absent, fall back to legacy system
-    if not love.filesystem.getInfo(basePath .. "idle_0_1.png") then
-        return UnitRegistry.loadSprites(unitType)
-    end
+        -- Probe: if idle_0_1.png absent, fall back to legacy system
+        if not love.filesystem.getInfo(basePath .. "idle_0_1.png") then
+            result = UnitRegistry.loadSprites(unitType)
+        else
 
     -- Load legacy sprites as base (provides front/back/dead fallback + trimBottom)
-    local result = UnitRegistry.loadSprites(unitType)
+    result = UnitRegistry.loadSprites(unitType)
     result.hasDirectionalSprites = true
     result.directional = {idle = {}, walk = {}, hit = {}}
 
@@ -385,6 +396,10 @@ function UnitRegistry.loadDirectionalSprites(unitType)
         result.bgAnimFrames = bgFrames
     end
 
+        end -- close: directional path else
+    end -- close: non-legacy else
+
+    _directionalSpriteCache[unitType] = result
     return result
 end
 
@@ -418,8 +433,12 @@ function UnitRegistry.loadSprites(unitType)
     }
 end
 
--- Load all sprites for all unit types
+-- Load all sprites for all unit types.
+-- Results are cached so the full sprite load only happens once per session.
 function UnitRegistry.loadAllSprites()
+    if _allSpritesCache then
+        return _allSpritesCache
+    end
     local allSprites = {}
     for unitType, _ in pairs(UnitRegistry.unitClasses) do
         allSprites[unitType] = UnitRegistry.loadDirectionalSprites(unitType)
@@ -548,6 +567,7 @@ function UnitRegistry.loadAllSprites()
         allSprites["catapult"].catapultProjectile = img
     end
 
+    _allSpritesCache = allSprites
     return allSprites
 end
 

@@ -802,6 +802,7 @@ function BaseUnit:resetCombatState()
 
     self.tombMartyrdombuffTimer = nil
     self._noHeal                = nil
+    self.royalCommandBonus      = nil
 
     -- Reset action animation state
     self.actionAnimProgress = 0

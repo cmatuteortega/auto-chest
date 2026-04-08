@@ -94,6 +94,9 @@ function Mage:resetCombatState()
     self.arcaneTimer     = 0
     self.arcaneActive    = false
     self.preArcaneSpeed  = nil
+    -- Restore base attack speed: if Arcane Surge was active when the round ended,
+    -- preArcaneSpeed is lost and attackSpeed remains boosted without this reset.
+    self.attackSpeed     = self.baseAttackSpeed
 end
 
 -- Override takeDamage: track hits received, set pending flag (no grid here)
