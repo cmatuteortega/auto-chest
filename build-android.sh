@@ -13,6 +13,7 @@ ASSETS="$LOVE_ANDROID/app/src/embed/assets"
 OUTPUT="$LOVE_ANDROID/app/build/outputs/apk/embedNoRecord/debug/app-embed-noRecord-debug.apk"
 
 echo "==> Packaging game.love..."
+rm -f "$ASSETS/game.love"
 cd "$GAME_DIR"
 zip -9 -r "$ASSETS/game.love" . \
   --exclude "server/*" \
@@ -20,6 +21,7 @@ zip -9 -r "$ASSETS/game.love" . \
   --exclude "tests/*" \
   --exclude ".git/*" \
   --exclude "*.sh" \
+  --exclude "*.love" \
   --exclude "build-android.sh"
 
 echo "==> Building APK..."

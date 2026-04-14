@@ -81,6 +81,12 @@ Constants.MARGINS = {
     CARD_ROW = 0.135,  -- Card row distance from bottom (13.5% of height)
 }
 
+-- Safe area insets in virtual coordinates (set at startup for mobile notch/nav bar avoidance)
+Constants.SAFE_INSET_TOP = 0
+Constants.SAFE_INSET_BOTTOM = 0
+Constants.SAFE_INSET_LEFT = 0
+Constants.SAFE_INSET_RIGHT = 0
+
 -- Calculate dynamic resolution and scaling based on window size
 function Constants.updateResolution(windowWidth, windowHeight)
     -- Calculate the best virtual resolution that maintains aspect ratio and fills the screen
@@ -146,6 +152,25 @@ function Constants.updateResolution(windowWidth, windowHeight)
     Constants.FONT_SIZES.MEDIUM = snapFont(Constants.BASE_FONT_SIZES.MEDIUM, 16)
     Constants.FONT_SIZES.SMALL  = snapFont(Constants.BASE_FONT_SIZES.SMALL,  8)
     Constants.FONT_SIZES.TINY   = snapFont(Constants.BASE_FONT_SIZES.TINY,   8)
+end
+
+-- Convert physical-pixel safe area into virtual-coordinate insets.
+-- Call AFTER updateResolution() so GAME_WIDTH/GAME_HEIGHT are current.
+-- Extra Y offset for all menu content below the header (virtual coordinates).
+-- Non-zero only when safe area inset pushes the header lower than its default 8px position.
+Constants.MENU_CONTENT_PUSH = 0
+
+function Constants.updateSafeInsets(safeX, safeY, safeW, safeH, windowW, windowH)
+    local scaleX = windowW / Constants.GAME_WIDTH
+    local scaleY = windowH / Constants.GAME_HEIGHT
+    Constants.SAFE_INSET_LEFT   = safeX / scaleX
+    Constants.SAFE_INSET_TOP    = safeY / scaleY
+    Constants.SAFE_INSET_RIGHT  = (windowW - safeX - safeW) / scaleX
+    Constants.SAFE_INSET_BOTTOM = (windowH - safeY - safeH) / scaleY
+    -- Header's default top is 8*SCALE; safe header adds 2*SCALE buffer above the inset.
+    -- MENU_CONTENT_PUSH is how much further down the header sits vs. default.
+    local sc = Constants.SCALE
+    Constants.MENU_CONTENT_PUSH = math.max(0, math.floor(Constants.SAFE_INSET_TOP + 2 * sc) - math.floor(8 * sc))
 end
 
 return Constants

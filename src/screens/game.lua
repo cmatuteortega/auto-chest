@@ -861,7 +861,7 @@ function GameScreen.new()
             stateText = didWin and "YOU WIN!" or "YOU LOSE"
             lg.setColor(didWin and {0.3, 1, 0.3, 1} or {1, 0.3, 0.3, 1})
         end
-        local stateTextY = Constants.GAME_HEIGHT * 0.025  -- 2.5% from top
+        local stateTextY = math.max(Constants.GAME_HEIGHT * 0.025, Constants.SAFE_INSET_TOP)
         lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
 
         -- Trophy and gold changes (if in finished state and online mode)
@@ -883,9 +883,9 @@ function GameScreen.new()
         -- Player labels (proportional positioning)
         -- In online mode the local player is always shown at the bottom right.
         lg.setFont(Fonts.large)
-        local topMargin = 15 * Constants.SCALE
+        local topMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_TOP + 4 * Constants.SCALE)
         local fontHeight = Fonts.large:getHeight()
-        local bottomMargin = topMargin
+        local bottomMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_BOTTOM + 4 * Constants.SCALE)
 
         -- Determine which label goes where based on perspective
         local topLabel     = self.opponentName  -- Opponent always at top

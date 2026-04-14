@@ -379,7 +379,7 @@ function LobbyScreen.new()
 
     function self:drawTickerStripe(W, sc)
         local lg      = love.graphics
-        local stripeY = math.floor(75 * sc)
+        local stripeY = math.floor(75 * sc + Constants.MENU_CONTENT_PUSH)
         local stripeH = math.floor(36 * sc)
 
         lg.setColor(0.031, 0.078, 0.118, 1)
@@ -423,7 +423,7 @@ function LobbyScreen.new()
             local elapsed = love.timer.getTime() - self.queueStartTime
             lg.setFont(Fonts.small)
             lg.setColor(0.4, 0.4, 0.4, 0.7)
-            lg.printf(string.format("%ds", math.floor(elapsed)), 0, math.floor(30 * sc), W, 'center')
+            lg.printf(string.format("%ds", math.floor(elapsed)), 0, math.floor(30 * sc + Constants.SAFE_INSET_TOP), W, 'center')
         end
 
         -- Ticker stripe (scrolling status text)
@@ -436,7 +436,7 @@ function LobbyScreen.new()
         local gridX      = math.floor((W - gridW) / 2)
         local barH       = 90 * sc
         local btnY       = (H - barH) * 0.62
-        local contentTop = 100 * sc
+        local contentTop = 100 * sc + Constants.MENU_CONTENT_PUSH
         local gridY      = math.floor(contentTop + (btnY - contentTop - gridH) / 2)
 
         local CDARK  = Constants.COLORS.CHESS_DARK
@@ -590,12 +590,12 @@ function LobbyScreen.new()
             local lo         = math.max(0, self.myTrophies - range)
             local hi         = self.myTrophies + range
             lg.printf(string.format("%d trophies  ·  searching %d – %d", self.myTrophies, lo, hi),
-                0, H - 50 * sc, W, 'center')
+                0, H - math.max(50 * sc, Constants.SAFE_INSET_BOTTOM + 24 * sc), W, 'center')
         elseif self.status == "matched" then
-            lg.printf("Starting game...", 0, H - 50 * sc, W, 'center')
+            lg.printf("Starting game...", 0, H - math.max(50 * sc, Constants.SAFE_INSET_BOTTOM + 24 * sc), W, 'center')
         end
         if _G.PlayerData then
-            lg.printf("ID: " .. _G.PlayerData.id, 0, H - 30 * sc, W, 'center')
+            lg.printf("ID: " .. _G.PlayerData.id, 0, H - math.max(30 * sc, Constants.SAFE_INSET_BOTTOM + 4 * sc), W, 'center')
         end
     end
 

@@ -39,14 +39,14 @@ function love.load()
     local windowWidth = love.graphics.getWidth()
     local windowHeight = love.graphics.getHeight()
 
-    -- Get safe area (excludes status bar / nav bar on Android & iOS)
+    -- Get safe area insets (for UI margin safety on mobile)
     local safeX, safeY, safeW, safeH = 0, 0, windowWidth, windowHeight
     if love.window.getSafeArea then
         safeX, safeY, safeW, safeH = love.window.getSafeArea()
     end
 
-    -- Calculate dynamic resolution based on safe area size
-    Constants.updateResolution(safeW, safeH)
+    -- Use FULL window for rendering (edge-to-edge, no gaps on any device)
+    Constants.updateResolution(windowWidth, windowHeight)
 
     -- Load Pixellari font once globally with scaled sizes
     -- Filter set to 'nearest' so pixel-art glyphs stay crisp (no bilinear blur)
@@ -62,22 +62,25 @@ function love.load()
     -- Initialize audio (loads sources, reads settings.json)
     AudioManager.init()
 
-    -- Setup push scaled to the safe area; draw offset shifts canvas below status bar
+    -- Render to the full window (edge-to-edge); safe insets used only for UI margins
+    local isMobile = love.system.getOS() == "Android" or love.system.getOS() == "iOS"
     Push:setupScreen(
         Constants.GAME_WIDTH,    -- Virtual width
         Constants.GAME_HEIGHT,   -- Virtual height
-        safeW,                   -- Safe area width (excludes system UI)
-        safeH,                   -- Safe area height (excludes system UI)
+        windowWidth,             -- Full window width (edge-to-edge)
+        windowHeight,            -- Full window height (edge-to-edge)
         {
-            fullscreen = false,
-            resizable = true,
+            fullscreen = isMobile,
+            resizable = not isMobile,
             pixelperfect = false,
             highdpi = false,
             canvas = true,
             stretched = true
         }
     )
-    Push:setDrawOffset(safeX, safeY)
+
+    -- Store safe insets in virtual coordinates for UI elements near edges
+    Constants.updateSafeInsets(safeX, safeY, safeW, safeH, windowWidth, windowHeight)
 
     -- Load or generate a permanent per-device UUID (survives logout, never cleared)
     local storedDeviceId = love.filesystem.read("device_id.dat")
@@ -231,14 +234,14 @@ end
 
 -- Apply resize (debounced)
 function applyResize(w, h)
-    -- Get safe area (excludes status bar / nav bar on Android & iOS)
+    -- Get safe area insets (for UI margin safety on mobile)
     local safeX, safeY, safeW, safeH = 0, 0, w, h
     if love.window.getSafeArea then
         safeX, safeY, safeW, safeH = love.window.getSafeArea()
     end
 
-    -- Recalculate dynamic resolution for safe area size
-    Constants.updateResolution(safeW, safeH)
+    -- Use FULL window for rendering (edge-to-edge)
+    Constants.updateResolution(w, h)
 
     -- Reload fonts with new sizes (nearest filter for crisp pixel art)
     Fonts.large  = love.graphics.newFont("Pixellari.ttf", Constants.FONT_SIZES.LARGE)
@@ -250,21 +253,24 @@ function applyResize(w, h)
     Fonts.small:setFilter('nearest', 'nearest')
     Fonts.tiny:setFilter('nearest', 'nearest')
 
-    -- Update the virtual resolution canvas
+    -- Render to the full window (edge-to-edge)
+    local isMobile = love.system.getOS() == "Android" or love.system.getOS() == "iOS"
     Push:setupScreen(
         Constants.GAME_WIDTH,
         Constants.GAME_HEIGHT,
-        safeW, safeH,
+        w, h,
         {
-            fullscreen = false,
-            resizable = true,
+            fullscreen = isMobile,
+            resizable = not isMobile,
             pixelperfect = false,
             highdpi = false,
             canvas = true,
             stretched = true
         }
     )
-    Push:setDrawOffset(safeX, safeY)
+
+    -- Store safe insets in virtual coordinates for UI elements near edges
+    Constants.updateSafeInsets(safeX, safeY, safeW, safeH, w, h)
 
     print(string.format("Resized to: %dx%d (Virtual: %dx%d, Scale: %.2f)",
                        w, h, Constants.GAME_WIDTH, Constants.GAME_HEIGHT, Constants.SCALE))

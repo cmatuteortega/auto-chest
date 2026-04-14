@@ -725,7 +725,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
     function self:drawTickerStripe(W, sc)
         local lg      = love.graphics
-        local stripeY = math.floor(75 * sc)
+        local stripeY = math.floor(75 * sc + Constants.MENU_CONTENT_PUSH)
         local stripeH = math.floor(36 * sc)
 
         -- Background
@@ -1087,7 +1087,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local groupGap = 10 * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
-        local startY = 160 * sc
+        local startY = 160 * sc + Constants.MENU_CONTENT_PUSH
 
         -- Compute total content height to know scroll bounds
         local contentH = 0
@@ -1164,7 +1164,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local gridH       = 4 * cellSize
         local gridX       = ox + (W - gridW) / 2
         local btnY        = H * 0.62
-        local contentTop  = 100 * sc
+        local contentTop  = 100 * sc + Constants.MENU_CONTENT_PUSH
         local gridY       = math.floor(contentTop + (btnY - contentTop - gridH) / 2)
 
         -- Checkerboard cells
@@ -1320,7 +1320,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local tabAreaW  = W - 40 * sc
         local tabW      = tabAreaW / 5
         local tabH      = 44 * sc
-        local tabY      = 138 * sc
+        local tabY      = 138 * sc + Constants.MENU_CONTENT_PUSH
         local tabStartX = ox + 20 * sc
 
         self._deckSlotRects = {}
@@ -1584,7 +1584,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local startX = math.floor(ox + (W - totalW) / 2)
         local hdrH   = math.floor(40  * sc)
         local rowH   = math.floor(40  * sc)
-        local y      = math.floor(130 * sc)
+        local y      = math.floor(130 * sc + Constants.MENU_CONTENT_PUSH)
 
         -- ── Leaderboard section ───────────────────────────────────────────────
 
@@ -1963,7 +1963,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local totalW  = cols * cardW + (cols - 1) * gapX
         local startX  = math.floor(ox + (W - totalW) / 2)
         local hdrH    = math.floor(40 * sc)
-        local hdrY    = math.floor(130 * sc)
+        local hdrY    = math.floor(130 * sc + Constants.MENU_CONTENT_PUSH)
 
         -- ── Daily Chest header (collection-width) ─────────────────────────────
         self:drawGroupHeader(startX, hdrY, totalW, hdrH, "Daily Chest", sc)
@@ -2140,7 +2140,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
     function self:drawBottomBar(W, H, sc)
         local lg    = love.graphics
-        local BAR_H = 100 * sc
+        local BAR_H = 100 * sc + Constants.SAFE_INSET_BOTTOM
         local barY  = H - BAR_H
         local tabW  = W / self.NUM_PANELS
         local labels = { "Collection", "Decks", "Battle", "Ranking", "Shop" }
@@ -2389,7 +2389,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             lg.setFont(Fonts.small)
             local numLineH = Fonts.small:getHeight()
             local stripH   = numLineH + vPad * 2
-            local stripY   = math.floor(8 * sc)
+            local stripY   = math.max(math.floor(8 * sc), math.floor(Constants.SAFE_INSET_TOP + 2 * sc))
             local xCur     = edgeX
 
             -- Player name
@@ -2542,7 +2542,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         -- Version label
         lg.setFont(Fonts.tiny)
         lg.setColor(1, 1, 1, 0.35)
-        lg.print("v1.1", math.floor(4 * sc), math.floor(4 * sc))
+        lg.print("v1.1", math.floor(4 * sc), math.max(math.floor(4 * sc), math.floor(Constants.SAFE_INSET_TOP)))
 
         -- (detail view is now drawn inline within drawCollectionPanel)
 
