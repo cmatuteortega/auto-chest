@@ -194,6 +194,12 @@ local _displayInfoCache = {}
 -- Eliminates redundant disk I/O + pixel-scanning when screens are recreated.
 local _directionalSpriteCache = {}
 local _allSpritesCache = nil
+
+-- TODO-RENDER: In Solar2D images are loaded via display.newImage / graphics.newTexture,
+-- not love.graphics.newImage. For the simulator pass, store path strings as the
+-- "image object" — draw functions are stubbed anyway.  Replace with real texture
+-- loading during the render pass.
+local function newImage(path) return path end  -- luacheck: ignore
 function UnitRegistry.getUnitDisplayInfo(unitType)
     if _displayInfoCache[unitType] then
         return _displayInfoCache[unitType]
@@ -241,37 +247,19 @@ UnitRegistry.unitCosts = {
     mend   = 3,
 }
 
--- Count fully-transparent rows at the top of a sprite file.
-local function trimTopRows(path)
-    local data = love.image.newImageData(path)
-    local w, h = data:getDimensions()
-    local trim = 0
-    for y = 0, h - 1 do
-        local rowEmpty = true
-        for x = 0, w - 1 do
-            local a = select(4, data:getPixel(x, y))
-            if a > 0.01 then rowEmpty = false; break end
-        end
-        if rowEmpty then trim = trim + 1 else break end
-    end
-    return trim
-end
+-- TODO-RENDER: trimTopRows / trimBottomRows require love.image.newImageData which does
+-- not exist in Solar2D.  Stubbed to 0 for now; restore with a Solar2D pixel-scan
+-- implementation (graphics.newTexture → texture:getPixel) during the render pass.
+local function trimTopRows(path)    return 0 end  -- luacheck: ignore
+local function trimBottomRows(path) return 0 end  -- luacheck: ignore
 
--- Count fully-transparent rows at the bottom of a sprite file.
--- Used to normalise the visual baseline across sprites with different amounts of padding.
-local function trimBottomRows(path)
-    local data = love.image.newImageData(path)
-    local w, h = data:getDimensions()
-    local trim = 0
-    for y = h - 1, 0, -1 do
-        local rowEmpty = true
-        for x = 0, w - 1 do
-            local a = select(4, data:getPixel(x, y))
-            if a > 0.01 then rowEmpty = false; break end
-        end
-        if rowEmpty then trim = trim + 1 else break end
-    end
-    return trim
+-- Solar2D file-existence check (resources live in the app bundle, not the documents dir).
+local function fileExists(path)
+    local fullPath = system.pathForFile(path, system.ResourceDirectory)
+    if not fullPath then return false end
+    local f = io.open(fullPath, "r")
+    if f then f:close(); return true end
+    return false
 end
 
 -- Units that only have legacy sprites (front/back/dead) — skip the filesystem probe
@@ -291,13 +279,17 @@ function UnitRegistry.loadDirectionalSprites(unitType)
 
     local result
 
-    if LEGACY_ONLY_UNITS[unitType] then
+    -- TODO-RENDER: skip all directional-sprite filesystem probing until the render
+    -- pass is implemented.  Solar2D logs a warning for every system.pathForFile()
+    -- call on a missing file, flooding the console with hundreds of lines.
+    -- All units fall back to the legacy front/back/dead sprites for now.
+    if true or LEGACY_ONLY_UNITS[unitType] then  -- luacheck: ignore
         result = UnitRegistry.loadSprites(unitType)
     else
         local basePath = "src/assets/" .. unitType .. "/"
 
         -- Probe: if idle_0_1.png absent, fall back to legacy system
-        if not love.filesystem.getInfo(basePath .. "idle_0_1.png") then
+        if not fileExists(basePath .. "idle_0_1.png") then
             result = UnitRegistry.loadSprites(unitType)
         else
 
@@ -312,9 +304,8 @@ function UnitRegistry.loadDirectionalSprites(unitType)
         local i = 1
         while true do
             local path = basePath .. stateKey .. "_" .. angle .. "_" .. i .. ".png"
-            if not love.filesystem.getInfo(path) then break end
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
+            if not fileExists(path) then break end
+            local img = newImage(path)
             table.insert(frames, img)
             table.insert(trims, trimBottomRows(path))
             table.insert(trimTops, trimTopRows(path))
@@ -338,7 +329,7 @@ function UnitRegistry.loadDirectionalSprites(unitType)
 
     -- Load action animation frames (battle-start one-shot) from action/ subfolder
     local actionBase = basePath .. "action/"
-    if love.filesystem.getInfo(actionBase .. "action_0_1.png") then
+    if fileExists(actionBase .. "action_0_1.png") then
         result.directional.action = {}
         result.directional.actionIdleOverride = {}
         local function loadActionFrames(destTable, angle)
@@ -346,9 +337,8 @@ function UnitRegistry.loadDirectionalSprites(unitType)
             local i = 1
             while true do
                 local path = actionBase .. "action_" .. angle .. "_" .. i .. ".png"
-                if not love.filesystem.getInfo(path) then break end
-                local img = love.graphics.newImage(path)
-                img:setFilter('nearest', 'nearest')
+                if not fileExists(path) then break end
+                local img = newImage(path)
                 table.insert(frames, img)
                 table.insert(trims, trimBottomRows(path))
                 table.insert(trimTops, trimTopRows(path))
@@ -363,9 +353,8 @@ function UnitRegistry.loadDirectionalSprites(unitType)
             local i = 1
             while true do
                 local path = actionBase .. "idle_" .. angle .. "_" .. i .. ".png"
-                if not love.filesystem.getInfo(path) then break end
-                local img = love.graphics.newImage(path)
-                img:setFilter('nearest', 'nearest')
+                if not fileExists(path) then break end
+                local img = newImage(path)
                 table.insert(frames, img)
                 table.insert(trims, trimBottomRows(path))
                 table.insert(trimTops, trimTopRows(path))
@@ -386,9 +375,8 @@ function UnitRegistry.loadDirectionalSprites(unitType)
     local i = 1
     while true do
         local path = basePath .. "background-anim/background-" .. i .. ".png"
-        if not love.filesystem.getInfo(path) then break end
-        local img = love.graphics.newImage(path)
-        img:setFilter('nearest', 'nearest')
+        if not fileExists(path) then break end
+        local img = newImage(path)
         table.insert(bgFrames, img)
         i = i + 1
     end
@@ -411,14 +399,11 @@ function UnitRegistry.loadSprites(unitType)
     end
 
     -- Load sprites with nearest-neighbor filtering for pixel-perfect scaling
-    local front = love.graphics.newImage(paths.front)
-    front:setFilter('nearest', 'nearest')
+    local front = newImage(paths.front)
 
-    local back = love.graphics.newImage(paths.back)
-    back:setFilter('nearest', 'nearest')
+    local back = newImage(paths.back)
 
-    local dead = love.graphics.newImage(paths.dead)
-    dead:setFilter('nearest', 'nearest')
+    local dead = newImage(paths.dead)
 
     return {
         front = front,
@@ -448,9 +433,8 @@ function UnitRegistry.loadAllSprites()
 
     -- Load marrow lance particle sprite
     local lancePath = "src/assets/particles/lance.png"
-    if love.filesystem.getInfo(lancePath) then
-        local lanceImg = love.graphics.newImage(lancePath)
-        lanceImg:setFilter('nearest', 'nearest')
+    if fileExists(lancePath) then
+        local lanceImg = newImage(lancePath)
         allSprites["marrow"].lance = lanceImg
     end
 
@@ -458,9 +442,8 @@ function UnitRegistry.loadAllSprites()
     local stunFrames = {}
     for i = 1, 3 do
         local path = "src/assets/particles/stun-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
+        if fileExists(path) then
+            local img = newImage(path)
             table.insert(stunFrames, img)
         end
     end
@@ -468,18 +451,16 @@ function UnitRegistry.loadAllSprites()
     -- Load taunt particle sprite (shared across all units)
     local tauntImg
     local tauntPath = "src/assets/particles/taunt.png"
-    if love.filesystem.getInfo(tauntPath) then
-        tauntImg = love.graphics.newImage(tauntPath)
-        tauntImg:setFilter('nearest', 'nearest')
+    if fileExists(tauntPath) then
+        tauntImg = newImage(tauntPath)
     end
 
     -- Load buff "up" animation frames (shared across all units)
     local upFrames = {}
     for i = 1, 6 do
         local path = "src/assets/particles/up-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
+        if fileExists(path) then
+            local img = newImage(path)
             table.insert(upFrames, img)
         end
     end
@@ -496,13 +477,11 @@ function UnitRegistry.loadAllSprites()
     local arrowImg, magicImg
     local arrowPath = "src/assets/particles/arrow.png"
     local magicPath = "src/assets/particles/magic-projectile.png"
-    if love.filesystem.getInfo(arrowPath) then
-        arrowImg = love.graphics.newImage(arrowPath)
-        arrowImg:setFilter('nearest', 'nearest')
+    if fileExists(arrowPath) then
+        arrowImg = newImage(arrowPath)
     end
-    if love.filesystem.getInfo(magicPath) then
-        magicImg = love.graphics.newImage(magicPath)
-        magicImg:setFilter('nearest', 'nearest')
+    if fileExists(magicPath) then
+        magicImg = newImage(magicPath)
     end
     for _, unitType in ipairs({"marc", "marrow", "mend"}) do
         if arrowImg then allSprites[unitType].projectile = arrowImg end
@@ -518,9 +497,8 @@ function UnitRegistry.loadAllSprites()
     local fireballFrames = {}
     for i = 1, 4 do
         local path = "src/assets/particles/fireball-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
+        if fileExists(path) then
+            local img = newImage(path)
             table.insert(fireballFrames, img)
         end
     end
@@ -532,9 +510,8 @@ function UnitRegistry.loadAllSprites()
     local fireFrames = {}
     for i = 1, 5 do
         local path = "src/assets/particles/fire-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
+        if fileExists(path) then
+            local img = newImage(path)
             table.insert(fireFrames, img)
         end
     end
@@ -549,9 +526,8 @@ function UnitRegistry.loadAllSprites()
     local clavBgFrames = {}
     for i = 1, 8 do
         local path = "src/assets/migraine/background-anim/background-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
+        if fileExists(path) then
+            local img = newImage(path)
             table.insert(clavBgFrames, img)
         end
     end
@@ -561,9 +537,8 @@ function UnitRegistry.loadAllSprites()
 
     -- Load catapult projectile sprite
     local catapultProjPath = "src/assets/particles/catapult-projectile.png"
-    if love.filesystem.getInfo(catapultProjPath) then
-        local img = love.graphics.newImage(catapultProjPath)
-        img:setFilter('nearest', 'nearest')
+    if fileExists(catapultProjPath) then
+        local img = newImage(catapultProjPath)
         allSprites["catapult"].catapultProjectile = img
     end
 

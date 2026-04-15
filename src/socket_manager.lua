@@ -3,7 +3,7 @@
 -- connections die after ~30s.  This module provides reconnection on foreground
 -- return or after a stale post-game socket is detected.
 
-local sock   = require('lib.sock')
+local sock   = require('lib.tcp_client')
 local json   = require('lib.json')
 local config = require('src.config')
 
@@ -34,7 +34,6 @@ function SocketManager.reconnect(onSuccess, onFailure)
     end
 
     local client = sock.newClient(config.SERVER_ADDRESS, config.SERVER_PORT)
-    client:setSerialization(json.encode, json.decode)
 
     local handle = {
         client  = client,
@@ -44,8 +43,6 @@ function SocketManager.reconnect(onSuccess, onFailure)
     }
 
     client:on("connect", function()
-        -- Set generous timeout so brief interruptions don't kill the socket
-        client:setTimeout(32, 5000, 60000)
         client:send("reconnect_with_token", { token = token, device_id = _G.DeviceId or "" })
     end)
 

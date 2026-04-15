@@ -48,7 +48,7 @@ function DeckManager.save()
     -- Always save locally as backup
     local ok, encoded = pcall(json.encode, DeckManager._data)
     if ok then
-        love.filesystem.write(SAVE_FILE, encoded)
+        _G.writeFile(SAVE_FILE, encoded)
     end
 end
 
@@ -75,7 +75,7 @@ function DeckManager.load()
     end
 
     -- Otherwise, load from local file
-    local content = love.filesystem.read(SAVE_FILE)
+    local content = _G.readFile(SAVE_FILE)
     if content then
         local ok, data = pcall(json.decode, content)
         if ok and data and data.decks and #data.decks == NUM_SLOTS then

@@ -1,216 +1,195 @@
--- AutoChest – Loading / Auto-Auth Screen
+-- AutoChest – Loading / Auto-Auth Screen (Solar2D composer scene)
 -- Reads saved session token, connects to server, and auto-authenticates.
--- On success: sets globals and switches to menu.
+-- On success: sets _G.PlayerData + _G.GameSocket, navigates to menu.
 -- On failure/timeout: deletes token and falls back to login screen.
 
-local Screen    = require('lib.screen')
-local Constants = require('src.constants')
-local config    = require('src.config')
-local sock      = require('lib.sock')
-local json      = require('lib.json')
+local composer  = require("composer")
+local Constants = require("src.constants")
+local config    = require("src.config")
+local sock      = require("lib.tcp_client")
+local json      = require("lib.json")
 
-local LoadingScreen = {}
+local scene = composer.newScene()
+local S     = {}
 
-function LoadingScreen.new()
-    local self = Screen.new()
+-- ── Helpers ───────────────────────────────────────────────────────────────────
 
-    function self:init()
-        -- Always initialize state first (update/draw may fire before screen switch completes)
-        self.status    = "connecting"
-        self.statusMsg = "Connecting..."
-        self.client    = nil
-        self.elapsed   = 0
-        self.TIMEOUT   = 5
-        self.dotTimer  = 0
-        self.dotCount  = 0
-        self._switchRect = nil
-        self.token          = nil
-        self.storedUsername  = nil
-
-        -- Parse session.dat as JSON {token, username}
-        local raw = love.filesystem.read("session.dat") or ""
-        local ok, parsed = pcall(json.decode, raw)
-        if ok and parsed and parsed.token then
-            self.token          = parsed.token
-            self.storedUsername  = parsed.username
-        else
-            -- Invalid or old-format session file — force re-login
-            love.filesystem.remove("session.dat")
-            local ScreenManager = require('lib.screen_manager')
-            ScreenManager.switch('login')
-            return
-        end
-
-        self:connectToServer()
-    end
-
-    function self:close()
-        if self.client and self.status ~= "success" then
-            self.client:disconnect()
-        end
-    end
-
-    function self:connectToServer()
-        self.client = sock.newClient(config.SERVER_ADDRESS, config.SERVER_PORT)
-        self.client:setSerialization(json.encode, json.decode)
-
-        self.client:on("connect", function()
-            self.status    = "authing"
-            self.statusMsg = "Authenticating..."
-            self.client:send("reconnect_with_token", {
-                token     = self.token,
-                device_id = _G.DeviceId or ""
-            })
-        end)
-
-        self.client:on("disconnect", function()
-            if self.status ~= "success" then
-                self:fallbackToLogin("Disconnected from server")
-            end
-        end)
-
-        self.client:on("login_success", function(data)
-            self.status = "success"
-
-            _G.PlayerData = {
-                id              = data.player_id,
-                username        = data.username,
-                trophies        = data.trophies,
-                coins           = data.coins,
-                gold            = data.gold or 0,
-                gems            = data.gems or 0,
-                xp              = data.xp or 0,
-                level           = data.level or 1,
-                activeDeckIndex = data.active_deck_index,
-                decks           = data.decks,
-                token           = data.token,
-                unlocks         = data.unlocks
-            }
-            _G.GameSocket = self.client
-
-            local ScreenManager = require('lib.screen_manager')
-            ScreenManager.switch('menu')
-        end)
-
-        self.client:on("login_failed", function(data)
-            love.filesystem.remove("session.dat")
-            self:fallbackToLogin(data.reason or "Session expired")
-        end)
-
-        self.client:connect()
-        self.client:setTimeout(32, 5000, 60000)
-    end
-
-    function self:fallbackToLogin(reason)
-        self.status    = "failed"
-        self.statusMsg = reason
-        love.timer.sleep(1.0)
-        local ScreenManager = require('lib.screen_manager')
-        ScreenManager.switch('login')
-    end
-
-    function self:update(dt)
-        if self.client then
-            self.client:update()
-        end
-
-        if self.status == "connecting" or self.status == "authing" then
-            self.elapsed = self.elapsed + dt
-            if self.elapsed >= self.TIMEOUT then
-                love.filesystem.remove("session.dat")
-                self:fallbackToLogin("Connection timed out")
-                return
-            end
-        end
-
-        self.dotTimer = self.dotTimer + dt
-        if self.dotTimer >= 0.4 then
-            self.dotTimer = 0
-            self.dotCount = (self.dotCount + 1) % 4
-        end
-    end
-
-    -- Touch/click handling for "Switch Account" button
-    function self:mousepressed(x, y)
-        self._pressX = x
-        self._pressY = y
-    end
-
-    function self:mousereleased(x, y)
-        if self._switchRect then
-            local r = self._switchRect
-            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                love.filesystem.remove("session.dat")
-                if self.client then
-                    pcall(function() self.client:disconnect() end)
-                end
-                local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('login')
-                return
-            end
-        end
-    end
-
-    function self:touchpressed(_, x, y)  self:mousepressed(x, y) end
-    function self:touchreleased(_, x, y) self:mousereleased(x, y) end
-
-    function self:draw()
-        local lg = love.graphics
-        local W  = Constants.GAME_WIDTH
-        local H  = Constants.GAME_HEIGHT
-        local sc = Constants.SCALE
-
-        lg.clear(Constants.COLORS.BACKGROUND)
-
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", 0, H * 0.10, W, 'center')
-
-        if self.status == "connecting" or self.status == "authing" then
-            local angle    = love.timer.getTime() * math.pi
-            local spinnerR = 40 * sc
-            local cx, cy   = W / 2, H * 0.45
-
-            lg.push()
-            lg.translate(cx, cy)
-            lg.rotate(angle)
-            lg.setColor(0.5, 0.7, 1, 1)
-            lg.setLineWidth(4 * sc)
-            lg.arc('line', 'open', 0, 0, spinnerR, 0, math.pi * 1.5)
-            lg.pop()
-        end
-
-        -- "Continuing as [username]" label
-        if self.storedUsername and (self.status == "connecting" or self.status == "authing") then
-            lg.setFont(Fonts.small)
-            lg.setColor(0.7, 0.7, 0.75, 1)
-            lg.printf("Continuing as " .. self.storedUsername, 0, H * 0.34, W, 'center')
-
-            -- "Not you? Switch Account" tappable text
-            lg.setFont(Fonts.tiny)
-            lg.setColor(0.5, 0.65, 1, 1)
-            local switchText = "Not you? Switch Account"
-            local tw = Fonts.tiny:getWidth(switchText)
-            local th = Fonts.tiny:getHeight()
-            local tx = math.floor((W - tw) / 2)
-            local ty = math.floor(H * 0.38)
-            lg.print(switchText, tx, ty)
-            self._switchRect = {x = tx, y = ty, w = tw, h = th}
-        else
-            self._switchRect = nil
-        end
-
-        local dots = string.rep(".", self.dotCount)
-        lg.setFont(Fonts.medium)
-        if self.status == "failed" then
-            lg.setColor(1, 0.4, 0.4, 1)
-        else
-            lg.setColor(0.8, 0.8, 0.85, 1)
-        end
-        lg.printf(self.statusMsg .. dots, 0, H * 0.56, W, 'center')
-    end
-
-    return self
+local function fallbackToLogin(reason)
+    if S._failed then return end   -- guard against double-trigger
+    S._failed   = true
+    S.status    = "failed"
+    S.statusMsg = reason or "Login failed"
+    _G.deleteFile("session.dat")
+    timer.performWithDelay(1000, function()
+        composer.gotoScene("src.screens.login", {effect = "fade", time = 300})
+    end)
 end
 
-return LoadingScreen
+local function connectToServer()
+    S.client = sock.newClient(config.SERVER_ADDRESS, config.SERVER_PORT)
+
+    S.client:on("connect", function()
+        S.status    = "authing"
+        S.statusMsg = "Authenticating..."
+        S.client:send("reconnect_with_token", {
+            token     = S.token,
+            device_id = _G.DeviceId or ""
+        })
+    end)
+
+    S.client:on("disconnect", function()
+        if S.status ~= "success" then
+            fallbackToLogin("Disconnected from server")
+        end
+    end)
+
+    S.client:on("login_success", function(data)
+        S.status = "success"
+
+        _G.PlayerData = {
+            id              = data.player_id,
+            username        = data.username,
+            trophies        = data.trophies,
+            coins           = data.coins,
+            gold            = data.gold   or 0,
+            gems            = data.gems   or 0,
+            xp              = data.xp     or 0,
+            level           = data.level  or 1,
+            activeDeckIndex = data.active_deck_index,
+            decks           = data.decks,
+            token           = data.token,
+            unlocks         = data.unlocks,
+        }
+        _G.GameSocket = S.client
+
+        -- Persist refreshed token
+        local encoded = json.encode({token = data.token, username = data.username})
+        _G.writeFile("session.dat", encoded)
+
+        composer.gotoScene("src.screens.menu", {effect = "fade", time = 300})
+    end)
+
+    S.client:on("login_failed", function(data)
+        fallbackToLogin(data.reason or "Session expired")
+    end)
+
+    S.client:connect()
+end
+
+-- ── Update loop ───────────────────────────────────────────────────────────────
+
+local function onUpdate(event)
+    if S.client then
+        local ok, err = pcall(function() S.client:update() end)
+        if not ok then
+            print("[LOADING] client:update error: " .. tostring(err))
+        end
+    end
+
+    local now = event.time / 1000
+    local dt  = now - (S._lastTime or now)
+    S._lastTime = now
+
+    if S.status == "connecting" or S.status == "authing" then
+        S.elapsed = S.elapsed + dt
+        if S.elapsed >= S.TIMEOUT then
+            fallbackToLogin("Connection timed out")
+            return
+        end
+    end
+
+    -- Dots animation
+    S.dotTimer = S.dotTimer + dt
+    if S.dotTimer >= 0.4 then
+        S.dotTimer = 0
+        S.dotCount = (S.dotCount + 1) % 4
+    end
+
+    -- TODO-RENDER: update spinner rotation (getTime() * math.pi), status label, dots
+end
+
+-- ── Input ─────────────────────────────────────────────────────────────────────
+
+local function onTouch(event)
+    if event.phase == "ended" then
+        local x, y = event.x, event.y
+        if S._switchRect then
+            local r = S._switchRect
+            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                _G.deleteFile("session.dat")
+                if S.client then pcall(function() S.client:disconnect() end) end
+                composer.gotoScene("src.screens.login", {effect = "fade", time = 300})
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- ── Composer lifecycle ────────────────────────────────────────────────────────
+
+function scene:create(event)
+    local group = self.view
+    -- Placeholder background (TODO-RENDER: dark background matching login)
+    local bg = display.newRect(group,
+                               display.contentCenterX, display.contentCenterY,
+                               display.contentWidth,   display.contentHeight)
+    bg:setFillColor(0.031, 0.078, 0.118)
+    -- TODO-RENDER: "AutoChest" title, spinner arc, username label, status text
+end
+
+function scene:show(event)
+    if event.phase ~= "did" then return end
+
+    S = {
+        status         = "connecting",
+        statusMsg      = "Connecting...",
+        client         = nil,
+        elapsed        = 0,
+        TIMEOUT        = 5,
+        dotTimer       = 0,
+        dotCount       = 0,
+        _switchRect    = nil,
+        token          = nil,
+        storedUsername = nil,
+        _lastTime      = system.getTimer() / 1000,
+        _failed        = false,
+    }
+
+    -- Parse session.dat (JSON {token, username})
+    local raw = _G.readFile("session.dat") or ""
+    local ok, parsed = pcall(json.decode, raw)
+    if ok and parsed and parsed.token then
+        S.token          = parsed.token
+        S.storedUsername = parsed.username
+    else
+        -- Corrupt or old-format session — go straight to login
+        _G.deleteFile("session.dat")
+        composer.gotoScene("src.screens.login", {effect = "fade", time = 300})
+        return
+    end
+
+    Runtime:addEventListener("enterFrame", onUpdate)
+    Runtime:addEventListener("touch",      onTouch)
+    connectToServer()
+end
+
+function scene:hide(event)
+    if event.phase ~= "will" then return end
+    Runtime:removeEventListener("enterFrame", onUpdate)
+    Runtime:removeEventListener("touch",      onTouch)
+    if S.client and S.status ~= "success" then
+        pcall(function() S.client:disconnect() end)
+    end
+end
+
+function scene:destroy(event)
+    -- nothing to clean up beyond hide
+end
+
+scene:addEventListener("create",  scene)
+scene:addEventListener("show",    scene)
+scene:addEventListener("hide",    scene)
+scene:addEventListener("destroy", scene)
+
+return scene

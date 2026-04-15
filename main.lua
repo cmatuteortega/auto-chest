@@ -9,7 +9,7 @@ display.setDefault("magTextureFilter", "nearest")
 -- ── Core modules ──────────────────────────────────────────────────────────────
 local composer     = require("composer")
 local Constants    = require("src.constants")
-local AudioManager = require("src.audio_manager")
+AudioManager       = require("src.audio_manager")   -- global: screens reference it without require
 local UnitRegistry = require("src.unit_registry")
 local json         = require("lib.json")
 
@@ -38,6 +38,11 @@ function _G.fileExists(name)
     local f = io.open(path, "r")
     if f then f:close(); return true end
     return false
+end
+
+function _G.deleteFile(name)
+    local path = system.pathForFile(name, system.DocumentsDirectory)
+    os.remove(path)
 end
 
 -- ── Resolution & safe area ────────────────────────────────────────────────────

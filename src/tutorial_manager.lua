@@ -4,14 +4,10 @@
 
 local Constants    = require('src.constants')
 local UnitRegistry = require('src.unit_registry')
-local utf8         = require('utf8')
-
--- UTF-8 aware substring: returns the first n codepoints of s
+-- Substring by character count (tutorial text is ASCII-only, so bytes == codepoints)
 local function utf8sub(s, n)
     if n <= 0 then return "" end
-    local offset = utf8.offset(s, n + 1)
-    if offset then return string.sub(s, 1, offset - 1) end
-    return s
+    return string.sub(s, 1, n)
 end
 
 local TutorialManager = {}
@@ -240,7 +236,7 @@ function TutorialManager:update(dt)
     if self.stepDelay <= 0 and not self.waitingForAction then
         local stepData = STEPS[self.step]
         if stepData then
-            local fullLen = utf8.len(stepData.text)
+            local fullLen = #(stepData.text)
             if self.charIndex < fullLen then
                 self.charTimer = self.charTimer + dt
                 local add = math.floor(self.charTimer * CHARS_PER_SEC)
@@ -267,7 +263,7 @@ function TutorialManager:handleTap(x, y)
     if not stepData then return end
     if self.stepDelay > 0 or self.waitingForAction then return end
 
-    local fullLen = utf8.len(stepData.text)
+    local fullLen = #(stepData.text)
 
     if self.charIndex < fullLen then
         -- Reveal full message instantly
@@ -329,7 +325,7 @@ function TutorialManager:draw()
 
     local fullText    = stepData.text
     local displayText = utf8sub(fullText, self.charIndex)
-    local isComplete  = (self.charIndex >= utf8.len(fullText))
+    local isComplete  = (self.charIndex >= #(fullText))
 
     local innerPad  = 10 * sc
     lg.setFont(Fonts.small)

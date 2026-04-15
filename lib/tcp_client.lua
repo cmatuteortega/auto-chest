@@ -41,6 +41,13 @@ function M.newClient(host, port)
 
     function self:on(eventName, fn)
         self._handlers[eventName] = fn
+        return { event = eventName }
+    end
+
+    function self:removeCallback(handle)
+        if handle and handle.event then
+            self._handlers[handle.event] = nil
+        end
     end
 
     function self:isConnected()

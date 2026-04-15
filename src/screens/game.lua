@@ -1,1806 +1,1672 @@
-local Screen = require('lib.screen')
-local Constants = require('src.constants')
-local Grid = require('src.grid')
-local UnitRegistry = require('src.unit_registry')
-local Card = require('src.card')
-local suit = require('lib.suit')
-local Tooltip = require('src.tooltip')
-local json = require('lib.json')
-local DeckManager = require('src.deck_manager')
+-- AutoChest – Game Screen (Solar2D composer scene)
+-- TODO-RENDER: draw() and drawUI() are stubbed. Battle simulation is fully intact.
+-- Follow lobby.lua pattern: S = local state, onUpdate = enterFrame listener.
 
-local GameScreen = {}
+local composer     = require("composer")
+local Constants    = require("src.constants")
+local Grid         = require("src.grid")
+local UnitRegistry = require("src.unit_registry")
+local Card         = require("src.card")
+local Tooltip      = require("src.tooltip")
+local json         = require("lib.json")
+local DeckManager  = require("src.deck_manager")
 
-function GameScreen.new()
-    local self = Screen.new()
+local S = {}           -- local state (reset each show)
+local scene = composer.newScene()
 
-    -- ── init ──────────────────────────────────────────────────────────────────
-    -- Parameters (online mode only):
-    --   isOnline   (boolean) – true when playing over the network
-    --   playerRole (number)  – 1 (host/P1) or 2 (guest/P2)
-    --   socket     (table)   – sock.lua Client already connected to the relay server
-    function self:init(isOnline, playerRole, socket, isSandbox, isTutorial)
-        -- Online mode setup
-        self.isOnline   = isOnline   or false
-        self.playerRole = playerRole or 1   -- 1 = local is P1, 2 = local is P2
-        self.socket     = socket
-        self.isSandbox  = isSandbox  or false
-        self.isTutorial = isTutorial or false
+local function getTime() return system.getTimer() / 1000 end
 
-        -- Set rendering perspective so the local player always appears at the bottom
-        Constants.PERSPECTIVE = self.playerRole
+-- ── Forward declarations ──────────────────────────────────────────────────────
 
-        -- Player & opponent info (for trophy display)
-        self.playerName = _G.PlayerData and _G.PlayerData.username or "You"
-        self.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
-        self.opponentName = self.isTutorial and "evil"
-                         or (_G.OpponentData and _G.OpponentData.name or "Foe")
-        self.opponentTrophies = self.isTutorial and 0
-                             or (_G.OpponentData and _G.OpponentData.trophies or 0)
+local initState, registerNetworkCallbacks, dealSetupCards
+local sendMsg, computeBoardHash, checkBoardSync
+local applyOpponentMsg, handleNetworkMessage
+local checkBattleStart, beginBattleCountdown, startBattle, resetRound
+local generateCards, rebuildCardsFromTypes, launchExitAndEnter
+local enterFinishedState, areAllAnimationsComplete
+local handlePress, handleMove, handleRelease
+local drawUI, syncDisplayLayer
 
-        -- Trophy and gold changes (calculated when match ends)
-        self.trophyChange = nil
-        self.goldEarned   = nil
-        self.matchResultSent = false
+-- ── Initialisation ────────────────────────────────────────────────────────────
 
-        -- Opponent ready / battle-start tracking (online only)
-        self.localReady    = false
-        self.opponentReady = false
+initState = function(params)
+    params = params or {}
+    S.isOnline   = params.isOnline   or false
+    S.playerRole = params.playerRole or 1
+    S.socket     = params.socket
+    S.isSandbox  = params.isSandbox  or false
+    S.isTutorial = params.isTutorial or false
 
-        -- Register network callbacks once (cleared when screen is closed)
-        if self.isOnline and self.socket then
-            self:registerNetworkCallbacks()
-        end
+    Constants.PERSPECTIVE = S.playerRole
 
-        -- Load sprites for all unit types
-        self.sprites = UnitRegistry.loadAllSprites()
+    S.playerName     = _G.PlayerData and _G.PlayerData.username or "You"
+    S.playerTrophies = _G.PlayerData and _G.PlayerData.trophies or 0
+    S.opponentName   = S.isTutorial and "evil"
+                    or (_G.OpponentData and _G.OpponentData.name or "Foe")
+    S.opponentTrophies = S.isTutorial and 0
+                      or (_G.OpponentData and _G.OpponentData.trophies or 0)
 
-        -- Load battle background sprite
-        self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
-        self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
-        self.goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
-        self.goldIcon:setFilter('nearest', 'nearest')
+    S.trophyChange   = nil
+    S.goldEarned     = nil
+    S.matchResultSent = false
 
-        -- Create grid
-        self.grid = Grid()
+    S.localReady    = false
+    S.opponentReady = false
 
-        -- Initialize SUIT
-        self.suit = suit.new()
+    -- Sprite paths (rendering is stubbed; paths stored for TODO-RENDER pass)
+    S.bgSpritePath  = 'src/assets/background_battle.png'
+    S.bgOffsetY     = 42
+    S.goldIconPath  = 'src/assets/ui/gold.png'
 
-        -- Ready button spring + hit rect
-        self._readySpring  = { scale = 1.0, vel = 0.0, pressed = false }
-        self._readyBtnRect = nil
+    S.sprites = UnitRegistry.loadAllSprites()
 
-        -- Reroll button spring + hit rect
-        self._rerollSpring  = { scale = 1.0, vel = 0.0, pressed = false }
-        self._rerollBtnRect = nil
+    S.grid    = Grid()
+    S.tooltip = Tooltip()
 
-        -- Emote button spring + hit rect
-        self._emoteSpring  = { scale = 1.0, vel = 0.0, pressed = false }
-        self._emoteBtnRect = nil
+    -- Button spring state (physics kept; rendering stubbed)
+    S._readySpring  = { scale = 1.0, vel = 0.0, pressed = false }
+    S._readyBtnRect = nil
+    S._rerollSpring  = { scale = 1.0, vel = 0.0, pressed = false }
+    S._rerollBtnRect = nil
+    S._emoteSpring  = { scale = 1.0, vel = 0.0, pressed = false }
+    S._emoteBtnRect = nil
 
-        -- Initialize Tooltip
-        self.tooltip = Tooltip()
+    S.mouseX = display.contentCenterX
+    S.mouseY = display.contentCenterY
 
-        -- Mouse/touch position
-        self.mouseX = 0
-        self.mouseY = 0
+    S.state  = "setup"
+    S.timer  = 30
+    S.battleAccumulator = 0
+    S.battleStepCount   = 0
+    S.currentPlayer     = 1
 
-        -- Game state
-        self.state = "setup" -- setup, intermission, battle, battle_ending, finished
-        self.timer = 30 -- seconds for setup phase
-        -- Fixed timestep simulation (prevents dt desync between clients)
-        self.battleAccumulator = 0
-        self.battleStepCount   = 0
-        self.currentPlayer = 1  -- Player 1 is always the bottom player in canonical coords
+    S.roundNumber          = 1
+    S.battleUnitsSnapshot  = {}
+    S.pendingOpponentMsgs  = {}
+    S.pendingWinner        = nil
 
-        -- Round tracking
-        self.roundNumber         = 1
-        self.battleUnitsSnapshot  = {}  -- all units alive at battle start, for reliable reset
-        self.pendingOpponentMsgs  = {}  -- buffered opponent placement msgs, applied at battle start
-        self.pendingWinner        = nil -- winner saved during intermission before life deduction
+    S.localBoardHash    = nil
+    S.opponentBoardHash = nil
 
-        -- Desync detection
-        self.localBoardHash    = nil
-        self.opponentBoardHash = nil
+    S.localRoundEndReady    = false
+    S.opponentRoundEndReady = false
 
-        -- Round-end sync (online): both clients must signal done before resetting
-        self.localRoundEndReady    = false
-        self.opponentRoundEndReady = false
+    S.p1Lives = 3
+    S.p2Lives = 3
 
-        -- Lives
-        self.p1Lives = 3
-        self.p2Lives = 3
+    S.playerCoins  = S.isTutorial and 10 or 6
+    S.rerollCost   = 1
+    S.freeRerollUsed = false
 
-        -- Economy
-        self.playerCoins = self.isTutorial and 10 or 6
-        self.rerollCost = 1
-        self.freeRerollUsed = false
+    S.cards       = {}
+    S.exitingCards = {}
+    S.draggedCard  = nil
 
-        -- Card drafting
-        self.cards = {}
-        self.exitingCards = {}
-        self.draggedCard = nil
+    S.usingDeck      = DeckManager.initDrawPile()
+    S.drawnCardTypes = {}
 
-        -- Deck draw pile (populated from DeckManager; false = fallback to random)
-        self.usingDeck      = DeckManager.initDrawPile()
-        self.drawnCardTypes = {}
+    S.draggedUnit            = nil
+    S.draggedUnitOriginalCol = nil
+    S.draggedUnitOriginalRow = nil
+    S.draggedUnitOffsetX     = 0
+    S.draggedUnitOffsetY     = 0
 
-        -- Unit dragging (for repositioning during setup)
-        self.draggedUnit = nil
-        self.draggedUnitOriginalCol = nil
-        self.draggedUnitOriginalRow = nil
-        self.draggedUnitOffsetX = 0
-        self.draggedUnitOffsetY = 0
+    S.pressedUnit    = nil
+    S.pressedUnitCol = nil
+    S.pressedUnitRow = nil
+    S.pressX = 0
+    S.pressY = 0
+    S.hasMoved = false
 
-        -- Press tracking (for tap vs drag detection)
-        self.pressedUnit = nil
-        self.pressedUnitCol = nil
-        self.pressedUnitRow = nil
-        self.pressX = 0
-        self.pressY = 0
-        self.hasMoved = false  -- Track if user has actually moved (not just tap jitter)
+    S.pressedCard      = nil
+    S.pressedCardIndex = nil
 
-        -- Card press tracking (for tap vs drag detection)
-        self.pressedCard = nil
-        self.pressedCardIndex = nil
+    S.activeTouchId = nil
+    S._lastTime     = nil
+    S._xpHandler    = nil
 
-        -- Touch tracking (to prevent double-handling on mobile)
-        self.activeTouchId = nil
-
-        -- Tutorial: set up the tutorial manager (must be before dealSetupCards)
-        self.tutorialManager = nil
-        if self.isTutorial then
-            local TutorialManager = require('src.tutorial_manager')
-            self.tutorialManager = TutorialManager.new(self)
-        end
-
-        self:dealSetupCards()
-
-        -- Apply battle-mode filter immediately (music stays moody for the full match)
-        AudioManager.setBattleMode(true)
+    -- Tutorial manager (pass callbacks table instead of self)
+    S.tutorialManager = nil
+    if S.isTutorial then
+        local TutorialManager = require('src.tutorial_manager')
+        -- Pass S directly: TutorialManager accesses game.grid, game.state, game.sprites, etc.
+        -- Wrap the function calls TutorialManager triggers back into module-local fns.
+        S._tutorialCallbacks = {
+            dealSetupCards       = dealSetupCards,
+            beginBattleCountdown = beginBattleCountdown,
+            sendMsg              = sendMsg,
+        }
+        local gameProxy = setmetatable(S._tutorialCallbacks, { __index = S })
+        S.tutorialManager = TutorialManager.new(gameProxy)
     end
 
-    -- ── Network helpers ───────────────────────────────────────────────────────
+    S._unitDisplays = {}
+    S._cardDisplays = {}
 
-    function self:sendMsg(data)
-        if self.isOnline and self.socket then
-            self.socket:send("relay", data)
-        end
-    end
+    dealSetupCards()
 
-    function self:registerNetworkCallbacks()
-        local s = self.socket
-
-        -- The relay server forwards the opponent's "relay" events to us
-        self._cb_relay = s:on("relay", function(data)
-            self:handleNetworkMessage(data)
-        end)
-
-        self._cb_oppDisconn = s:on("opponent_disconnected", function()
-            self.opponentDisconnected = true
-        end)
-
-        self._cb_disconnect = s:on("disconnect", function()
-            print("[GAME] Socket disconnected")
-            if self.state ~= "finished" then
-                self.opponentDisconnected = true
-            end
-        end)
-    end
-
-    -- Compute a deterministic string hash of all units on the board (type, position, owner, level).
-    -- Used to verify both clients are in sync at battle start.
-    function self:computeBoardHash()
-        local entries = {}
-        for row = 1, self.grid.rows do
-            for col = 1, self.grid.cols do
-                local cell = self.grid.cells[row][col]
-                if cell.unit then
-                    local u = cell.unit
-                    table.insert(entries, string.format("%s,%d,%d,%d,%d",
-                        u.unitType, u.col, u.row, u.owner, u.level or 0))
-                end
-            end
-        end
-        table.sort(entries)
-        return table.concat(entries, "|")
-    end
-
-    function self:checkBoardSync()
-        if not (self.localBoardHash and self.opponentBoardHash) then return end
-        if self.localBoardHash == self.opponentBoardHash then
-            print("[SYNC] Board OK for round " .. self.roundNumber)
-        else
-            print("[DESYNC] Round " .. self.roundNumber .. " board mismatch!")
-            print("  Local:  " .. self.localBoardHash)
-            print("  Remote: " .. self.opponentBoardHash)
-        end
-        self.localBoardHash    = nil
-        self.opponentBoardHash = nil
-    end
-
-    -- Apply a single opponent placement/removal/upgrade message to the grid.
-    function self:applyOpponentMsg(msg)
-        local t = msg.type
-        if t == "place_unit" then
-            local unitSprites = self.sprites[msg.unitType]
-            local unit = UnitRegistry.createUnit(msg.unitType, msg.row, msg.col, msg.owner, unitSprites)
-            -- Restore upgrades when the message carries level info (repositioned upgraded unit)
-            if msg.activeUpgrades then
-                for _, idx in ipairs(msg.activeUpgrades) do
-                    unit:upgrade(idx)
-                end
-            end
-            self.grid:placeUnit(msg.col, msg.row, unit)
-        elseif t == "remove_unit" then
-            self.grid:removeUnit(msg.col, msg.row)
-        elseif t == "upgrade_unit" then
-            local unit = self.grid:getUnitAtCell(msg.col, msg.row)
-            if unit then unit:upgrade(msg.upgradeIndex) end
-        end
-    end
-
-    function self:handleNetworkMessage(msg)
-        local t = msg.type
-
-        if t == "place_unit" or t == "remove_unit" or t == "upgrade_unit" then
-            -- During setup/intermission/pre_battle, buffer opponent moves so their
-            -- positions stay frozen at last-round home spots until battle starts.
-            local inSetup = self.state == "setup" or self.state == "intermission"
-                         or self.state == "pre_battle"
-            if inSetup then
-                table.insert(self.pendingOpponentMsgs, msg)
-            else
-                self:applyOpponentMsg(msg)
-            end
-
-        elseif t == "ready" then
-            self.opponentReady = true
-            self:checkBattleStart()
-
-        elseif t == "battle_start" then
-            math.randomseed(msg.seed)
-            self:beginBattleCountdown()
-
-        elseif t == "round_end_ready" then
-            self.opponentRoundEndReady = true
-
-        elseif t == "board_sync_check" then
-            self.opponentBoardHash = msg.hash
-            self:checkBoardSync()
-        end
-    end
-
-    function self:checkBattleStart()
-        if not (self.localReady and self.opponentReady) then return end
-
-        if self.playerRole == 1 then
-            local seed = os.time()
-            math.randomseed(seed)
-            self:sendMsg({type = "battle_start", seed = seed})
-            self:beginBattleCountdown()
-        end
-        -- Guest waits for the "battle_start" message (handled above)
-    end
-
-    function self:beginBattleCountdown()
-        -- Return any unplayed drawn cards to the deck pile before battle
-        if self.usingDeck and #self.drawnCardTypes > 0 then
-            DeckManager.returnCards(self.drawnCardTypes)
-            self.drawnCardTypes = {}
-        end
-        self.cards = {}
-
-        self.state          = "pre_battle"
-        self.preBattleTimer = 1
-    end
-
-    function self:startBattle()
-        self.timer = 0
-        self.state = "battle"
-        AudioManager.setBattleMode(true)
-        AudioManager.playSFX("battle-start.mp3")
-        self.battleAccumulator = 0
-        self.battleStepCount   = 0
-
-        -- Apply all buffered opponent moves now that battle is starting
-        for _, msg in ipairs(self.pendingOpponentMsgs) do
-            self:applyOpponentMsg(msg)
-        end
-        self.pendingOpponentMsgs = {}
-
-        -- Validate board sync with opponent (both clients compute the same hash if in sync)
-        if self.isOnline then
-            self.localBoardHash = self:computeBoardHash()
-            self:sendMsg({type = "board_sync_check", hash = self.localBoardHash})
-            self:checkBoardSync()
-        end
-
-        local allUnits = self.grid:getAllUnits()
-        self.battleUnitsSnapshot = {}
-        for _, unit in ipairs(allUnits) do
-            unit.homeCol = unit.col
-            unit.homeRow = unit.row
-            table.insert(self.battleUnitsSnapshot, unit)
-            unit:onBattleStart(self.grid)
-        end
-
-        -- Set up death sound callbacks (relative to local player's perspective)
-        for _, unit in ipairs(allUnits) do
-            local isAlly = (unit.owner == self.playerRole)
-            unit.onDeathCallback = function()
-                if isAlly then
-                    AudioManager.playSFX("ally-death.mp3")
-                else
-                    AudioManager.playSFX("enemy-death.mp3", 0.75)
-                end
-            end
-        end
-
-        -- ACTION move system: delay non-action units until all ACTION moves complete
-        local maxActionDuration = 0
-        for _, unit in ipairs(allUnits) do
-            if unit.isActionUnit and unit.actionDuration > maxActionDuration then
-                maxActionDuration = unit.actionDuration
-            end
-        end
-        if maxActionDuration > 0 then
-            for _, unit in ipairs(allUnits) do
-                if not unit.isActionUnit then
-                    unit.actionDelayTimer = maxActionDuration
-                end
-            end
-        end
-    end
-
-    function self:resetRound()
-        -- Use the snapshot taken at battle start (reliable even if units left the grid mid-battle)
-        local allUnits = self.battleUnitsSnapshot
-
-        -- Clear the grid entirely
-        for row = 1, self.grid.rows do
-            for col = 1, self.grid.cols do
-                local cell = self.grid.cells[row][col]
-                cell.unit     = nil
-                cell.occupied = false
-                cell.reserved = false
-            end
-        end
-
-        -- Re-place all units at their pre-battle home positions
-        for _, unit in ipairs(allUnits) do
-            if unit.homeCol and unit.homeRow then
-                unit.col = unit.homeCol
-                unit.row = unit.homeRow
-                unit:resetCombatState()
-                self.grid:placeUnit(unit.homeCol, unit.homeRow, unit)
-            end
-        end
-
-        self.roundNumber          = self.roundNumber + 1
-        self.winner               = nil
-        self.localReady           = false
-        self.opponentReady        = false
-        self.freeRerollUsed       = false
-        self.playerCoins          = self.playerCoins + 6
-        self.pendingOpponentMsgs  = {}
-        self.draggedUnit          = nil
-        self.draggedCard          = nil
-        self.pressedUnit          = nil
-        self.pressedCard          = nil
-        self.tooltip:hide()
-        self:dealSetupCards()
-
-        self.state = "setup"
-        self.timer = 30
-    end
-
-    function self:generateCards()
-        -- Generate 3 cards at bottom with 10% margin (matching grid top margin)
-        self.cards = {}
-        local cardWidth = 80 * Constants.SCALE
-        local cardHeight = 100 * Constants.SCALE
-        local cardSpacing = 30 * Constants.SCALE
-        local totalWidth = (cardWidth * 3) + (cardSpacing * 2)
-        local startX = (Constants.GAME_WIDTH - totalWidth) / 2
-
-        -- Position cards with 10% bottom margin
-        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
-        self.cardY = math.floor((gridBottom + Constants.GAME_HEIGHT) / 2 - cardHeight / 2)
-        local cardY = self.cardY
-
-        for i = 1, 3 do
-            local x = startX + (i - 1) * (cardWidth + cardSpacing)
-
-            -- Randomly assign a unit type to each card
-            local unitType = UnitRegistry.getRandomUnitType()
-            local sprite = self.sprites[unitType].front
-
-            local card = Card(x, cardY, sprite, i, unitType)
-            table.insert(self.cards, card)
-        end
-
-        -- Calculate reroll button position (aligned to right of cards with spacing)
-        self.rerollButtonSize = 40 * Constants.SCALE
-        local cardsEndX = startX + totalWidth
-        self.rerollButtonX = cardsEndX + cardSpacing
-        self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
-        -- Emote button (same height, opposite side)
-        self.emoteButtonX = startX - cardSpacing - self.rerollButtonSize
-        self.emoteButtonY = self.rerollButtonY
-    end
-
-    -- Build Card objects from an array of unitType strings.
-    -- Pure UI construction — does not interact with DeckManager.
-    function self:_rebuildCardsFromTypes(unitTypes)
-        self.cards = {}
-        local cardWidth   = 80  * Constants.SCALE
-        local cardHeight  = 100 * Constants.SCALE
-        local cardSpacing = 30  * Constants.SCALE
-        local totalWidth  = (cardWidth * 3) + (cardSpacing * 2)
-        local startX      = (Constants.GAME_WIDTH - totalWidth) / 2
-        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
-        self.cardY = math.floor((gridBottom + Constants.GAME_HEIGHT) / 2 - cardHeight / 2)
-        local cardY = self.cardY
-
-        for i, unitType in ipairs(unitTypes) do
-            local x      = startX + (i - 1) * (cardWidth + cardSpacing)
-            local sprite     = self.sprites[unitType].front
-            local trimBottom = self.sprites[unitType].frontTrimBottom or 0
-            local card       = Card(x, cardY, sprite, i, unitType, trimBottom)
-            card.upFrames    = self.sprites[unitType] and self.sprites[unitType].upFrames
-            table.insert(self.cards, card)
-        end
-
-        -- Reroll button position
-        self.rerollButtonSize = 40 * Constants.SCALE
-        local cardsEndX = startX + totalWidth
-        self.rerollButtonX = cardsEndX + cardSpacing
-        self.rerollButtonY = cardY + (cardHeight - self.rerollButtonSize) / 2
-        -- Emote button (same height, opposite side)
-        self.emoteButtonX = startX - cardSpacing - self.rerollButtonSize
-        self.emoteButtonY = self.rerollButtonY
-    end
-
-    -- Trigger exit animations on current cards and deal-in animations on new ones.
-    -- Old cards slide down off screen; new cards slide in from the right with stagger.
-    function self:_launchExitAndEnter(unitTypes)
-        self.exitingCards = self.exitingCards or {}
-        for i, card in ipairs(self.cards) do
-            card:startExitAnim((i % 2 == 0) and 1 or -1)
-            table.insert(self.exitingCards, card)
-        end
-        self:_rebuildCardsFromTypes(unitTypes)
-        local offscreenX = Constants.GAME_WIDTH + 80 * Constants.SCALE
-        for i, card in ipairs(self.cards) do
-            card:setEnterAnim(offscreenX, card.x, card.y, 0.05 + (i - 1) * 0.06)
-        end
-    end
-
-    -- Draw cards from the deck pile (or fall back to random) and display them.
-    -- Returns any leftover unplayed drawn cards from the previous call to the pile first.
-    function self:dealSetupCards()
-        -- Return unplayed cards from last deal back to pile
-        if self.usingDeck and #self.drawnCardTypes > 0 then
-            DeckManager.returnCards(self.drawnCardTypes)
-            self.drawnCardTypes = {}
-        end
-
-        local unitTypes
-        if self.isTutorial then
-            -- Tutorial: draw from a restricted pool so the player sees relevant units
-            local pool = {"boney", "marrow", "knight", "mage"}
-            unitTypes = {}
-            for _ = 1, 3 do
-                table.insert(unitTypes, pool[math.random(#pool)])
-            end
-        elseif self.usingDeck then
-            unitTypes = DeckManager.drawCards(3)
-            -- In sandbox, loop the deck when the pile runs out
-            if self.isSandbox then
-                while #unitTypes < 3 do
-                    DeckManager.initDrawPile()
-                    local extra = DeckManager.drawCards(3 - #unitTypes)
-                    if #extra == 0 then break end
-                    for _, u in ipairs(extra) do table.insert(unitTypes, u) end
-                end
-            end
-        else
-            unitTypes = {}
-            for _ = 1, 3 do
-                table.insert(unitTypes, UnitRegistry.getRandomUnitType())
-            end
-        end
-
-        self.drawnCardTypes = unitTypes
-        self:_launchExitAndEnter(unitTypes)
-    end
-
-    -- Helper: Enter finished state with trophy calculation
-    function self:enterFinishedState(winnerId)
-        self.state = "finished"
-        self.winner = winnerId
-
-        -- Calculate trophy and gold changes (only in online mode, not sandbox)
-        if self.isOnline and not self.isSandbox and not self.trophyChange then
-            local didWin = (winnerId == self.playerRole)
-            self.trophyChange = didWin and 20 or -15
-            self.goldEarned   = didWin and 10 or 5
-
-            -- Send match result to server (once)
-            if not self.matchResultSent then
-                self.matchResultSent = true
-                if self.socket then
-                    self.socket:send("match_result", {
-                        winner_id = didWin and (_G.PlayerData and _G.PlayerData.id or 0) or 0,
-                        did_win   = didWin
-                    })
-                end
-
-                -- Update local trophy, gold and XP counts immediately
-                self.playerTrophies = math.max(0, self.playerTrophies + self.trophyChange)
-                if _G.PlayerData then
-                    _G.PlayerData.trophies = self.playerTrophies
-                    _G.PlayerData.gold = (_G.PlayerData.gold or 0) + self.goldEarned
-                end
-            end
-
-            -- Apply XP/level update from server when it arrives (message comes while still in game)
-            if self.socket and not self._xpHandler then
-                self._xpHandler = self.socket:on("currency_update", function(data)
-                    if _G.PlayerData then
-                        if data.xp      ~= nil then _G.PlayerData.xp      = data.xp      end
-                        if data.level   ~= nil then _G.PlayerData.level   = data.level   end
-                        if data.gold    ~= nil then _G.PlayerData.gold    = data.gold    end
-                        if data.gems    ~= nil then _G.PlayerData.gems    = data.gems    end
-                        if data.unlocks ~= nil then _G.PlayerData.unlocks = data.unlocks end
-                    end
-                end)
-            end
-        end
-    end
-
-    function self:update(dt)
-        -- Tutorial manager update (AI placement, step auto-advancement)
-        if self.isTutorial and self.tutorialManager then
-            self.tutorialManager:update(dt)
-        end
-
-        -- Poll network (must happen every frame)
-        if self.isOnline and self.socket then
-            local ok, err = pcall(function() self.socket:update() end)
-            if not ok then
-                print("[GAME] Socket error: " .. tostring(err))
-                self.opponentDisconnected = true
-            end
-        end
-
-        -- Opponent disconnected mid-game
-        if self.opponentDisconnected and self.state ~= "finished" then
-            self.opponentDisconnected = false
-            self:enterFinishedState(self.playerRole)  -- local player wins by forfeit
-            self.statusMsg = "Oponente desconectado. ¡Ganaste!"
-        end
-
-        -- Intermission countdown (bodies stay on board during this period)
-        if self.state == "intermission" then
-            self.intermissionTimer = self.intermissionTimer - dt
-            if self.intermissionTimer <= 0 then
-                if self.isTutorial then
-                    -- Tutorial ends after the first round regardless of who won
-                    local w = self.pendingWinner or 1
-                    self.pendingWinner = nil
-                    self:enterFinishedState(w)
-                else
-                    local w = self.pendingWinner
-                    self.pendingWinner = nil
-                    if w == 1 then
-                        self.p2Lives = self.p2Lives - 1
-                        if self.p2Lives <= 0 then
-                            if self.isSandbox then self.p2Lives = 3; self:resetRound() else self:enterFinishedState(1) end
-                        else self:resetRound() end
-                    elseif w == 2 then
-                        self.p1Lives = self.p1Lives - 1
-                        if self.p1Lives <= 0 then
-                            if self.isSandbox then self.p1Lives = 3; self:resetRound() else self:enterFinishedState(2) end
-                        else self:resetRound() end
-                    else
-                        self.state = "setup"
-                    end
-                end
-            end
-        end
-
-        -- Pre-battle GO! countdown (setup → battle transition)
-        if self.state == "pre_battle" then
-            self.preBattleTimer = self.preBattleTimer - dt
-            if self.preBattleTimer <= 0 then
-                self:startBattle()
-            end
-        end
-
-        -- Update timer (always counts down for display; only P1 auto-triggers battle in online mode)
-        -- In tutorial mode the timer is disabled so the player can take their time.
-        if self.state == "setup" and not self.isTutorial then
-            self.timer = self.timer - dt
-            if self.timer <= 0 then
-                self.timer = 0
-                if not self.isOnline then
-                    self:beginBattleCountdown()
-                elseif not self.localReady then
-                    -- Both players auto-ready when timer expires
-                    self.localReady = true
-                    self:sendMsg({type = "ready"})
-                    self:checkBattleStart()
-                end
-            end
-        end
-
-        -- Update card up-anim: loop animation on cards whose unit type has an upgradeable field unit
-        if self.state == "setup" and #self.cards > 0 then
-            local upgradeableTypes = {}
-            for _, unit in ipairs(self.grid:getAllUnits()) do
-                local isOwn = (not self.isOnline) or (unit.owner == self.playerRole)
-                if isOwn and not unit.isDead and unit.level < 3 then
-                    upgradeableTypes[unit.unitType] = true
-                end
-            end
-            local CARD_ANIM_DURATION = 6 / 8  -- 6 frames @ 8 fps, mirrors card.lua constant
-            for _, card in ipairs(self.cards) do
-                card:update(dt)
-                if upgradeableTypes[card.unitType] then
-                    if card.upAnimTimer <= 0 then
-                        card.upAnimTimer = CARD_ANIM_DURATION
-                    end
-                else
-                    card.upAnimTimer = 0
-                end
-            end
-        end
-
-        -- Update and prune exiting cards (run every frame so they animate even outside setup)
-        if self.exitingCards and #self.exitingCards > 0 then
-            for i = #self.exitingCards, 1, -1 do
-                local card = self.exitingCards[i]
-                card:update(dt)
-                if not card.isExiting then
-                    table.remove(self.exitingCards, i)
-                end
-            end
-        end
-
-        if self.state == "battle" then
-            -- Fixed timestep simulation: accumulate real dt and drain in discrete steps.
-            -- Both clients run the exact same number of steps per battle, eliminating
-            -- floating-point divergence caused by variable frame rates.
-            local FIXED_DT = 1 / 60
-            self.battleAccumulator = self.battleAccumulator + dt
-
-            while self.battleAccumulator >= FIXED_DT do
-                self.battleAccumulator = self.battleAccumulator - FIXED_DT
-                self.battleStepCount   = self.battleStepCount + 1
-
-                local allUnits = self.grid:getAllUnits()
-                for _, unit in ipairs(allUnits) do
-                    unit:update(FIXED_DT, self.grid)
-                end
-
-                -- Check victory condition after each simulation step
-                local p1Alive = 0
-                local p2Alive = 0
-                for _, unit in ipairs(allUnits) do
-                    if not unit.isDead then
-                        if unit.owner == 1 then
-                            p1Alive = p1Alive + 1
-                        else
-                            p2Alive = p2Alive + 1
-                        end
-                    end
-                end
-
-                if p1Alive == 0 or p2Alive == 0 then
-                    self.state = "battle_ending"
-                    self.winner = p1Alive > 0 and 1 or 2
-                    break
-                end
-            end
-        elseif self.state == "battle_ending" then
-            -- Continue updating units to allow animations to complete
-            local allUnits = self.grid:getAllUnits()
-            for _, unit in ipairs(allUnits) do
-                unit:update(dt, self.grid)
-            end
-
-            -- Once animations finish, sync with opponent then handle lives
-            if self:areAllAnimationsComplete() then
-                -- Signal done once (send only once)
-                if not self.localRoundEndReady then
-                    self.localRoundEndReady = true
-                    if self.isOnline then
-                        self:sendMsg({type = "round_end_ready"})
-                    end
-                end
-
-                -- Proceed only when both sides are done
-                local bothDone = self.localRoundEndReady and
-                                 (not self.isOnline or self.opponentRoundEndReady)
-                if bothDone then
-                    self.localRoundEndReady    = false
-                    self.opponentRoundEndReady = false
-                    -- Consolation coins for the losing player (+3)
-                    local loser = (self.winner == 1) and 2 or 1
-                    if self.playerRole == loser then
-                        self.playerCoins = self.playerCoins + 3
-                    end
-
-                    -- Leave bodies on board; apply life deduction after intermission
-                    AudioManager.playSFX("battle-end.mp3")
-                    self.pendingWinner     = self.winner
-                    self.state             = "intermission"
-                    self.intermissionTimer = 2.5
-                end
-            end
-        end
-
-        -- Visual-only update for directional sprite animation (all game states, real dt)
-        local allUnitsForVisuals = self.grid:getAllUnits()
-        for _, unit in ipairs(allUnitsForVisuals) do
-            unit:updateVisuals(dt, self.state)
-        end
-
-        -- Update grid with current mouse position
-        self.grid:update(dt, self.mouseX, self.mouseY)
-
-        -- Spring physics for emote button
-        local emTarget = self._emoteSpring.pressed and 0.93 or 1.0
-        local emAccel  = -480 * (self._emoteSpring.scale - emTarget) - 18 * self._emoteSpring.vel
-        self._emoteSpring.vel   = self._emoteSpring.vel   + emAccel * dt
-        self._emoteSpring.scale = self._emoteSpring.scale + self._emoteSpring.vel * dt
-        self._emoteSpring.scale = math.max(0.85, math.min(1.12, self._emoteSpring.scale))
-
-        -- Spring physics for reroll button
-        local rrTarget = self._rerollSpring.pressed and 0.93 or 1.0
-        local rrAccel  = -480 * (self._rerollSpring.scale - rrTarget) - 18 * self._rerollSpring.vel
-        self._rerollSpring.vel   = self._rerollSpring.vel   + rrAccel * dt
-        self._rerollSpring.scale = self._rerollSpring.scale + self._rerollSpring.vel * dt
-        self._rerollSpring.scale = math.max(0.85, math.min(1.12, self._rerollSpring.scale))
-
-        -- Spring physics for ready button
-        local rspTarget = self._readySpring.pressed and 0.93 or 1.0
-        local rspAccel  = -480 * (self._readySpring.scale - rspTarget) - 18 * self._readySpring.vel
-        self._readySpring.vel   = self._readySpring.vel   + rspAccel * dt
-        self._readySpring.scale = self._readySpring.scale + self._readySpring.vel * dt
-        self._readySpring.scale = math.max(0.85, math.min(1.12, self._readySpring.scale))
-    end
-
-    function self:draw()
-        local lg = love.graphics
-
-        -- Draw battle background centered on the grid at unit sprite scale
-        local spriteScale = Constants.CELL_SIZE / 16
-        local bgW = self.bgSprite:getWidth()
-        local bgH = self.bgSprite:getHeight()
-        local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
-        local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2 + self.bgOffsetY
-        lg.setColor(1, 1, 1, 1)
-        lg.draw(self.bgSprite, bgX, bgY, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
-
-        -- During online setup, hide the opponent's units for the element of surprise.
-        local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
-        self.grid:draw(self.draggedUnit, hideOwner)
-
-        -- Draw entering cards behind the UI (behind reroll button)
-        if self.cards then
-            for _, card in ipairs(self.cards) do
-                if card.isEntering and card ~= self.draggedCard then
-                    card:draw()
-                end
-            end
-        end
-
-        -- Draw UI
-        self:drawUI()
-
-        -- Draw exiting cards behind the active hand
-        if self.exitingCards then
-            for _, card in ipairs(self.exitingCards) do
-                card:draw()
-            end
-        end
-
-        -- Draw settled/non-entering cards (non-dragged first, dragged last so it's on top)
-        for _, card in ipairs(self.cards) do
-            if not card.isEntering and card ~= self.draggedCard then
-                card:draw()
-            end
-        end
-
-        -- Draw dragged card on top
-        if self.draggedCard then
-            self.draggedCard:draw()
-        end
-
-        -- Draw dragged unit on top (if repositioning during setup)
-        if self.draggedUnit then
-            self.draggedUnit:drawGroundEffects()
-            self.draggedUnit:draw()
-        end
-
-        -- Draw SUIT UI elements
-        self.suit:draw()
-
-        -- Draw tooltip on top of everything
-        self.tooltip:draw()
-
-        -- Draw tutorial bubble overlay on top of everything (tutorial mode only)
-        if self.isTutorial and self.tutorialManager then
-            self.tutorialManager:draw()
-        end
-    end
-
-    function self:drawUI()
-        local lg = love.graphics
-
-        -- State and timer (positioned as percentage from top)
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.9, 0.9, 0.9, 1)
-        local stateText = self.state:upper()
-        if self.state == "setup" then
-            if not self.isTutorial then
-                stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
-            end
-        elseif self.state == "intermission" then
-            stateText = "ROUND " .. self.roundNumber
-        elseif self.state == "pre_battle" then
-            stateText = "GO!"
-            lg.setColor(0.3, 1, 0.3, 1)
-        elseif self.state == "battle_ending" then
-            stateText = ""
-        elseif self.state == "finished" and self.winner then
-            local didWin = (self.winner == self.playerRole)
-            stateText = didWin and "YOU WIN!" or "YOU LOSE"
-            lg.setColor(didWin and {0.3, 1, 0.3, 1} or {1, 0.3, 0.3, 1})
-        end
-        local stateTextY = math.max(Constants.GAME_HEIGHT * 0.025, Constants.SAFE_INSET_TOP)
-        lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
-
-        -- Trophy and gold changes (if in finished state and online mode)
-        if self.state == "finished" and self.trophyChange and self.isOnline and not self.isSandbox then
-            local sc = Constants.SCALE
-            local offsetY = stateTextY + Fonts.large:getHeight() + 10 * sc
-            local trophyText = (self.trophyChange >= 0 and "+" or "") .. self.trophyChange .. " trophies"
-            lg.setFont(Fonts.medium)
-            local trophyColor = self.trophyChange >= 0 and {0.4, 1, 0.4, 1} or {1, 0.5, 0.5, 1}
-            lg.setColor(trophyColor)
-            lg.printf(trophyText, 0, offsetY, Constants.GAME_WIDTH, 'center')
-
-            if self.goldEarned then
-                lg.setColor(0.95, 0.80, 0.20, 1)
-                lg.printf("+" .. self.goldEarned .. " gold", 0, offsetY + Fonts.medium:getHeight() + 4 * sc, Constants.GAME_WIDTH, 'center')
-            end
-        end
-
-        -- Player labels (proportional positioning)
-        -- In online mode the local player is always shown at the bottom right.
-        lg.setFont(Fonts.large)
-        local topMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_TOP + 4 * Constants.SCALE)
-        local fontHeight = Fonts.large:getHeight()
-        local bottomMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_BOTTOM + 4 * Constants.SCALE)
-
-        -- Determine which label goes where based on perspective
-        local topLabel     = self.opponentName  -- Opponent always at top
-        local bottomLabel  = self.playerName    -- Player always at bottom
-        local topTrophies  = self.opponentTrophies
-        local bottomTrophies = self.playerTrophies
-        local topColor    = self.playerRole == 2 and {1, 0.7, 0.5, 1} or {0.5, 0.7, 1, 1}
-        local bottomColor = self.playerRole == 2 and {0.5, 0.7, 1, 1} or {1, 0.7, 0.5, 1}
-
-        -- Lives for each visual position
-        local topLives    = (self.playerRole == 1) and self.p2Lives or self.p1Lives
-        local bottomLives = (self.playerRole == 1) and self.p1Lives or self.p2Lives
-
-        -- Helper: draw life pips starting at (x, y), left-to-right, using given color
-        local pipSize = 8 * Constants.SCALE
-        local pipGap  = 4 * Constants.SCALE
-        local function drawLives(x, y, lives, color)
-            for i = 1, 3 do
-                if i <= lives then
-                    lg.setColor(color)
-                else
-                    lg.setColor(0.25, 0.25, 0.25, 1)
-                end
-                lg.rectangle('fill', x + (i - 1) * (pipSize + pipGap),
-                             y, pipSize, pipSize)
-            end
-        end
-
-        -- Top player (opponent)
-        lg.setColor(topColor)
-        lg.print(topLabel, topMargin, topMargin)
-        lg.setFont(Fonts.tiny)
-        lg.setColor(0.9, 0.85, 0.3, 1)
-        lg.print(topTrophies .. " trophies", topMargin, topMargin + Fonts.large:getHeight())
-        drawLives(topMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
-
-        -- Bottom player (you)
-        lg.setFont(Fonts.large)
-        lg.setColor(bottomColor)
-        local bLabelWidth = Fonts.large:getWidth(bottomLabel)
-        local bLabelX = Constants.GAME_WIDTH - bLabelWidth - topMargin
-        lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
-        lg.setFont(Fonts.tiny)
-        lg.setColor(0.9, 0.85, 0.3, 1)
-        local trophyText = bottomTrophies .. " trophies"
-        local trophyW = Fonts.tiny:getWidth(trophyText)
-        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - topMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
-        drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
-                  bottomLives, bottomColor)
-
-        -- Coin display in bottom left (icon + number)
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        local coinStr = self.isSandbox and "999" or tostring(self.playerCoins)
-        local baseY = Constants.GAME_HEIGHT - fontHeight - bottomMargin
-        local iconH = math.floor(fontHeight * 0.55)
-        local iconSc = iconH / self.goldIcon:getHeight()
-        local iconW = self.goldIcon:getWidth() * iconSc
-        local iconGap = math.floor(4 * Constants.SCALE)
-        local visH  = Fonts.large:getAscent() - Fonts.large:getDescent()
-        local iconY = math.floor(baseY + (visH - iconH) / 2)
-        lg.draw(self.goldIcon, topMargin, iconY, 0, iconSc, iconSc)
-        lg.print(coinStr, topMargin + iconW + iconGap, baseY)
-
-        -- Reset font for buttons
-        lg.setFont(Fonts.medium)
-
-        -- Button dimensions (scaled proportionally)
-        local buttonHeight = 40 * Constants.SCALE
-        -- Position button at middle height between grid bottom and card top
-        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
-        local buttonY = ((gridBottom + self.cardY) / 2) - (buttonHeight / 2)
-
-        -- Helper functions for rounded-rect buttons
-        local function roundedRect(x, y, w, h, r, sc)
-            lg.rectangle('fill', x, y, w, h, r * sc, r * sc)
-        end
-        local function roundedRectLine(x, y, w, h, r, sc, lw)
-            lg.setLineWidth(lw)
-            lg.rectangle('line', x, y, w, h, r * sc, r * sc)
-        end
-        local function textCY(font, boxY, boxH)
-            return math.floor(boxY + (boxH - (font:getAscent() - font:getDescent())) / 2)
-        end
-
-        -- Buttons
-        if self.state == "setup" then
-            local buttonPadding = 20 * Constants.SCALE
-            -- Size button to fit the wider of the two possible labels
-            local readyW   = Fonts.medium:getWidth("READY")
-            local waitW    = Fonts.medium:getWidth("Esperando…")
-            local buttonWidth = math.max(readyW, waitW) + buttonPadding * 2
-            local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-
-            -- Custom ready button (Play style → Sandbox style after press)
-            local sc       = Constants.SCALE
-            local maxFloat = math.floor(4 * sc)
-            local shadowH  = math.floor(4 * sc)
-            local sp       = self._readySpring
-            local floatOff = math.floor(maxFloat * math.max(0, (sp.scale - 0.93) / 0.07))
-            local isWaiting = self.isOnline and self.localReady
-
-            -- Store hit rect for press/release handlers
-            self._readyBtnRect = { x = buttonX, y = buttonY - maxFloat, w = buttonWidth, h = buttonHeight + maxFloat }
-
-            if not isWaiting then
-                -- PLAY button style: warm tan, cream border, idle bob + rotation
-                local t       = love.timer.getTime()
-                local idleBob = math.sin(t * 1.8) * 2 * sc
-                local idleRot = math.sin(t * 1.3) * 0.012
-                local drawY   = buttonY - floatOff + math.floor(idleBob)
-
-                lg.setColor(0.031, 0.078, 0.118, 1)
-                roundedRect(buttonX + math.floor(2 * sc), buttonY + shadowH, buttonWidth, buttonHeight, 8, sc)
-
-                local pivX = buttonX + buttonWidth / 2
-                local pivY = drawY + buttonHeight / 2
-                local bx   = -buttonWidth / 2
-                local by   = -buttonHeight / 2
-                lg.push()
-                lg.translate(pivX, pivY)
-                lg.rotate(idleRot)
-                lg.scale(sp.scale, sp.scale)
-                lg.setColor(0.765, 0.639, 0.541, 1)
-                roundedRect(bx, by, buttonWidth, buttonHeight, 8, sc)
-                lg.setColor(0.965, 0.839, 0.741, 1)
-                roundedRectLine(bx, by, buttonWidth, buttonHeight, 8, sc, 2 * sc)
-                lg.setFont(Fonts.medium)
-                lg.setColor(1, 1, 1, 1)
-                lg.printf("READY", bx, textCY(Fonts.medium, by, buttonHeight), buttonWidth, 'center')
-                lg.pop()
-            else
-                -- SANDBOX button style: dusty mauve, same-color border, no bob/rotation
-                local drawY = buttonY - floatOff
-
-                lg.setColor(0.031, 0.078, 0.118, 1)
-                roundedRect(buttonX + math.floor(2 * sc), buttonY + shadowH, buttonWidth, buttonHeight, 8, sc)
-
-                local pivX = buttonX + buttonWidth / 2
-                local pivY = drawY + buttonHeight / 2
-                lg.push()
-                lg.translate(pivX, pivY)
-                lg.scale(sp.scale, sp.scale)
-                lg.translate(-pivX, -pivY)
-                lg.setColor(0.600, 0.459, 0.467, 1)
-                roundedRect(buttonX, drawY, buttonWidth, buttonHeight, 8, sc)
-                lg.setColor(0.600, 0.459, 0.467, 1)
-                roundedRectLine(buttonX, drawY, buttonWidth, buttonHeight, 8, sc, 2 * sc)
-                lg.setFont(Fonts.medium)
-                lg.setColor(1, 1, 1, 1)
-                lg.printf("Esperando…", buttonX, textCY(Fonts.medium, drawY, buttonHeight), buttonWidth, 'center')
-                lg.pop()
-            end
-
-            -- Reroll button (custom draw: play style when affordable, sandbox when not)
-            do
-                local rx        = self.rerollButtonX
-                local ry        = self.rerollButtonY
-                local rsz       = self.rerollButtonSize
-                local rsp       = self._rerollSpring
-                local rfloatOff = math.floor(maxFloat * math.max(0, (rsp.scale - 0.93) / 0.07))
-                local canAfford = self.isSandbox or (not self.freeRerollUsed) or self.playerCoins >= self.rerollCost
-
-                self._rerollBtnRect = { x = rx, y = ry - maxFloat, w = rsz, h = rsz + maxFloat }
-
-                -- Cost label above reroll button
-                do
-                    local labelH = Fonts.tiny:getHeight()
-                    local labelY = ry - maxFloat - labelH - math.floor(3 * sc)
-                    lg.setFont(Fonts.tiny)
-                    if not self.freeRerollUsed then
-                        lg.setColor(1, 1, 1, 0.6)
-                        lg.printf("Free", rx, labelY, rsz, 'center')
-                    else
-                        local iconH  = labelH
-                        local iconSc = iconH / self.goldIcon:getHeight()
-                        local iconW  = math.floor(self.goldIcon:getWidth() * iconSc)
-                        local numStr = "1"
-                        local numW   = Fonts.tiny:getWidth(numStr)
-                        local gap    = math.floor(2 * sc)
-                        local totalW = iconW + gap + numW
-                        local startX = rx + math.floor((rsz - totalW) / 2)
-                        lg.setColor(0.9, 0.85, 0.3, 1)
-                        lg.draw(self.goldIcon, startX, labelY, 0, iconSc, iconSc)
-                        lg.setFont(Fonts.tiny)
-                        lg.setColor(1, 1, 1, 1)
-                        lg.print(numStr, startX + iconW + gap, labelY)
-                    end
-                end
-
-                if canAfford then
-                    local t       = love.timer.getTime()
-                    local idleBob = math.sin(t * 1.8) * 2 * sc
-                    local idleRot = math.sin(t * 1.3) * 0.012
-                    local drawY   = ry - rfloatOff + math.floor(idleBob)
-
-                    lg.setColor(0.031, 0.078, 0.118, 1)
-                    roundedRect(rx + math.floor(2 * sc), ry + shadowH, rsz, rsz, 8, sc)
-
-                    local pivX = rx + rsz / 2
-                    local pivY = drawY + rsz / 2
-                    local bx   = -rsz / 2
-                    local by   = -rsz / 2
-                    lg.push()
-                    lg.translate(pivX, pivY)
-                    lg.rotate(idleRot)
-                    lg.scale(rsp.scale, rsp.scale)
-                    lg.setColor(0.765, 0.639, 0.541, 1)
-                    roundedRect(bx, by, rsz, rsz, 8, sc)
-                    lg.setColor(0.965, 0.839, 0.741, 1)
-                    roundedRectLine(bx, by, rsz, rsz, 8, sc, 2 * sc)
-                    lg.setFont(Fonts.medium)
-                    lg.setColor(1, 1, 1, 1)
-                    lg.printf("X", bx, textCY(Fonts.medium, by, rsz), rsz, 'center')
-                    lg.pop()
-                else
-                    local drawY = ry - rfloatOff
-
-                    lg.setColor(0.031, 0.078, 0.118, 1)
-                    roundedRect(rx + math.floor(2 * sc), ry + shadowH, rsz, rsz, 8, sc)
-
-                    local pivX = rx + rsz / 2
-                    local pivY = drawY + rsz / 2
-                    lg.push()
-                    lg.translate(pivX, pivY)
-                    lg.scale(rsp.scale, rsp.scale)
-                    lg.translate(-pivX, -pivY)
-                    lg.setColor(0.600, 0.459, 0.467, 1)
-                    roundedRect(rx, drawY, rsz, rsz, 8, sc)
-                    lg.setColor(0.600, 0.459, 0.467, 1)
-                    roundedRectLine(rx, drawY, rsz, rsz, 8, sc, 2 * sc)
-                    lg.setFont(Fonts.medium)
-                    lg.setColor(1, 1, 1, 1)
-                    lg.printf("X", rx, textCY(Fonts.medium, drawY, rsz), rsz, 'center')
-                    lg.pop()
-                end
-            end
-
-            -- Emote button (play style, left of cards, no action yet)
-            do
-                local ex        = self.emoteButtonX
-                local ey        = self.emoteButtonY
-                local esz       = self.rerollButtonSize
-                local esp       = self._emoteSpring
-                local efloatOff = math.floor(maxFloat * math.max(0, (esp.scale - 0.93) / 0.07))
-                local t         = love.timer.getTime()
-                local idleBob   = math.sin(t * 1.8 + 1.0) * 2 * sc  -- offset phase from reroll
-                local idleRot   = math.sin(t * 1.3 + 1.0) * 0.012
-                local drawY     = ey - efloatOff + math.floor(idleBob)
-
-                self._emoteBtnRect = { x = ex, y = ey - maxFloat, w = esz, h = esz + maxFloat }
-
-                lg.setColor(0.031, 0.078, 0.118, 1)
-                roundedRect(ex + math.floor(2 * sc), ey + shadowH, esz, esz, 8, sc)
-
-                local pivX = ex + esz / 2
-                local pivY = drawY + esz / 2
-                local bx   = -esz / 2
-                local by   = -esz / 2
-                lg.push()
-                lg.translate(pivX, pivY)
-                lg.rotate(idleRot)
-                lg.scale(esp.scale, esp.scale)
-                lg.setColor(0.765, 0.639, 0.541, 1)
-                roundedRect(bx, by, esz, esz, 8, sc)
-                lg.setColor(0.965, 0.839, 0.741, 1)
-                roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
-                lg.setFont(Fonts.medium)
-                lg.setColor(1, 1, 1, 1)
-                lg.printf("@", bx, textCY(Fonts.medium, by, esz), esz, 'center')
-                lg.pop()
-            end
-
-            -- Sandbox: MENU button at top-right corner
-            if self.isSandbox then
-                local menuBtnW = Fonts.medium:getWidth("MENU") + 20 * Constants.SCALE
-                local menuBtnH = buttonHeight
-                local menuBtnX = Constants.GAME_WIDTH - menuBtnW - 10 * Constants.SCALE
-                local menuBtn = self.suit:Button("MENU", {id="menu_btn"}, menuBtnX, 6 * Constants.SCALE, menuBtnW, menuBtnH)
-                if menuBtn.hit then
-                    AudioManager.playTap()
-                    Constants.PERSPECTIVE = 1
-                    local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('menu')
-                end
-            end
-        elseif self.state == "finished" then
-            if self.isTutorial then
-                -- Tutorial end: invite player to create an account
-                local btnText = "Play Online!"
-                local buttonPadding = 20 * Constants.SCALE
-                local textWidth = Fonts.medium:getWidth(btnText)
-                local buttonWidth = textWidth + buttonPadding * 2
-                local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-                local playBtn = self.suit:Button(btnText, {id="play_online_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
-                if playBtn.hit then
-                    AudioManager.playTap()
-                    love.filesystem.write("tutorial_done.dat", "1")
-                    Constants.PERSPECTIVE = 1
-                    local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('login')
-                end
-            else
-                local buttonText = self.isOnline and "IR AL MENÚ" or "RESTART"
-                local buttonPadding = 20 * Constants.SCALE
-                local textWidth = Fonts.medium:getWidth(buttonText)
-                local buttonWidth = textWidth + buttonPadding * 2
-                local buttonX = (Constants.GAME_WIDTH - buttonWidth) / 2
-
-                local restartButton = self.suit:Button(buttonText, {id="restart_btn"}, buttonX, buttonY, buttonWidth, buttonHeight)
-
-                if restartButton.hit then
-                    AudioManager.playTap()
-                    if self.isOnline then
-                        -- Keep socket alive so player can re-queue without re-logging in
-                        _G.GameSocket = self.socket
-                        Constants.PERSPECTIVE = 1
-                        local ScreenManager = require('lib.screen_manager')
-                        ScreenManager.switch('menu')
-                    else
-                        print("Restart button clicked!")
-                        self:init()
-                    end
-                end
-            end
-        end
-    end
-
-    function self:mousemoved(x, y, dx, dy)
-        self.mouseX = x
-        self.mouseY = y
-
-        -- Update SUIT mouse position
-        self.suit:updateMouse(x, y)
-
-        -- Track if user has moved significantly (for tap vs drag detection)
-        if self.pressedUnit or self.draggedUnit or self.draggedCard or self.pressedCard then
-            local distMoved = math.sqrt((x - self.pressX)^2 + (y - self.pressY)^2)
-            if distMoved > 10 then  -- Increased threshold for mobile
-                self.hasMoved = true
-            end
-        end
-
-        -- Check if we should start dragging a pressed card (only during setup AND with movement)
-        if self.pressedCard and not self.draggedCard and self.state == "setup" and self.hasMoved then
-            -- Start dragging the card
-            self.draggedCard = self.pressedCard
-            self.pressedCard:startDrag(self.pressX, self.pressY)
-            self.pressedCard:updateDrag(x, y)
-
-            -- Clear pressed state
-            self.pressedCard = nil
-            self.pressedCardIndex = nil
-        end
-
-        -- Check if we should start dragging a pressed unit (only during setup AND with movement)
-        -- Enemy units cannot be repositioned; only tap them for tooltip info.
-        local isOwnPressedUnit = not self.pressedUnit
-            or not self.isOnline
-            or self.pressedUnit.owner == self.playerRole
-        if self.pressedUnit and not self.draggedUnit and self.state == "setup" and self.hasMoved and isOwnPressedUnit then
-            -- Start dragging the unit
-            self.tooltip:hide()
-
-            self.draggedUnit = self.pressedUnit
-            self.draggedUnitOriginalCol = self.pressedUnitCol
-            self.draggedUnitOriginalRow = self.pressedUnitRow
-
-            -- Calculate offset so unit doesn't jump to cursor.
-            -- Use gridToWorld so the perspective flip (P2) is accounted for.
-            local unitX, unitY = self.grid:gridToWorld(self.pressedUnitCol, self.pressedUnitRow)
-            self.draggedUnitOffsetX = self.pressX - unitX
-            self.draggedUnitOffsetY = self.pressY - unitY
-
-            -- Initialize drag position
-            self.draggedUnit.dragX = unitX
-            self.draggedUnit.dragY = unitY
-
-            -- Remove unit from grid temporarily
-            self.grid:removeUnit(self.pressedUnitCol, self.pressedUnitRow)
-
-            -- Clear pressed state
-            self.pressedUnit = nil
-            self.pressedUnitCol = nil
-            self.pressedUnitRow = nil
-        end
-
-        -- Update dragged card position
-        if self.draggedCard then
-            self.draggedCard:updateDrag(x, y)
-        end
-
-        -- Update dragged unit position
-        if self.draggedUnit then
-            -- Store the screen position for rendering
-            self.draggedUnit.dragX = x - self.draggedUnitOffsetX
-            self.draggedUnit.dragY = y - self.draggedUnitOffsetY
-        end
-    end
-
-    function self:touchmoved(id, x, y, dx, dy, pressure)
-        self:mousemoved(x, y, dx, dy)
-    end
-
-    function self:mousepressed(x, y, button, istouch)
-        -- Skip if this is a touch-generated mouse event (we handle it in touchpressed)
-        if istouch and self.activeTouchId then
-            return
-        end
-
-        -- Update SUIT mouse state
-        if button == 1 then
-            self.suit:updateMouse(x, y, true)
-        end
-
-        if button == 1 then
-            -- Always store initial press position for tap vs drag detection
-            self.pressX = x
-            self.pressY = y
-            self.pressedUnit = nil
-            self.hasMoved = false  -- Reset movement flag
-
-            -- Check if clicking on a unit (in any game state)
-            local col, row = self.grid:worldToGrid(x, y)
-            if col and row then
-                local unit = self.grid:getUnitAtCell(col, row)
-                if unit then
-                    -- Store the unit but don't start dragging yet
-                    -- Drag threshold will determine if this is a tap or drag
-                    self.pressedUnit = unit
-                    self.pressedUnitCol = col
-                    self.pressedUnitRow = row
-                    return
-                end
-            end
-
-            -- During setup, also check for card press (tap vs drag detection)
-            if self.state == "setup" then
-                for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
-                    local card = self.cards[i]
-                    if card:contains(x, y) then
-                        -- Hide tooltip when pressing card
-                        self.tooltip:hide()
-
-                        -- Clear pressedUnit to prevent tooltip on card release
-                        self.pressedUnit = nil
-                        self.pressedUnitCol = nil
-                        self.pressedUnitRow = nil
-
-                        -- Store the card but don't start dragging yet
-                        -- Drag threshold will determine if this is a tap or drag
-                        self.pressedCard = card
-                        self.pressedCardIndex = i
-                        return
-                    end
-                end
-            end
-        end
-
-        -- Spring squish for ready + reroll buttons
-        if self.state == "setup" then
-            if self._readyBtnRect then
-                local rb = self._readyBtnRect
-                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                    self._readySpring.pressed = true
-                end
-            end
-            if self._rerollBtnRect then
-                local rb = self._rerollBtnRect
-                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                    self._rerollSpring.pressed = true
-                end
-            end
-            if self._emoteBtnRect then
-                local rb = self._emoteBtnRect
-                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                    self._emoteSpring.pressed = true
-                end
-            end
-        end
-    end
-
-    -- Shared release logic (called from both mousereleased and touchreleased)
-    function self:handleRelease(x, y)
-        -- Tutorial bubble tap-to-advance (does not consume the event)
-        if self.isTutorial and self.tutorialManager then
-            self.tutorialManager:handleTap(x, y)
-        end
-
-        -- ── Ready + reroll + emote buttons ───────────────────────────────────
-        self._readySpring.pressed  = false
-        self._rerollSpring.pressed = false
-        self._emoteSpring.pressed  = false
-        if self.state == "setup" and self._readyBtnRect then
-            local rb = self._readyBtnRect
-            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                if not (self.isOnline and self.localReady) then
-                    AudioManager.playTap()
-                    if self.isOnline then
-                        self.localReady = true
-                        self:sendMsg({type = "ready"})
-                        self:checkBattleStart()
-                    else
-                        self.timer = 0
-                        self:beginBattleCountdown()
-                    end
-                end
-                return
-            end
-        end
-
-        -- ── Reroll button ─────────────────────────────────────────────────────
-        if self.state == "setup" and self._rerollBtnRect then
-            local rb = self._rerollBtnRect
-            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                if self.isSandbox or (not self.freeRerollUsed) or self.playerCoins >= self.rerollCost then
-                    if not self.isSandbox then
-                        if not self.freeRerollUsed then
-                            self.freeRerollUsed = true  -- first reroll is free
-                            AudioManager.playTap()
-                        else
-                            self.playerCoins = self.playerCoins - self.rerollCost
-                            AudioManager.playSFX("reroll.mp3")
-                        end
-                    else
-                        AudioManager.playTap()
-                    end
-                    if self.usingDeck then
-                        if self.isSandbox and DeckManager.pileSize() < 3 then
-                            DeckManager.returnCards(self.drawnCardTypes)
-                            self.drawnCardTypes = {}
-                            DeckManager.initDrawPile()
-                            self.drawnCardTypes = DeckManager.drawCards(3)
-                            self:_launchExitAndEnter(self.drawnCardTypes)
-                        else
-                            local newTypes = DeckManager.reshuffleAndDraw(self.drawnCardTypes, 3)
-                            self.drawnCardTypes = newTypes
-                            self:_launchExitAndEnter(newTypes)
-                        end
-                    else
-                        self:dealSetupCards()
-                    end
-                end
-                return
-            end
-        end
-
-        -- ── Tooltip upgrade button ────────────────────────────────────────────
-        if self.tooltip:isVisible() then
-            local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
-            if upgradeIndex then
-                local unit = self.tooltip.unit
-                -- Cannot upgrade enemy units in online mode
-                if self.isOnline and unit.owner ~= self.playerRole then
-                    return
-                end
-                local cost = UnitRegistry.unitCosts[unit.unitType] or 3
-                if not self.isSandbox and self.playerCoins < cost then
-                    print("Not enough coins for upgrade")
-                    self.pressedUnit = nil
-                    self.pressedUnitCol = nil
-                    self.pressedUnitRow = nil
-                    return
-                end
-                if unit:upgrade(upgradeIndex) then
-                    if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
-                    print(string.format("Upgraded %s with upgrade %d to level %d",
-                          unit.unitType, upgradeIndex, unit.level))
-                    for i, card in ipairs(self.cards) do
-                        if card.unitType == unit.unitType then
-                            table.remove(self.cards, i); break
-                        end
-                    end
-                    for j, u in ipairs(self.drawnCardTypes) do
-                        if u == unit.unitType then
-                            table.remove(self.drawnCardTypes, j); break
-                        end
-                    end
-                    -- Send upgrade over the network
-                    self:sendMsg({type = "upgrade_unit",
-                                  col = unit.col, row = unit.row,
-                                  upgradeIndex = upgradeIndex})
-                    local hasMatchingCard = false
-                    for _, card in ipairs(self.cards) do
-                        if card.unitType == unit.unitType then
-                            hasMatchingCard = true; break
-                        end
-                    end
-                    self.tooltip:show(unit, hasMatchingCard)
-                end
-                self.pressedUnit = nil
-                self.pressedUnitCol = nil
-                self.pressedUnitRow = nil
-                return
-            end
-        end
-
-        -- ── Tap on unit → tooltip ─────────────────────────────────────────────
-        if self.pressedUnit and not self.draggedUnit then
-            local unit = self.pressedUnit
-            self.pressedUnit = nil
-            self.pressedUnitCol = nil
-            self.pressedUnitRow = nil
-            -- Only show upgrade button for units the local player owns
-            local isOwnUnit = not self.isOnline or unit.owner == self.playerRole
-            local hasMatchingCard = false
-            if isOwnUnit then
-                for _, card in ipairs(self.cards) do
-                    if card.unitType == unit.unitType then
-                        hasMatchingCard = true; break
-                    end
-                end
-            end
-            self.tooltip:toggle(unit, hasMatchingCard)
-            return
-        end
-
-        -- ── Tap on card → tooltip ─────────────────────────────────────────────
-        if self.pressedCard and not self.draggedCard then
-            local card = self.pressedCard
-            self.pressedCard = nil
-            self.pressedCardIndex = nil
-            self.tooltip:showCard(card)
-            return
-        end
-
-        -- ── Unit repositioning drag ───────────────────────────────────────────
-        if self.draggedUnit then
-            local col, row = self.grid:worldToGrid(x, y)
-            local origCol = self.draggedUnitOriginalCol
-            local origRow = self.draggedUnitOriginalRow
-            -- In online mode only allow repositioning within own zone
-            local zoneOwner = self.isOnline and self.playerRole or nil
-            if col and row and self.grid:canPlaceUnit(col, row, zoneOwner) then
-                self.draggedUnit.col = col
-                self.draggedUnit.row = row
-                self.grid:placeUnit(col, row, self.draggedUnit)
-                AudioManager.playSFX("place.mp3")
-                -- Sync: tell opponent to mirror the move
-                self:sendMsg({type = "remove_unit", col = origCol, row = origRow})
-                self:sendMsg({type = "place_unit",
-                              unitType = self.draggedUnit.unitType,
-                              col = col, row = row,
-                              owner = self.draggedUnit.owner,
-                              level = self.draggedUnit.level,
-                              activeUpgrades = self.draggedUnit.activeUpgrades})
-                print(string.format("Repositioned unit to [%d, %d]", col, row))
-            else
-                self.draggedUnit.col = origCol
-                self.draggedUnit.row = origRow
-                self.grid:placeUnit(origCol, origRow, self.draggedUnit)
-                print(string.format("Returned unit to [%d, %d]", origCol, origRow))
-            end
-            self.draggedUnit.dragX = nil
-            self.draggedUnit.dragY = nil
-            self.draggedUnit = nil
-            self.draggedUnitOriginalCol = nil
-            self.draggedUnitOriginalRow = nil
-            return
-        end
-
-        -- ── Card placement drag ───────────────────────────────────────────────
-        if self.draggedCard then
-            local col, row = self.grid:worldToGrid(x, y)
-            if col and row then
-                local owner    = self.grid:getOwner(row)
-                local unitType = self.draggedCard.unitType
-                local cell     = self.grid:getCell(col, row)
-                local cost     = UnitRegistry.unitCosts[unitType] or 3
-                -- In online mode restrict placement to local player's zone
-                if self.isOnline and owner ~= self.playerRole then
-                    self.draggedCard:snapBack()
-                elseif not self.isSandbox and self.playerCoins < cost then
-                    print("Not enough coins")
-                    self.draggedCard:snapBack()
-                elseif cell and cell.occupied and cell.unit then
-                    local targetUnit = cell.unit
-                    if targetUnit.unitType == unitType
-                       and targetUnit.owner == owner
-                       and targetUnit.level < 3 then
-                        if targetUnit:upgrade() then
-                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
-                            print(string.format("Upgraded Player %d %s to level %d (direct drop)",
-                                  owner, unitType, targetUnit.level))
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i); break
-                                end
-                            end
-                            for j, u in ipairs(self.drawnCardTypes) do
-                                if u == unitType then
-                                    table.remove(self.drawnCardTypes, j); break
-                                end
-                            end
-                            self:sendMsg({type = "upgrade_unit",
-                                          col = col, row = row,
-                                          upgradeIndex = nil})
-                        else
-                            print(string.format("Player %d %s is already max level", owner, unitType))
-                            self.draggedCard:snapBack()
-                        end
-                    else
-                        self.draggedCard:snapBack()
-                    end
-                elseif self.grid:canPlaceUnit(col, row, self.isOnline and self.playerRole or nil) then
-                    local existingUnit = self.grid:findUnitByTypeAndOwner(unitType, owner)
-                    if existingUnit then
-                        if existingUnit:upgrade() then
-                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
-                            print(string.format("Upgraded Player %d %s to level %d",
-                                  owner, unitType, existingUnit.level))
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i); break
-                                end
-                            end
-                            for j, u in ipairs(self.drawnCardTypes) do
-                                if u == unitType then
-                                    table.remove(self.drawnCardTypes, j); break
-                                end
-                            end
-                            self:sendMsg({type = "upgrade_unit",
-                                          col = existingUnit.col, row = existingUnit.row,
-                                          upgradeIndex = nil})
-                        else
-                            print(string.format("Player %d %s is already max level", owner, unitType))
-                            self.draggedCard:snapBack()
-                        end
-                    else
-                        local unitSprites = self.sprites[unitType]
-                        local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
-                        if self.grid:placeUnit(col, row, unit) then
-                            AudioManager.playSFX("place.mp3")
-                            if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
-                            for i, card in ipairs(self.cards) do
-                                if card == self.draggedCard then
-                                    table.remove(self.cards, i); break
-                                end
-                            end
-                            for j, u in ipairs(self.drawnCardTypes) do
-                                if u == unitType then
-                                    table.remove(self.drawnCardTypes, j); break
-                                end
-                            end
-                            self:sendMsg({type = "place_unit",
-                                          unitType = unitType,
-                                          col = col, row = row,
-                                          owner = owner})
-                            print(string.format("Placed Player %d %s at [%d, %d]",
-                                  owner, unitType, col, row))
-                        end
-                    end
-                else
-                    self.draggedCard:snapBack()
-                end
-            else
-                self.draggedCard:snapBack()
-            end
-            self.draggedCard:stopDrag()
-            self.draggedCard = nil
-            return
-        end
-
-        -- ── Empty tap → hide tooltip ──────────────────────────────────────────
-        if self.tooltip:isVisible() then
-            self.tooltip:hide()
-        end
-    end
-
-    function self:mousereleased(x, y, button, istouch)
-        -- Skip if this is a touch-generated mouse event (we handle it in touchreleased)
-        if istouch and self.activeTouchId then
-            return
-        end
-
-        -- Update SUIT mouse state
-        if button == 1 then
-            self.suit:updateMouse(x, y, false)
-        end
-
-        if button == 1 then
-            self:handleRelease(x, y)
-        end
-    end
-
-
-    function self:touchpressed(id, x, y, dx, dy, pressure)
-        -- Track the active touch to prevent double-handling
-        self.activeTouchId = id
-
-        -- Handle the touch event (bypasses the istouch check since we called it directly)
-        -- Update SUIT mouse state
-        self.suit:updateMouse(x, y, true)
-
-        -- Always store initial press position for tap vs drag detection
-        self.pressX = x
-        self.pressY = y
-        self.pressedUnit = nil
-        self.hasMoved = false  -- Reset movement flag
-
-        -- Check if clicking on a unit (in any game state)
-        local col, row = self.grid:worldToGrid(x, y)
-        if col and row then
-            local unit = self.grid:getUnitAtCell(col, row)
-            if unit then
-                -- Store the unit but don't start dragging yet
-                -- Drag threshold will determine if this is a tap or drag
-                self.pressedUnit = unit
-                self.pressedUnitCol = col
-                self.pressedUnitRow = row
-                return
-            end
-        end
-
-        -- During setup, also check for card press (tap vs drag detection)
-        if self.state == "setup" then
-            for i = #self.cards, 1, -1 do  -- Iterate backwards for proper z-order
-                local card = self.cards[i]
-                if card:contains(x, y) then
-                    -- Hide tooltip when pressing card
-                    self.tooltip:hide()
-
-                    -- Clear pressedUnit to prevent tooltip on card release
-                    self.pressedUnit = nil
-                    self.pressedUnitCol = nil
-                    self.pressedUnitRow = nil
-
-                    -- Store the card but don't start dragging yet
-                    -- Drag threshold will determine if this is a tap or drag
-                    self.pressedCard = card
-                    self.pressedCardIndex = i
-                    return
-                end
-            end
-        end
-
-        -- Spring squish for ready + reroll + emote buttons
-        if self.state == "setup" then
-            if self._readyBtnRect then
-                local rb = self._readyBtnRect
-                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                    self._readySpring.pressed = true
-                end
-            end
-            if self._rerollBtnRect then
-                local rb = self._rerollBtnRect
-                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                    self._rerollSpring.pressed = true
-                end
-            end
-            if self._emoteBtnRect then
-                local rb = self._emoteBtnRect
-                if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
-                    self._emoteSpring.pressed = true
-                end
-            end
-        end
-    end
-
-    function self:touchreleased(id, x, y, dx, dy, pressure)
-        if self.activeTouchId ~= id then return end
-        self.activeTouchId = nil
-        self.suit:updateMouse(x, y, false)
-        self:handleRelease(x, y)
-    end
-
-    function self:keypressed(key)
-        if key == 'escape' then
-            love.event.quit()
-        elseif key == 'r' then
-            -- Reset
-            self:init()
-        end
-    end
-
-    function self:focus(hasFocus)
-        if hasFocus and self.isOnline and self.socket then
-            -- Returning from background: if socket died mid-game, treat as disconnect
-            if not self.socket:isConnected() and self.state ~= "finished" then
-                print("[GAME] Socket lost while backgrounded, triggering disconnect")
-                self.opponentDisconnected = true
-            end
-        end
-    end
-
-    function self:close()
-        -- Unregister network callbacks so stale handlers don't fire in future games
-        if self.socket then
-            if self._cb_relay      then self.socket:removeCallback(self._cb_relay)      end
-            if self._cb_oppDisconn then self.socket:removeCallback(self._cb_oppDisconn) end
-            if self._cb_disconnect then self.socket:removeCallback(self._cb_disconnect) end
-        end
-        -- Reset global perspective when leaving the game screen
-        Constants.PERSPECTIVE = 1
-        AudioManager.setBattleMode(false)
-    end
-
-    -- Check if all attack animations have completed
-    function self:areAllAnimationsComplete()
-        local allUnits = self.grid:getAllUnits()
-        for _, unit in ipairs(allUnits) do
-            -- Check if unit is mid-attack animation
-            if unit.attackAnimProgress < 1 and unit.attackTargetCol and unit.attackTargetRow then
-                return false
-            end
-
-            -- Check for ranged units with projectiles in flight
-            if unit.arrows and #unit.arrows > 0 then
-                return false
-            end
-        end
-        return true
-    end
-
-    return self
+    AudioManager.setBattleMode(true)
 end
 
-return GameScreen
+-- ── Network helpers ───────────────────────────────────────────────────────────
+
+sendMsg = function(data)
+    if S.isOnline and S.socket then
+        S.socket:send("relay", data)
+    end
+end
+
+registerNetworkCallbacks = function()
+    local s = S.socket
+    S._cb_relay = s:on("relay", function(data)
+        handleNetworkMessage(data)
+    end)
+    S._cb_oppDisconn = s:on("opponent_disconnected", function()
+        S.opponentDisconnected = true
+    end)
+    S._cb_disconnect = s:on("disconnect", function()
+        print("[GAME] Socket disconnected")
+        if S.state ~= "finished" then
+            S.opponentDisconnected = true
+        end
+    end)
+end
+
+computeBoardHash = function()
+    local entries = {}
+    for row = 1, S.grid.rows do
+        for col = 1, S.grid.cols do
+            local cell = S.grid.cells[row][col]
+            if cell.unit then
+                local u = cell.unit
+                table.insert(entries, string.format("%s,%d,%d,%d,%d",
+                    u.unitType, u.col, u.row, u.owner, u.level or 0))
+            end
+        end
+    end
+    table.sort(entries)
+    return table.concat(entries, "|")
+end
+
+checkBoardSync = function()
+    if not (S.localBoardHash and S.opponentBoardHash) then return end
+    if S.localBoardHash == S.opponentBoardHash then
+        print("[SYNC] Board OK for round " .. S.roundNumber)
+    else
+        print("[DESYNC] Round " .. S.roundNumber .. " board mismatch!")
+        print("  Local:  " .. S.localBoardHash)
+        print("  Remote: " .. S.opponentBoardHash)
+    end
+    S.localBoardHash    = nil
+    S.opponentBoardHash = nil
+end
+
+applyOpponentMsg = function(msg)
+    local t = msg.type
+    if t == "place_unit" then
+        local unitSprites = S.sprites[msg.unitType]
+        local unit = UnitRegistry.createUnit(msg.unitType, msg.row, msg.col, msg.owner, unitSprites)
+        if msg.activeUpgrades then
+            for _, idx in ipairs(msg.activeUpgrades) do
+                unit:upgrade(idx)
+            end
+        end
+        S.grid:placeUnit(msg.col, msg.row, unit)
+    elseif t == "remove_unit" then
+        S.grid:removeUnit(msg.col, msg.row)
+    elseif t == "upgrade_unit" then
+        local unit = S.grid:getUnitAtCell(msg.col, msg.row)
+        if unit then unit:upgrade(msg.upgradeIndex) end
+    end
+end
+
+handleNetworkMessage = function(msg)
+    local t = msg.type
+
+    if t == "place_unit" or t == "remove_unit" or t == "upgrade_unit" then
+        local inSetup = S.state == "setup" or S.state == "intermission"
+                     or S.state == "pre_battle"
+        if inSetup then
+            table.insert(S.pendingOpponentMsgs, msg)
+        else
+            applyOpponentMsg(msg)
+        end
+
+    elseif t == "ready" then
+        S.opponentReady = true
+        checkBattleStart()
+
+    elseif t == "battle_start" then
+        math.randomseed(msg.seed)
+        beginBattleCountdown()
+
+    elseif t == "round_end_ready" then
+        S.opponentRoundEndReady = true
+
+    elseif t == "board_sync_check" then
+        S.opponentBoardHash = msg.hash
+        checkBoardSync()
+    end
+end
+
+checkBattleStart = function()
+    if not (S.localReady and S.opponentReady) then return end
+    if S.playerRole == 1 then
+        local seed = os.time()
+        math.randomseed(seed)
+        sendMsg({type = "battle_start", seed = seed})
+        beginBattleCountdown()
+    end
+end
+
+beginBattleCountdown = function()
+    if S.usingDeck and #S.drawnCardTypes > 0 then
+        DeckManager.returnCards(S.drawnCardTypes)
+        S.drawnCardTypes = {}
+    end
+    S.cards = {}
+    S.state          = "pre_battle"
+    S.preBattleTimer = 1
+end
+
+startBattle = function()
+    S.timer = 0
+    S.state = "battle"
+    AudioManager.setBattleMode(true)
+    AudioManager.playSFX("battle-start.mp3")
+    S.battleAccumulator = 0
+    S.battleStepCount   = 0
+
+    for _, msg in ipairs(S.pendingOpponentMsgs) do
+        applyOpponentMsg(msg)
+    end
+    S.pendingOpponentMsgs = {}
+
+    if S.isOnline then
+        S.localBoardHash = computeBoardHash()
+        sendMsg({type = "board_sync_check", hash = S.localBoardHash})
+        checkBoardSync()
+    end
+
+    local allUnits = S.grid:getAllUnits()
+    S.battleUnitsSnapshot = {}
+    for _, unit in ipairs(allUnits) do
+        unit.homeCol = unit.col
+        unit.homeRow = unit.row
+        table.insert(S.battleUnitsSnapshot, unit)
+        unit:onBattleStart(S.grid)
+    end
+
+    for _, unit in ipairs(allUnits) do
+        local isAlly = (unit.owner == S.playerRole)
+        unit.onDeathCallback = function()
+            if isAlly then
+                AudioManager.playSFX("ally-death.mp3")
+            else
+                AudioManager.playSFX("enemy-death.mp3", 0.75)
+            end
+        end
+    end
+
+    local maxActionDuration = 0
+    for _, unit in ipairs(allUnits) do
+        if unit.isActionUnit and unit.actionDuration > maxActionDuration then
+            maxActionDuration = unit.actionDuration
+        end
+    end
+    if maxActionDuration > 0 then
+        for _, unit in ipairs(allUnits) do
+            if not unit.isActionUnit then
+                unit.actionDelayTimer = maxActionDuration
+            end
+        end
+    end
+end
+
+resetRound = function()
+    local allUnits = S.battleUnitsSnapshot
+
+    for row = 1, S.grid.rows do
+        for col = 1, S.grid.cols do
+            local cell = S.grid.cells[row][col]
+            cell.unit     = nil
+            cell.occupied = false
+            cell.reserved = false
+        end
+    end
+
+    for _, unit in ipairs(allUnits) do
+        if unit.homeCol and unit.homeRow then
+            unit.col = unit.homeCol
+            unit.row = unit.homeRow
+            unit:resetCombatState()
+            S.grid:placeUnit(unit.homeCol, unit.homeRow, unit)
+        end
+    end
+
+    S.roundNumber          = S.roundNumber + 1
+    S.winner               = nil
+    S.localReady           = false
+    S.opponentReady        = false
+    S.freeRerollUsed       = false
+    S.playerCoins          = S.playerCoins + 6
+    S.pendingOpponentMsgs  = {}
+    S.draggedUnit          = nil
+    S.draggedCard          = nil
+    S.pressedUnit          = nil
+    S.pressedCard          = nil
+    S.tooltip:hide()
+    dealSetupCards()
+
+    S.state = "setup"
+    S.timer = 30
+end
+
+generateCards = function()
+    S.cards = {}
+    local cardWidth   = 80  * Constants.SCALE
+    local cardHeight  = 100 * Constants.SCALE
+    local cardSpacing = 30  * Constants.SCALE
+    local totalWidth  = (cardWidth * 3) + (cardSpacing * 2)
+    local startX      = (Constants.GAME_WIDTH - totalWidth) / 2
+
+    local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+    S.cardY = math.floor((gridBottom + Constants.GAME_HEIGHT) / 2 - cardHeight / 2)
+    local cardY = S.cardY
+
+    for i = 1, 3 do
+        local x        = startX + (i - 1) * (cardWidth + cardSpacing)
+        local unitType = UnitRegistry.getRandomUnitType()
+        local sprite   = S.sprites[unitType].front
+        local card     = Card(x, cardY, sprite, i, unitType)
+        table.insert(S.cards, card)
+    end
+
+    S.rerollButtonSize = 40 * Constants.SCALE
+    local cardsEndX = startX + totalWidth
+    S.rerollButtonX = cardsEndX + cardSpacing
+    S.rerollButtonY = cardY + (cardHeight - S.rerollButtonSize) / 2
+    S.emoteButtonX  = startX - cardSpacing - S.rerollButtonSize
+    S.emoteButtonY  = S.rerollButtonY
+end
+
+rebuildCardsFromTypes = function(unitTypes)
+    S.cards = {}
+    local cardWidth   = 80  * Constants.SCALE
+    local cardHeight  = 100 * Constants.SCALE
+    local cardSpacing = 30  * Constants.SCALE
+    local totalWidth  = (cardWidth * 3) + (cardSpacing * 2)
+    local startX      = (Constants.GAME_WIDTH - totalWidth) / 2
+    local gridBottom  = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+    S.cardY = math.floor((gridBottom + Constants.GAME_HEIGHT) / 2 - cardHeight / 2)
+    local cardY = S.cardY
+
+    for i, unitType in ipairs(unitTypes) do
+        local x          = startX + (i - 1) * (cardWidth + cardSpacing)
+        local sprite     = S.sprites[unitType].front
+        local trimBottom = S.sprites[unitType].frontTrimBottom or 0
+        local card       = Card(x, cardY, sprite, i, unitType, trimBottom)
+        card.upFrames    = S.sprites[unitType] and S.sprites[unitType].upFrames
+        table.insert(S.cards, card)
+    end
+
+    S.rerollButtonSize = 40 * Constants.SCALE
+    local cardsEndX = startX + totalWidth
+    S.rerollButtonX = cardsEndX + cardSpacing
+    S.rerollButtonY = cardY + (cardHeight - S.rerollButtonSize) / 2
+    S.emoteButtonX  = startX - cardSpacing - S.rerollButtonSize
+    S.emoteButtonY  = S.rerollButtonY
+end
+
+launchExitAndEnter = function(unitTypes)
+    S.exitingCards = S.exitingCards or {}
+    for i, card in ipairs(S.cards) do
+        card:startExitAnim((i % 2 == 0) and 1 or -1)
+        table.insert(S.exitingCards, card)
+    end
+    rebuildCardsFromTypes(unitTypes)
+    local offscreenX = Constants.GAME_WIDTH + 80 * Constants.SCALE
+    for i, card in ipairs(S.cards) do
+        card:setEnterAnim(offscreenX, card.x, card.y, 0.05 + (i - 1) * 0.06)
+    end
+end
+
+dealSetupCards = function()
+    if S.usingDeck and #S.drawnCardTypes > 0 then
+        DeckManager.returnCards(S.drawnCardTypes)
+        S.drawnCardTypes = {}
+    end
+
+    local unitTypes
+    if S.isTutorial then
+        local pool = {"boney", "marrow", "knight", "mage"}
+        unitTypes = {}
+        for _ = 1, 3 do
+            table.insert(unitTypes, pool[math.random(#pool)])
+        end
+    elseif S.usingDeck then
+        unitTypes = DeckManager.drawCards(3)
+        if S.isSandbox then
+            while #unitTypes < 3 do
+                DeckManager.initDrawPile()
+                local extra = DeckManager.drawCards(3 - #unitTypes)
+                if #extra == 0 then break end
+                for _, u in ipairs(extra) do table.insert(unitTypes, u) end
+            end
+        end
+    else
+        unitTypes = {}
+        for _ = 1, 3 do
+            table.insert(unitTypes, UnitRegistry.getRandomUnitType())
+        end
+    end
+
+    S.drawnCardTypes = unitTypes
+    launchExitAndEnter(unitTypes)
+end
+
+enterFinishedState = function(winnerId)
+    S.state  = "finished"
+    S.winner = winnerId
+
+    if S.isOnline and not S.isSandbox and not S.trophyChange then
+        local didWin    = (winnerId == S.playerRole)
+        S.trophyChange  = didWin and 20 or -15
+        S.goldEarned    = didWin and 10 or 5
+
+        if not S.matchResultSent then
+            S.matchResultSent = true
+            if S.socket then
+                S.socket:send("match_result", {
+                    winner_id = didWin and (_G.PlayerData and _G.PlayerData.id or 0) or 0,
+                    did_win   = didWin
+                })
+            end
+
+            S.playerTrophies = math.max(0, S.playerTrophies + S.trophyChange)
+            if _G.PlayerData then
+                _G.PlayerData.trophies = S.playerTrophies
+                _G.PlayerData.gold     = (_G.PlayerData.gold or 0) + S.goldEarned
+            end
+        end
+
+        if S.socket and not S._xpHandler then
+            S._xpHandler = S.socket:on("currency_update", function(data)
+                if _G.PlayerData then
+                    if data.xp      ~= nil then _G.PlayerData.xp      = data.xp      end
+                    if data.level   ~= nil then _G.PlayerData.level   = data.level   end
+                    if data.gold    ~= nil then _G.PlayerData.gold    = data.gold    end
+                    if data.gems    ~= nil then _G.PlayerData.gems    = data.gems    end
+                    if data.unlocks ~= nil then _G.PlayerData.unlocks = data.unlocks end
+                end
+            end)
+        end
+    end
+end
+
+-- ── Game loop ─────────────────────────────────────────────────────────────────
+
+local function onUpdate(event)
+    local now = event.time / 1000
+    local dt  = math.min(now - (S._lastTime or now), 1 / 30)
+    S._lastTime = now
+
+    if S.isTutorial and S.tutorialManager then
+        S.tutorialManager:update(dt)
+    end
+
+    if S.isOnline and S.socket then
+        local ok, err = pcall(function() S.socket:update() end)
+        if not ok then
+            print("[GAME] Socket error: " .. tostring(err))
+            S.opponentDisconnected = true
+        end
+    end
+
+    if S.opponentDisconnected and S.state ~= "finished" then
+        S.opponentDisconnected = false
+        enterFinishedState(S.playerRole)
+        S.statusMsg = "Oponente desconectado. ¡Ganaste!"
+    end
+
+    if S.state == "intermission" then
+        S.intermissionTimer = S.intermissionTimer - dt
+        if S.intermissionTimer <= 0 then
+            if S.isTutorial then
+                local w = S.pendingWinner or 1
+                S.pendingWinner = nil
+                enterFinishedState(w)
+            else
+                local w = S.pendingWinner
+                S.pendingWinner = nil
+                if w == 1 then
+                    S.p2Lives = S.p2Lives - 1
+                    if S.p2Lives <= 0 then
+                        if S.isSandbox then S.p2Lives = 3; resetRound() else enterFinishedState(1) end
+                    else resetRound() end
+                elseif w == 2 then
+                    S.p1Lives = S.p1Lives - 1
+                    if S.p1Lives <= 0 then
+                        if S.isSandbox then S.p1Lives = 3; resetRound() else enterFinishedState(2) end
+                    else resetRound() end
+                else
+                    S.state = "setup"
+                end
+            end
+        end
+    end
+
+    if S.state == "pre_battle" then
+        S.preBattleTimer = S.preBattleTimer - dt
+        if S.preBattleTimer <= 0 then
+            startBattle()
+        end
+    end
+
+    if S.state == "setup" and not S.isTutorial then
+        S.timer = S.timer - dt
+        if S.timer <= 0 then
+            S.timer = 0
+            if not S.isOnline then
+                beginBattleCountdown()
+            elseif not S.localReady then
+                S.localReady = true
+                sendMsg({type = "ready"})
+                checkBattleStart()
+            end
+        end
+    end
+
+    if S.state == "setup" and #S.cards > 0 then
+        local upgradeableTypes = {}
+        for _, unit in ipairs(S.grid:getAllUnits()) do
+            local isOwn = (not S.isOnline) or (unit.owner == S.playerRole)
+            if isOwn and not unit.isDead and unit.level < 3 then
+                upgradeableTypes[unit.unitType] = true
+            end
+        end
+        local CARD_ANIM_DURATION = 6 / 8
+        for _, card in ipairs(S.cards) do
+            card:update(dt)
+            if upgradeableTypes[card.unitType] then
+                if card.upAnimTimer <= 0 then card.upAnimTimer = CARD_ANIM_DURATION end
+            else
+                card.upAnimTimer = 0
+            end
+        end
+    end
+
+    if S.exitingCards and #S.exitingCards > 0 then
+        for i = #S.exitingCards, 1, -1 do
+            local card = S.exitingCards[i]
+            card:update(dt)
+            if not card.isExiting then table.remove(S.exitingCards, i) end
+        end
+    end
+
+    if S.state == "battle" then
+        local FIXED_DT = 1 / 60
+        S.battleAccumulator = S.battleAccumulator + dt
+        while S.battleAccumulator >= FIXED_DT do
+            S.battleAccumulator = S.battleAccumulator - FIXED_DT
+            S.battleStepCount   = S.battleStepCount   + 1
+
+            local allUnits = S.grid:getAllUnits()
+            for _, unit in ipairs(allUnits) do
+                unit:update(FIXED_DT, S.grid)
+            end
+
+            local p1Alive, p2Alive = 0, 0
+            for _, unit in ipairs(allUnits) do
+                if not unit.isDead then
+                    if unit.owner == 1 then p1Alive = p1Alive + 1
+                    else                    p2Alive = p2Alive + 1 end
+                end
+            end
+
+            if p1Alive == 0 or p2Alive == 0 then
+                S.state  = "battle_ending"
+                S.winner = p1Alive > 0 and 1 or 2
+                break
+            end
+        end
+    elseif S.state == "battle_ending" then
+        local allUnits = S.grid:getAllUnits()
+        for _, unit in ipairs(allUnits) do
+            unit:update(dt, S.grid)
+        end
+
+        if areAllAnimationsComplete() then
+            if not S.localRoundEndReady then
+                S.localRoundEndReady = true
+                if S.isOnline then sendMsg({type = "round_end_ready"}) end
+            end
+
+            local bothDone = S.localRoundEndReady and
+                             (not S.isOnline or S.opponentRoundEndReady)
+            if bothDone then
+                S.localRoundEndReady    = false
+                S.opponentRoundEndReady = false
+                local loser = (S.winner == 1) and 2 or 1
+                if S.playerRole == loser then S.playerCoins = S.playerCoins + 3 end
+
+                AudioManager.playSFX("battle-end.mp3")
+                S.pendingWinner     = S.winner
+                S.state             = "intermission"
+                S.intermissionTimer = 2.5
+            end
+        end
+    end
+
+    local allUnitsForVisuals = S.grid:getAllUnits()
+    for _, unit in ipairs(allUnitsForVisuals) do
+        unit:updateVisuals(dt, S.state)
+    end
+
+    S.grid:update(dt, S.mouseX, S.mouseY)
+
+    -- Spring physics (buttons – used for hit-rect squish even while rendering is stubbed)
+    local emTarget = S._emoteSpring.pressed and 0.93 or 1.0
+    local emAccel  = -480 * (S._emoteSpring.scale - emTarget) - 18 * S._emoteSpring.vel
+    S._emoteSpring.vel   = S._emoteSpring.vel   + emAccel * dt
+    S._emoteSpring.scale = S._emoteSpring.scale + S._emoteSpring.vel * dt
+    S._emoteSpring.scale = math.max(0.85, math.min(1.12, S._emoteSpring.scale))
+
+    local rrTarget = S._rerollSpring.pressed and 0.93 or 1.0
+    local rrAccel  = -480 * (S._rerollSpring.scale - rrTarget) - 18 * S._rerollSpring.vel
+    S._rerollSpring.vel   = S._rerollSpring.vel   + rrAccel * dt
+    S._rerollSpring.scale = S._rerollSpring.scale + S._rerollSpring.vel * dt
+    S._rerollSpring.scale = math.max(0.85, math.min(1.12, S._rerollSpring.scale))
+
+    local rspTarget = S._readySpring.pressed and 0.93 or 1.0
+    local rspAccel  = -480 * (S._readySpring.scale - rspTarget) - 18 * S._readySpring.vel
+    S._readySpring.vel   = S._readySpring.vel   + rspAccel * dt
+    S._readySpring.scale = S._readySpring.scale + S._readySpring.vel * dt
+    S._readySpring.scale = math.max(0.85, math.min(1.12, S._readySpring.scale))
+
+    drawUI()
+    syncDisplayLayer()
+end
+
+-- ── Rendering ────────────────────────────────────────────────────────────────
+
+local function draw() end   -- no-op: Solar2D display objects handle rendering
+
+drawUI = function()
+    -- Set hit-rects used by input handling
+    --
+    -- Hit-rects needed for input (set here when rendering is restored):
+    if S.state == "setup" then
+        local buttonHeight = 40 * Constants.SCALE
+        local gridBottom   = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+        local buttonY      = ((gridBottom + (S.cardY or gridBottom)) / 2) - (buttonHeight / 2)
+        local buttonPadding = 20 * Constants.SCALE
+        local buttonWidth   = 120 * Constants.SCALE  -- approximate; will be precise in render pass
+        local buttonX       = (Constants.GAME_WIDTH - buttonWidth) / 2
+        local maxFloat      = math.floor(4 * Constants.SCALE)
+
+        S._readyBtnRect  = { x = buttonX, y = buttonY - maxFloat, w = buttonWidth, h = buttonHeight + maxFloat }
+
+        if S.rerollButtonX then
+            local rsz = S.rerollButtonSize or (40 * Constants.SCALE)
+            S._rerollBtnRect = { x = S.rerollButtonX, y = S.rerollButtonY - maxFloat, w = rsz, h = rsz + maxFloat }
+            S._emoteBtnRect  = { x = S.emoteButtonX,  y = S.emoteButtonY  - maxFloat, w = rsz, h = rsz + maxFloat }
+        end
+    end
+end
+
+-- ── syncDisplayLayer ─────────────────────────────────────────────────────────
+-- Updates all Solar2D display objects to match current game state.
+-- Called at the end of every onUpdate().
+
+syncDisplayLayer = function()
+    if not S.grid             then return end
+    if not scene._unitsGroup  then return end
+    if not S._unitDisplays    then S._unitDisplays = {} end
+    if not S._cardDisplays    then S._cardDisplays = {} end
+
+    local CS  = Constants.CELL_SIZE
+    local sc  = Constants.SCALE
+    local pad = math.max(3, math.floor(4 * sc))
+
+    -- ── Unit display objects ──────────────────────────────────────────────────
+    local allUnits = S.grid:getAllUnits()
+    local inGrid   = {}
+    for _, u in ipairs(allUnits) do inGrid[u] = true end
+    if S.draggedUnit then inGrid[S.draggedUnit] = true end
+
+    -- Purge stale entries (collect first, remove after to avoid modifying during pairs)
+    local staleUnits = {}
+    for u in pairs(S._unitDisplays) do
+        if not inGrid[u] then staleUnits[#staleUnits + 1] = u end
+    end
+    for _, u in ipairs(staleUnits) do
+        display.remove(S._unitDisplays[u].group)
+        S._unitDisplays[u] = nil
+    end
+
+    for _, u in ipairs(allUnits) do
+        local wx, wy
+        if u == S.draggedUnit and u.dragX and u.dragY then
+            wx = u.dragX - CS / 2
+            wy = u.dragY - CS / 2
+        else
+            wx, wy = S.grid:gridToWorld(u.col, u.row)
+        end
+        local ucx = wx + CS / 2
+        local ucy = wy + CS / 2
+
+        local disp = S._unitDisplays[u]
+        if not disp then
+            local grp   = display.newGroup()
+            scene._unitsGroup:insert(grp)
+
+            local bodyW = CS - pad * 2
+            local bodyH = CS - pad * 2
+            local rad   = math.max(2, math.floor(3 * sc))
+            local body  = display.newRoundedRect(grp, 0, 0, bodyW, bodyH, rad)
+            if u.owner == 1 then
+                body:setFillColor(0.18, 0.38, 0.80)
+                body:setStrokeColor(0.45, 0.65, 1.00)
+            else
+                body:setFillColor(0.80, 0.18, 0.18)
+                body:setStrokeColor(1.00, 0.45, 0.45)
+            end
+            body.strokeWidth = math.max(1, math.floor(sc))
+
+            local lbl = display.newText({
+                parent   = grp,
+                text     = u.unitType:sub(1, 3):upper(),
+                x = 0, y = -bodyH * 0.12,
+                font     = Fonts.tiny.name,
+                fontSize = Fonts.tiny.size,
+                align    = "center",
+            })
+            lbl:setFillColor(1, 1, 1)
+
+            local lvl = display.newText({
+                parent   = grp,
+                text     = "L" .. (u.level or 0),
+                x = 0, y = bodyH * 0.22,
+                font     = Fonts.tiny.name,
+                fontSize = Fonts.tiny.size,
+                align    = "center",
+            })
+            lvl:setFillColor(1, 1, 0.5)
+
+            -- Health bar
+            local hbH  = math.max(3, math.floor(3 * sc))
+            local hbW  = bodyW - 4
+            local hbY  = bodyH / 2 - hbH - 2
+            local hbBg = display.newRect(grp, 0, hbY, hbW, hbH)
+            hbBg:setFillColor(0.12, 0.12, 0.12, 0.9)
+
+            -- Fill anchored to its left edge so xScale shrinks rightward
+            local hbFill = display.newRect(grp, -hbW / 2, hbY, hbW, hbH)
+            hbFill.anchorX = 0
+
+            disp = { group=grp, body=body, lbl=lbl, lvl=lvl,
+                     hbFill=hbFill, hbW=hbW }
+            S._unitDisplays[u] = disp
+        end
+
+        -- Position
+        disp.group.x = ucx
+        disp.group.y = ucy
+
+        -- Level text
+        disp.lvl.text = "L" .. (u.level or 0)
+
+        -- Health bar scale (xScale shrinks from left anchor)
+        local maxHp = math.max(1, u.maxHealth or 1)
+        local ratio = math.max(0, math.min(1, (u.health or maxHp) / maxHp))
+        disp.hbFill.xScale = math.max(0.001, ratio)
+        if     ratio < 0.33 then disp.hbFill:setFillColor(0.90, 0.20, 0.20, 1)
+        elseif ratio < 0.66 then disp.hbFill:setFillColor(0.90, 0.75, 0.10, 1)
+        else                     disp.hbFill:setFillColor(0.20, 0.88, 0.20, 1) end
+
+        -- Dead units fade
+        disp.group.alpha = u.isDead and 0.32 or 1.0
+
+        if S.draggedUnit == u then disp.group:toFront() end
+    end
+
+    -- ── Card display objects ──────────────────────────────────────────────────
+    local activeCrds = {}
+    for _, c in ipairs(S.cards       or {}) do activeCrds[c] = true end
+    for _, c in ipairs(S.exitingCards or {}) do activeCrds[c] = true end
+
+    local staleCards = {}
+    for c in pairs(S._cardDisplays) do
+        if not activeCrds[c] then staleCards[#staleCards + 1] = c end
+    end
+    for _, c in ipairs(staleCards) do
+        display.remove(S._cardDisplays[c].group)
+        S._cardDisplays[c] = nil
+    end
+
+    local allCards = {}
+    for _, c in ipairs(S.cards       or {}) do table.insert(allCards, c) end
+    for _, c in ipairs(S.exitingCards or {}) do table.insert(allCards, c) end
+
+    for _, c in ipairs(allCards) do
+        local cW   = c.width  or (80  * sc)
+        local cH   = c.height or (100 * sc)
+        local disp = S._cardDisplays[c]
+
+        if not disp then
+            local grp  = display.newGroup()
+            scene._cardsGroup:insert(grp)
+
+            local body = display.newRoundedRect(grp, 0, 0, cW, cH,
+                             math.max(2, math.floor(4 * sc)))
+            body:setFillColor(0.18, 0.18, 0.28)
+            body:setStrokeColor(0.40, 0.40, 0.52)
+            body.strokeWidth = math.max(1, math.floor(2 * sc))
+
+            local nameLbl = display.newText({
+                parent   = grp,
+                text     = c.unitType:sub(1,1):upper() .. c.unitType:sub(2),
+                x = 0, y = -cH * 0.27,
+                font     = Fonts.tiny.name,
+                fontSize = Fonts.tiny.size,
+                align    = "center",
+            })
+            nameLbl:setFillColor(0.85, 0.85, 0.85)
+
+            local cost    = UnitRegistry.unitCosts[c.unitType] or 3
+            local costLbl = display.newText({
+                parent   = grp,
+                text     = tostring(cost) .. "g",
+                x = 0, y = cH * 0.18,
+                font     = Fonts.small.name,
+                fontSize = Fonts.small.size,
+                align    = "center",
+            })
+            costLbl:setFillColor(1.00, 0.88, 0.28)
+
+            disp = { group=grp, body=body }
+            S._cardDisplays[c] = disp
+        end
+
+        -- card.x/y is top-left; Solar2D groups are centered
+        disp.group.x = c.x + cW / 2
+        disp.group.y = c.y + cH / 2
+
+        local alpha = 1
+        if     c.isExiting  then alpha = c.exitAlpha  or 0
+        elseif c.isEntering then alpha = c.enterAlpha or 0 end
+        disp.group.alpha    = math.max(0, alpha)
+        disp.group.rotation = c.isExiting and math.deg(c.exitRotation or 0) or 0
+
+        if c == S.draggedCard then disp.group:toFront() end
+    end
+
+    -- ── UI label updates ──────────────────────────────────────────────────────
+    if scene._playerNameText then scene._playerNameText.text = S.playerName  or "You" end
+    if scene._oppNameText    then scene._oppNameText.text    = S.opponentName or "Foe" end
+
+    if scene._timerText then
+        if S.state == "setup" then
+            scene._timerText.text      = tostring(math.ceil(math.max(0, S.timer or 0)))
+            scene._timerText.isVisible = true
+        else
+            scene._timerText.isVisible = false
+        end
+    end
+
+    if scene._coinsText then
+        scene._coinsText.text      = tostring(S.playerCoins or 0) .. "g"
+        scene._coinsText.isVisible = (S.state == "setup")
+    end
+
+    if scene._stateText then
+        local txt, vis = "", false
+        if     S.state == "pre_battle"   then txt = "GO!";                     vis = true
+        elseif S.state == "intermission" then txt = "ROUND " .. (S.roundNumber or 1); vis = true
+        elseif S.state == "finished"     then
+            txt = (S.winner == (S.playerRole or 1)) and "YOU WIN!" or "YOU LOSE"
+            vis = true
+        end
+        scene._stateText.text      = txt
+        scene._stateText.isVisible = vis
+    end
+
+    -- Life pips
+    if scene._p1Pips then
+        for i = 1, 3 do
+            if scene._p1Pips[i] then
+                if (S.p1Lives or 3) >= i then scene._p1Pips[i]:setFillColor(0.90, 0.85, 0.30, 1)
+                else                          scene._p1Pips[i]:setFillColor(0.25, 0.25, 0.25, 0.5) end
+            end
+        end
+    end
+    if scene._p2Pips then
+        for i = 1, 3 do
+            if scene._p2Pips[i] then
+                if (S.p2Lives or 3) >= i then scene._p2Pips[i]:setFillColor(0.90, 0.85, 0.30, 1)
+                else                          scene._p2Pips[i]:setFillColor(0.25, 0.25, 0.25, 0.5) end
+            end
+        end
+    end
+
+    -- Button visibility + position (follow hit-rects set by drawUI)
+    if scene._readyBtn then
+        if S._readyBtnRect then
+            local rb = S._readyBtnRect
+            scene._readyBtn.x         = rb.x + rb.w / 2
+            scene._readyBtn.y         = rb.y + rb.h / 2
+            scene._readyBtn.isVisible = (S.state == "setup") and not S.localReady
+        else
+            scene._readyBtn.isVisible = false
+        end
+    end
+    if scene._rerollBtn then
+        if S._rerollBtnRect then
+            local rb = S._rerollBtnRect
+            scene._rerollBtn.x         = rb.x + rb.w / 2
+            scene._rerollBtn.y         = rb.y + rb.h / 2
+            scene._rerollBtn.isVisible = (S.state == "setup")
+        else
+            scene._rerollBtn.isVisible = false
+        end
+    end
+    if scene._finishedGroup then
+        scene._finishedGroup.isVisible = (S.state == "finished")
+    end
+
+    -- Apply spring scale to buttons
+    if scene._readyBtn  then
+        scene._readyBtn.xScale  = S._readySpring.scale
+        scene._readyBtn.yScale  = S._readySpring.scale
+    end
+    if scene._rerollBtn then
+        scene._rerollBtn.xScale = S._rerollSpring.scale
+        scene._rerollBtn.yScale = S._rerollSpring.scale
+    end
+end
+
+areAllAnimationsComplete = function()
+    local allUnits = S.grid:getAllUnits()
+    for _, unit in ipairs(allUnits) do
+        if unit.attackAnimProgress < 1 and unit.attackTargetCol and unit.attackTargetRow then
+            return false
+        end
+        if unit.arrows and #unit.arrows > 0 then
+            return false
+        end
+    end
+    return true
+end
+
+-- ── Input ─────────────────────────────────────────────────────────────────────
+
+handlePress = function(x, y)
+    S.pressX     = x
+    S.pressY     = y
+    S.pressedUnit = nil
+    S.hasMoved   = false
+
+    local function checkButtonSprings()
+        if S.state ~= "setup" then return end
+        if S._readyBtnRect then
+            local rb = S._readyBtnRect
+            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                S._readySpring.pressed = true
+            end
+        end
+        if S._rerollBtnRect then
+            local rb = S._rerollBtnRect
+            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                S._rerollSpring.pressed = true
+            end
+        end
+        if S._emoteBtnRect then
+            local rb = S._emoteBtnRect
+            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                S._emoteSpring.pressed = true
+            end
+        end
+    end
+
+    local col, row = S.grid:worldToGrid(x, y)
+    if col and row then
+        local unit = S.grid:getUnitAtCell(col, row)
+        if unit then
+            S.pressedUnit    = unit
+            S.pressedUnitCol = col
+            S.pressedUnitRow = row
+            checkButtonSprings()
+            return
+        end
+    end
+
+    if S.state == "setup" then
+        for i = #S.cards, 1, -1 do
+            local card = S.cards[i]
+            if card:contains(x, y) then
+                S.tooltip:hide()
+                S.pressedUnit    = nil
+                S.pressedUnitCol = nil
+                S.pressedUnitRow = nil
+                S.pressedCard      = card
+                S.pressedCardIndex = i
+                return
+            end
+        end
+    end
+
+    checkButtonSprings()
+end
+
+handleMove = function(x, y)
+    S.mouseX = x
+    S.mouseY = y
+
+    if S.pressedUnit or S.draggedUnit or S.draggedCard or S.pressedCard then
+        local distMoved = math.sqrt((x - S.pressX)^2 + (y - S.pressY)^2)
+        if distMoved > 10 then S.hasMoved = true end
+    end
+
+    if S.pressedCard and not S.draggedCard and S.state == "setup" and S.hasMoved then
+        S.draggedCard = S.pressedCard
+        S.pressedCard:startDrag(S.pressX, S.pressY)
+        S.pressedCard:updateDrag(x, y)
+        S.pressedCard      = nil
+        S.pressedCardIndex = nil
+    end
+
+    local isOwnPressedUnit = not S.pressedUnit
+        or not S.isOnline
+        or S.pressedUnit.owner == S.playerRole
+    if S.pressedUnit and not S.draggedUnit and S.state == "setup" and S.hasMoved and isOwnPressedUnit then
+        S.tooltip:hide()
+        S.draggedUnit            = S.pressedUnit
+        S.draggedUnitOriginalCol = S.pressedUnitCol
+        S.draggedUnitOriginalRow = S.pressedUnitRow
+
+        local unitX, unitY = S.grid:gridToWorld(S.pressedUnitCol, S.pressedUnitRow)
+        S.draggedUnitOffsetX = S.pressX - unitX
+        S.draggedUnitOffsetY = S.pressY - unitY
+        S.draggedUnit.dragX  = unitX
+        S.draggedUnit.dragY  = unitY
+
+        S.grid:removeUnit(S.pressedUnitCol, S.pressedUnitRow)
+        S.pressedUnit    = nil
+        S.pressedUnitCol = nil
+        S.pressedUnitRow = nil
+    end
+
+    if S.draggedCard then S.draggedCard:updateDrag(x, y) end
+
+    if S.draggedUnit then
+        S.draggedUnit.dragX = x - S.draggedUnitOffsetX
+        S.draggedUnit.dragY = y - S.draggedUnitOffsetY
+    end
+end
+
+handleRelease = function(x, y)
+    if S.isTutorial and S.tutorialManager then
+        S.tutorialManager:handleTap(x, y)
+    end
+
+    S._readySpring.pressed  = false
+    S._rerollSpring.pressed = false
+    S._emoteSpring.pressed  = false
+
+    -- Ready button
+    if S.state == "setup" and S._readyBtnRect then
+        local rb = S._readyBtnRect
+        if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+            if not (S.isOnline and S.localReady) then
+                AudioManager.playTap()
+                if S.isOnline then
+                    S.localReady = true
+                    sendMsg({type = "ready"})
+                    checkBattleStart()
+                else
+                    S.timer = 0
+                    beginBattleCountdown()
+                end
+            end
+            return
+        end
+    end
+
+    -- Reroll button
+    if S.state == "setup" and S._rerollBtnRect then
+        local rb = S._rerollBtnRect
+        if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+            if S.isSandbox or (not S.freeRerollUsed) or S.playerCoins >= S.rerollCost then
+                if not S.isSandbox then
+                    if not S.freeRerollUsed then
+                        S.freeRerollUsed = true
+                        AudioManager.playTap()
+                    else
+                        S.playerCoins = S.playerCoins - S.rerollCost
+                        AudioManager.playSFX("reroll.mp3")
+                    end
+                else
+                    AudioManager.playTap()
+                end
+                if S.usingDeck then
+                    if S.isSandbox and DeckManager.pileSize() < 3 then
+                        DeckManager.returnCards(S.drawnCardTypes)
+                        S.drawnCardTypes = {}
+                        DeckManager.initDrawPile()
+                        S.drawnCardTypes = DeckManager.drawCards(3)
+                        launchExitAndEnter(S.drawnCardTypes)
+                    else
+                        local newTypes = DeckManager.reshuffleAndDraw(S.drawnCardTypes, 3)
+                        S.drawnCardTypes = newTypes
+                        launchExitAndEnter(newTypes)
+                    end
+                else
+                    dealSetupCards()
+                end
+            end
+            return
+        end
+    end
+
+    -- Tooltip upgrade button
+    if S.tooltip:isVisible() then
+        local upgradeIndex = S.tooltip:checkUpgradeClick(x, y)
+        if upgradeIndex then
+            local unit = S.tooltip.unit
+            if S.isOnline and unit.owner ~= S.playerRole then return end
+            local cost = UnitRegistry.unitCosts[unit.unitType] or 3
+            if not S.isSandbox and S.playerCoins < cost then
+                print("Not enough coins for upgrade")
+                S.pressedUnit = nil; S.pressedUnitCol = nil; S.pressedUnitRow = nil
+                return
+            end
+            if unit:upgrade(upgradeIndex) then
+                if not S.isSandbox then S.playerCoins = S.playerCoins - cost end
+                print(string.format("Upgraded %s with upgrade %d to level %d",
+                      unit.unitType, upgradeIndex, unit.level))
+                for i, card in ipairs(S.cards) do
+                    if card.unitType == unit.unitType then table.remove(S.cards, i); break end
+                end
+                for j, u in ipairs(S.drawnCardTypes) do
+                    if u == unit.unitType then table.remove(S.drawnCardTypes, j); break end
+                end
+                sendMsg({type = "upgrade_unit", col = unit.col, row = unit.row, upgradeIndex = upgradeIndex})
+                local hasMatchingCard = false
+                for _, card in ipairs(S.cards) do
+                    if card.unitType == unit.unitType then hasMatchingCard = true; break end
+                end
+                S.tooltip:show(unit, hasMatchingCard)
+            end
+            S.pressedUnit = nil; S.pressedUnitCol = nil; S.pressedUnitRow = nil
+            return
+        end
+    end
+
+    -- Tap on unit → tooltip
+    if S.pressedUnit and not S.draggedUnit then
+        local unit = S.pressedUnit
+        S.pressedUnit = nil; S.pressedUnitCol = nil; S.pressedUnitRow = nil
+        local isOwnUnit = not S.isOnline or unit.owner == S.playerRole
+        local hasMatchingCard = false
+        if isOwnUnit then
+            for _, card in ipairs(S.cards) do
+                if card.unitType == unit.unitType then hasMatchingCard = true; break end
+            end
+        end
+        S.tooltip:toggle(unit, hasMatchingCard)
+        return
+    end
+
+    -- Tap on card → tooltip
+    if S.pressedCard and not S.draggedCard then
+        local card = S.pressedCard
+        S.pressedCard = nil; S.pressedCardIndex = nil
+        S.tooltip:showCard(card)
+        return
+    end
+
+    -- Unit repositioning drag
+    if S.draggedUnit then
+        local col, row = S.grid:worldToGrid(x, y)
+        local origCol  = S.draggedUnitOriginalCol
+        local origRow  = S.draggedUnitOriginalRow
+        local zoneOwner = S.isOnline and S.playerRole or nil
+        if col and row and S.grid:canPlaceUnit(col, row, zoneOwner) then
+            S.draggedUnit.col = col
+            S.draggedUnit.row = row
+            S.grid:placeUnit(col, row, S.draggedUnit)
+            AudioManager.playSFX("place.mp3")
+            sendMsg({type = "remove_unit", col = origCol, row = origRow})
+            sendMsg({type = "place_unit",
+                     unitType = S.draggedUnit.unitType,
+                     col = col, row = row,
+                     owner = S.draggedUnit.owner,
+                     level = S.draggedUnit.level,
+                     activeUpgrades = S.draggedUnit.activeUpgrades})
+            print(string.format("Repositioned unit to [%d, %d]", col, row))
+        else
+            S.draggedUnit.col = origCol
+            S.draggedUnit.row = origRow
+            S.grid:placeUnit(origCol, origRow, S.draggedUnit)
+            print(string.format("Returned unit to [%d, %d]", origCol, origRow))
+        end
+        S.draggedUnit.dragX = nil; S.draggedUnit.dragY = nil
+        S.draggedUnit = nil
+        S.draggedUnitOriginalCol = nil; S.draggedUnitOriginalRow = nil
+        return
+    end
+
+    -- Card placement drag
+    if S.draggedCard then
+        local col, row = S.grid:worldToGrid(x, y)
+        if col and row then
+            local owner    = S.grid:getOwner(row)
+            local unitType = S.draggedCard.unitType
+            local cell     = S.grid:getCell(col, row)
+            local cost     = UnitRegistry.unitCosts[unitType] or 3
+            if S.isOnline and owner ~= S.playerRole then
+                S.draggedCard:snapBack()
+            elseif not S.isSandbox and S.playerCoins < cost then
+                print("Not enough coins")
+                S.draggedCard:snapBack()
+            elseif cell and cell.occupied and cell.unit then
+                local targetUnit = cell.unit
+                if targetUnit.unitType == unitType
+                   and targetUnit.owner == owner
+                   and targetUnit.level < 3 then
+                    if targetUnit:upgrade() then
+                        if not S.isSandbox then S.playerCoins = S.playerCoins - cost end
+                        print(string.format("Upgraded Player %d %s to level %d (direct drop)",
+                              owner, unitType, targetUnit.level))
+                        for i, card in ipairs(S.cards) do
+                            if card == S.draggedCard then table.remove(S.cards, i); break end
+                        end
+                        for j, u in ipairs(S.drawnCardTypes) do
+                            if u == unitType then table.remove(S.drawnCardTypes, j); break end
+                        end
+                        sendMsg({type = "upgrade_unit", col = col, row = row, upgradeIndex = nil})
+                    else
+                        print(string.format("Player %d %s is already max level", owner, unitType))
+                        S.draggedCard:snapBack()
+                    end
+                else
+                    S.draggedCard:snapBack()
+                end
+            elseif S.grid:canPlaceUnit(col, row, S.isOnline and S.playerRole or nil) then
+                local existingUnit = S.grid:findUnitByTypeAndOwner(unitType, owner)
+                if existingUnit then
+                    if existingUnit:upgrade() then
+                        if not S.isSandbox then S.playerCoins = S.playerCoins - cost end
+                        print(string.format("Upgraded Player %d %s to level %d",
+                              owner, unitType, existingUnit.level))
+                        for i, card in ipairs(S.cards) do
+                            if card == S.draggedCard then table.remove(S.cards, i); break end
+                        end
+                        for j, u in ipairs(S.drawnCardTypes) do
+                            if u == unitType then table.remove(S.drawnCardTypes, j); break end
+                        end
+                        sendMsg({type = "upgrade_unit",
+                                  col = existingUnit.col, row = existingUnit.row,
+                                  upgradeIndex = nil})
+                    else
+                        print(string.format("Player %d %s is already max level", owner, unitType))
+                        S.draggedCard:snapBack()
+                    end
+                else
+                    local unitSprites = S.sprites[unitType]
+                    local unit = UnitRegistry.createUnit(unitType, row, col, owner, unitSprites)
+                    if S.grid:placeUnit(col, row, unit) then
+                        AudioManager.playSFX("place.mp3")
+                        if not S.isSandbox then S.playerCoins = S.playerCoins - cost end
+                        for i, card in ipairs(S.cards) do
+                            if card == S.draggedCard then table.remove(S.cards, i); break end
+                        end
+                        for j, u in ipairs(S.drawnCardTypes) do
+                            if u == unitType then table.remove(S.drawnCardTypes, j); break end
+                        end
+                        sendMsg({type = "place_unit",
+                                  unitType = unitType,
+                                  col = col, row = row,
+                                  owner = owner})
+                        print(string.format("Placed Player %d %s at [%d, %d]",
+                              owner, unitType, col, row))
+                    end
+                end
+            else
+                S.draggedCard:snapBack()
+            end
+        else
+            S.draggedCard:snapBack()
+        end
+        S.draggedCard:stopDrag()
+        S.draggedCard = nil
+        return
+    end
+
+    if S.tooltip:isVisible() then S.tooltip:hide() end
+end
+
+local function onTouch(event)
+    local x, y = event.x, event.y
+    if event.phase == "began" then
+        S.activeTouchId = event.id
+        handlePress(x, y)
+    elseif event.phase == "moved" then
+        if event.id == S.activeTouchId then handleMove(x, y) end
+    elseif event.phase == "ended" or event.phase == "cancelled" then
+        if event.id == S.activeTouchId then
+            S.activeTouchId = nil
+            handleRelease(x, y)
+        end
+    end
+    return true
+end
+
+local function onSystem(event)
+    if event.type == "applicationFocus" then
+        if S.isOnline and S.socket then
+            if not S.socket:isConnected() and S.state ~= "finished" then
+                print("[GAME] Socket lost while backgrounded, triggering disconnect")
+                S.opponentDisconnected = true
+            end
+        end
+    end
+end
+
+-- ── Composer scene lifecycle ──────────────────────────────────────────────────
+
+function scene:create(event)
+    local group = self.view
+    local W   = Constants.GAME_WIDTH
+    local H   = Constants.GAME_HEIGHT
+    local sc  = Constants.SCALE
+    local cx  = W / 2
+
+    -- Background
+    local bg = display.newRect(group, cx, H / 2, W, H)
+    bg:setFillColor(0.08, 0.08, 0.12)
+
+    -- ── Chess board ───────────────────────────────────────────────────────────
+    local GX   = Constants.GRID_OFFSET_X
+    local GY   = Constants.GRID_OFFSET_Y
+    local CS   = Constants.CELL_SIZE
+    local COLS = Constants.GRID_COLS
+    local ROWS = Constants.GRID_ROWS
+    local GW   = COLS * CS
+    local GH   = ROWS * CS
+
+    local CDARK  = Constants.COLORS.CHESS_DARK
+    local CLIGHT = Constants.COLORS.CHESS_LIGHT
+
+    local gridGroup = display.newGroup()
+    group:insert(gridGroup)
+
+    for row = 1, ROWS do
+        for col = 1, COLS do
+            local cellCX = GX + (col - 1) * CS + CS / 2
+            local cellCY = GY + (row - 1) * CS + CS / 2
+            local cell   = display.newRect(gridGroup, cellCX, cellCY, CS, CS)
+            local c      = ((row + col) % 2 == 0) and CDARK or CLIGHT
+            cell:setFillColor(c[1], c[2], c[3])
+        end
+    end
+
+    -- Grid border
+    local border = display.newRect(gridGroup, GX + GW / 2, GY + GH / 2, GW, GH)
+    border:setFillColor(0, 0, 0, 0)
+    border:setStrokeColor(0.30, 0.30, 0.42)
+    border.strokeWidth = math.max(1, math.floor(sc))
+
+    -- Zone divider line between P2 (rows 1-4) and P1 (rows 5-8)
+    local divY    = GY + (ROWS / 2) * CS
+    local divLine = display.newLine(gridGroup, GX, divY, GX + GW, divY)
+    divLine:setStrokeColor(0.90, 0.50, 0.20, 0.85)
+    divLine.strokeWidth = math.max(1, math.floor(2 * sc))
+
+    -- ── Dynamic content groups ────────────────────────────────────────────────
+    self._unitsGroup = display.newGroup()
+    group:insert(self._unitsGroup)
+
+    self._cardsGroup = display.newGroup()
+    group:insert(self._cardsGroup)
+
+    -- ── UI labels ─────────────────────────────────────────────────────────────
+    local tinyS  = Fonts.tiny.size
+    local smallS = Fonts.small.size
+    local medS   = Fonts.medium.size
+
+    -- Timer (above grid, center)
+    self._timerText = display.newText({
+        parent   = group,
+        text     = "30",
+        x        = cx,
+        y        = GY - medS / 2 - 4 * sc,
+        font     = Fonts.medium.name,
+        fontSize = medS,
+        align    = "center",
+    })
+    self._timerText:setFillColor(1, 1, 1)
+
+    -- State overlay: GO!, ROUND X, YOU WIN!, YOU LOSE
+    self._stateText = display.newText({
+        parent   = group,
+        text     = "",
+        x        = cx,
+        y        = H / 2,
+        font     = Fonts.large.name,
+        fontSize = Fonts.large.size,
+        align    = "center",
+    })
+    self._stateText:setFillColor(1, 0.90, 0.28)
+    self._stateText.isVisible = false
+
+    -- Player name — bottom-right of grid
+    self._playerNameText = display.newText({
+        parent   = group,
+        text     = "You",
+        x        = GX + GW,
+        y        = GY + GH + 4 * sc + tinyS / 2,
+        font     = Fonts.tiny.name,
+        fontSize = tinyS,
+        align    = "right",
+    })
+    self._playerNameText.anchorX = 1
+    self._playerNameText:setFillColor(0.80, 0.80, 1.00)
+
+    -- Opponent name — top-left of grid
+    self._oppNameText = display.newText({
+        parent   = group,
+        text     = "Foe",
+        x        = GX,
+        y        = GY - 4 * sc - tinyS / 2,
+        font     = Fonts.tiny.name,
+        fontSize = tinyS,
+        align    = "left",
+    })
+    self._oppNameText.anchorX = 0
+    self._oppNameText:setFillColor(1.00, 0.60, 0.60)
+
+    -- Coins — bottom-left of grid
+    self._coinsText = display.newText({
+        parent   = group,
+        text     = "6g",
+        x        = GX,
+        y        = GY + GH + 4 * sc + tinyS / 2,
+        font     = Fonts.small.name,
+        fontSize = smallS,
+        align    = "left",
+    })
+    self._coinsText.anchorX = 0
+    self._coinsText:setFillColor(1.00, 0.90, 0.28)
+
+    -- Life pips — P1 (bottom-right row, below grid)
+    local pipSz  = math.max(8,  math.floor(10 * sc))
+    local pipGap = math.max(2,  math.floor( 3 * sc))
+    local p1PipY = GY + GH + 4 * sc + tinyS + 6 * sc + pipSz / 2
+    self._p1Pips = {}
+    for i = 1, 3 do
+        local px  = GX + GW - (i - 1) * (pipSz + pipGap) - pipSz / 2 - 2 * sc
+        local pip = display.newRect(group, px, p1PipY, pipSz, pipSz)
+        pip:setFillColor(0.90, 0.85, 0.28)
+        pip:setStrokeColor(0.55, 0.50, 0.10)
+        pip.strokeWidth = 1
+        self._p1Pips[i] = pip
+    end
+
+    -- Life pips — P2 (top-right row, above grid)
+    local p2PipY = GY - 4 * sc - tinyS - 6 * sc - pipSz / 2
+    self._p2Pips = {}
+    for i = 1, 3 do
+        local px  = GX + GW - (i - 1) * (pipSz + pipGap) - pipSz / 2 - 2 * sc
+        local pip = display.newRect(group, px, p2PipY, pipSz, pipSz)
+        pip:setFillColor(0.90, 0.85, 0.28)
+        pip:setStrokeColor(0.55, 0.50, 0.10)
+        pip.strokeWidth = 1
+        self._p2Pips[i] = pip
+    end
+
+    -- ── Buttons (display only – input handled by Runtime onTouch + hit-rects) ─
+    local btnW = math.floor(120 * sc)
+    local btnH = math.floor(44  * sc)
+
+    -- Initial estimate for Y (corrected each frame by syncDisplayLayer via hit-rects)
+    local gridBot  = GY + GH
+    local initBtnY = gridBot + math.floor((H - gridBot) * 0.28)
+
+    -- Ready button
+    local readyBtn = display.newGroup()
+    group:insert(readyBtn)
+    readyBtn.x = cx
+    readyBtn.y = initBtnY
+
+    local readyBg = display.newRoundedRect(readyBtn, 0, 0, btnW, btnH, 8 * sc)
+    readyBg:setFillColor(0.765, 0.639, 0.541)
+    readyBg:setStrokeColor(0.865, 0.739, 0.641)
+    readyBg.strokeWidth = math.max(1, math.floor(2 * sc))
+
+    local readyLbl = display.newText({
+        parent   = readyBtn,
+        text     = "READY",
+        x = 0, y = 0,
+        font     = Fonts.small.name,
+        fontSize = smallS,
+        align    = "center",
+    })
+    readyLbl:setFillColor(0.12, 0.08, 0.04)
+    self._readyBtn = readyBtn
+
+    -- Reroll button
+    local rBtnSz  = math.floor(44 * sc)
+    local rerollBtn = display.newGroup()
+    group:insert(rerollBtn)
+    rerollBtn.x = cx + btnW / 2 + rBtnSz / 2 + math.floor(14 * sc)
+    rerollBtn.y = initBtnY
+
+    local rerollBg = display.newRoundedRect(rerollBtn, 0, 0, rBtnSz, rBtnSz, 6 * sc)
+    rerollBg:setFillColor(0.28, 0.48, 0.70)
+    rerollBg:setStrokeColor(0.38, 0.58, 0.80)
+    rerollBg.strokeWidth = math.max(1, math.floor(2 * sc))
+
+    local rerollLbl = display.newText({
+        parent   = rerollBtn,
+        text     = "Re",
+        x = 0, y = 0,
+        font     = Fonts.tiny.name,
+        fontSize = tinyS,
+        align    = "center",
+    })
+    rerollLbl:setFillColor(1, 1, 1)
+    self._rerollBtn = rerollBtn
+
+    -- ── Finished-state overlay ────────────────────────────────────────────────
+    self._finishedGroup = display.newGroup()
+    group:insert(self._finishedGroup)
+    self._finishedGroup.isVisible = false
+
+    local finBtnW = math.floor(180 * sc)
+    local finBtnH = math.floor(52  * sc)
+    local finBtn  = display.newGroup()
+    self._finishedGroup:insert(finBtn)
+    finBtn.x = cx
+    finBtn.y = math.floor(H * 0.72)
+
+    local finBg = display.newRoundedRect(finBtn, 0, 0, finBtnW, finBtnH, 8 * sc)
+    finBg:setFillColor(0.32, 0.48, 0.72)
+    finBg:setStrokeColor(0.42, 0.58, 0.82)
+    finBg.strokeWidth = math.max(1, math.floor(2 * sc))
+
+    local finLbl = display.newText({
+        parent   = finBtn,
+        text     = "GO TO MENU",
+        x = 0, y = 0,
+        font     = Fonts.small.name,
+        fontSize = smallS,
+        align    = "center",
+    })
+    finLbl:setFillColor(1, 1, 1)
+
+    finBtn:addEventListener("touch", function(e)
+        if e.phase == "ended" then
+            if S.isTutorial then _G.writeFile("tutorial_done.dat", "1") end
+            composer.gotoScene("src.screens.menu", { effect = "fade", time = 300 })
+        end
+        return true
+    end)
+end
+
+function scene:show(event)
+    if event.phase ~= "did" then return end
+    local p = event.params or {}
+    initState(p)
+
+    -- Clear any display objects left from a previous game session
+    if self._unitsGroup then
+        for i = self._unitsGroup.numChildren, 1, -1 do
+            display.remove(self._unitsGroup[i])
+        end
+    end
+    if self._cardsGroup then
+        for i = self._cardsGroup.numChildren, 1, -1 do
+            display.remove(self._cardsGroup[i])
+        end
+    end
+    S._unitDisplays = {}
+    S._cardDisplays = {}
+
+    if S.isOnline and S.socket then
+        registerNetworkCallbacks()
+    end
+    S._lastTime = system.getTimer() / 1000
+    Runtime:addEventListener("enterFrame", onUpdate)
+    Runtime:addEventListener("touch",      onTouch)
+    Runtime:addEventListener("system",     onSystem)
+end
+
+function scene:hide(event)
+    if event.phase ~= "will" then return end
+    Runtime:removeEventListener("enterFrame", onUpdate)
+    Runtime:removeEventListener("touch",      onTouch)
+    Runtime:removeEventListener("system",     onSystem)
+    -- Clear display object caches (objects stay in view group, cleaned by composer)
+    S._unitDisplays = {}
+    S._cardDisplays = {}
+end
+
+function scene:destroy(event)
+    if S.socket then
+        if S._cb_relay      then S.socket:removeCallback(S._cb_relay)      end
+        if S._cb_oppDisconn then S.socket:removeCallback(S._cb_oppDisconn) end
+        if S._cb_disconnect then S.socket:removeCallback(S._cb_disconnect) end
+        if S._xpHandler     then S.socket:removeCallback(S._xpHandler)     end
+    end
+    Constants.PERSPECTIVE = 1
+    AudioManager.setBattleMode(false)
+end
+
+scene:addEventListener("create",  scene)
+scene:addEventListener("show",    scene)
+scene:addEventListener("hide",    scene)
+scene:addEventListener("destroy", scene)
+
+return scene

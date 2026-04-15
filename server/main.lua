@@ -3,18 +3,17 @@
 -- Clients connect, authenticate, and join matchmaking queue.
 -- Server pairs players based on trophy count and forwards messages between them.
 
-local enet = require("enet")
+local socket = require("socket")
 
 -- Set up path for database module
 package.path = package.path .. ';../?.lua'
 
 local Database = require("server.database")
 
-local PORT    = 12345
-local MAX_CONNECTIONS = 16
+local PORT = 12345
 
-local host    = nil
 local db      = nil
+local clients = {}   -- addr_string → {peer, buffer=""}
 local queue        = {}    -- matchmaking queue: {peer, player_id, username, trophies, queue_time}
 local rooms        = {}    -- keyed by connKey (integer): {peer, partnerKey, role, player_id, username, trophies}
 local sessions     = {}    -- keyed by connKey (integer): {player_id, username, token}
@@ -27,6 +26,15 @@ local peerByPlayerId = {}   -- player_id → peer (for evicting old connections 
 
 local function connKey(peer)
     return connKeys[tostring(peer)]
+end
+
+-- Wrap a raw TCP socket so peer:send(data) and peer:reset() work throughout the file
+local function wrapClient(tcpSock)
+    local addr = tostring(tcpSock)
+    local w = { _socket = tcpSock, _addr = addr }
+    function w:send(data) pcall(function() self._socket:send(data .. "\n") end) end
+    function w:reset()   pcall(function() self._socket:close() end) end
+    return w
 end
 
 -- Forward declaration (defined fully after handleConnect/processMatchmaking)
@@ -88,7 +96,7 @@ end
 -- Matchmaking: find opponent within trophy range
 local function findMatch(player)
     local baseTrophyRange = 100
-    local waitTime = love.timer.getTime() - player.queue_time
+    local waitTime = socket.gettime() - player.queue_time
     local expandedRange = baseTrophyRange + math.floor(waitTime / 5) * 50
     local maxRange = 500
 
@@ -314,7 +322,7 @@ local function handleMessage(peer, eventName, msgData)
             player_id  = player.id,
             username   = player.username,
             trophies   = player.trophies,
-            queue_time = love.timer.getTime()
+            queue_time = socket.gettime()
         })
 
         peer:send(encode("queue_joined", {}))
@@ -679,70 +687,60 @@ handleDisconnect = function(peer)
     connKeys[raw] = nil
 end
 
--- ── Love2D callbacks ────────────────────────────────────────────────────────
+-- ── Initialization ───────────────────────────────────────────────────────────
 
-function love.load()
-    -- Open log file
-    logFile = io.open("server/matchmaking.log", "a")
-    if logFile then
-        logFile:write("\n========== Server Starting ==========\n")
-        logFile:flush()
-    end
-
-    -- Initialize database
-    db = Database.new("server/players.db")
-    pushLog("Database initialized")
-
-    -- Start ENet host
-    host = enet.host_create("*:"..PORT, MAX_CONNECTIONS)
-    if not host then
-        error("Could not start ENet host on port "..PORT)
-    end
-    pushLog("AutoChest matchmaking server started on port "..PORT)
+logFile = io.open("server/matchmaking.log", "a")
+if logFile then
+    logFile:write("\n========== Server Starting ==========\n")
+    logFile:flush()
 end
 
-function love.update(dt)
-    if not host then return end
+db = Database.new("server/players.db")
+pushLog("Database initialized")
 
-    -- Process network events
-    local event = host:service(0)
-    while event do
-        if event.type == "connect" then
-            handleConnect(event.peer)
-        elseif event.type == "receive" then
-            handleReceive(event.peer, event.data)
-        elseif event.type == "disconnect" then
-            handleDisconnect(event.peer)
-        end
-        event = host:service(0)
+local serverSock = socket.tcp()
+serverSock:setoption("reuseaddr", true)
+serverSock:bind("0.0.0.0", PORT)
+serverSock:listen(32)
+serverSock:settimeout(0)
+pushLog("AutoChest matchmaking server started on port " .. PORT)
+
+-- ── Main loop ────────────────────────────────────────────────────────────────
+
+while true do
+    -- Accept new connections
+    local newSock = serverSock:accept()
+    if newSock then
+        newSock:settimeout(0)
+        local peer = wrapClient(newSock)
+        clients[peer._addr] = { peer = peer, buffer = "" }
+        handleConnect(peer)
     end
 
-    -- Process matchmaking
+    -- Read from all connected clients
+    for addr, conn in pairs(clients) do
+        local chunk, err, partial = conn.peer._socket:receive(4096)
+        local inc = chunk or partial or ""
+        if inc ~= "" then conn.buffer = conn.buffer .. inc end
+
+        while true do
+            local nl = conn.buffer:find("\n", 1, true)
+            if not nl then break end
+            local line  = conn.buffer:sub(1, nl - 1)
+            conn.buffer = conn.buffer:sub(nl + 1)
+            if line ~= "" then handleReceive(conn.peer, line) end
+        end
+
+        if err == "closed" then
+            handleDisconnect(conn.peer)
+            clients[addr] = nil
+        end
+    end
+
+    -- Matchmaking tick
     if #queue >= 2 then
         processMatchmaking()
     end
-end
 
-function love.draw()
-    local lg = love.graphics
-    lg.setColor(0.1, 0.1, 0.15)
-    lg.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
-
-    lg.setColor(1, 1, 1)
-    lg.setFont(love.graphics.newFont(14))
-    lg.print("AutoChest Matchmaking Server  –  port "..PORT, 10, 10)
-
-    local connected = 0
-    for _ in pairs(rooms) do connected = connected + 1 end
-    local queueStr = #queue > 0 and (#queue .. " in queue") or "queue empty"
-    lg.print("Active Matches: "..math.floor(connected/2).."  |  "..queueStr, 10, 30)
-
-    lg.setColor(0.7, 0.9, 0.7)
-    for i, msg in ipairs(log) do
-        lg.print(msg, 10, 50 + (i-1)*12)
-    end
-end
-
-function love.keypressed(key)
-    if key == "escape" then love.event.quit() end
+    socket.sleep(0.001)
 end

@@ -12,8 +12,8 @@ if PRODUCTION == "true" then
     config.SERVER_PORT = tonumber(os.getenv("AUTOCHEST_SERVER_PORT")) or 12345
 else
     -- Development: Connect to localhost
-    --config.SERVER_ADDRESS = "127.0.0.1"
-    config.SERVER_ADDRESS = "75.119.142.247"
+    config.SERVER_ADDRESS = "127.0.0.1"
+    --config.SERVER_ADDRESS = "75.119.142.247"
     config.SERVER_PORT = 12345
 end
 
