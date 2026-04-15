@@ -1,0 +1,76 @@
+-- Solar2D build settings for Android and iOS
+
+settings = {
+
+    orientation = {
+        default   = "portrait",
+        supported = { "portrait", "portraitUpsideDown" },
+    },
+
+    -- ── Android ───────────────────────────────────────────────────────────────
+    android = {
+        versionCode = 1,
+        versionName = "1.0.0",
+        minSdkVersion = "21",       -- Android 5.0+
+        targetSdkVersion = "33",
+
+        -- Required for Google Play Billing
+        usesPermissions = {
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "com.android.vending.BILLING",
+        },
+    },
+
+    -- ── iOS ───────────────────────────────────────────────────────────────────
+    iphone = {
+        plist = {
+            UIStatusBarHidden        = true,
+            UIRequiresFullScreen     = true,
+            UIViewControllingStatusBarAppearance = true,
+
+            -- Required for App Store IAP
+            SKPaymentTransactionObserver = true,
+
+            -- Supported device orientations
+            UISupportedInterfaceOrientations = {
+                "UIInterfaceOrientationPortrait",
+                "UIInterfaceOrientationPortraitUpsideDown",
+            },
+
+            -- App display name shown under icon
+            CFBundleDisplayName = "AutoChest",
+            CFBundleVersion     = "1",
+        },
+    },
+
+    -- ── Plugins ───────────────────────────────────────────────────────────────
+    -- Uncomment the IAP plugin when ready to submit to stores.
+    -- Requires a Solar2D account or build server.
+    --
+    -- plugins = {
+    --     ["plugin.google.iap.v3"] = {
+    --         publisherId = "com.coronalabs",
+    --     },
+    -- },
+
+    -- ── Excluded files ─────────────────────────────────────────────────────────
+    -- Keep server code and Love2D leftovers out of the mobile build
+    excludeFiles = {
+        all = {
+            "server/*",
+            "deploy/*",
+            "tests/*",
+            "conf.lua",             -- Love2D config (replaced by config.lua)
+            "lib/push.lua",         -- Love2D virtual-resolution lib (not needed)
+            "lib/screen.lua",       -- Love2D screen base (replaced by composer)
+            "lib/screen_manager.lua", -- Love2D screen manager (replaced by composer)
+            "lib/sock.lua",         -- Love2D/ENet networking (replaced by tcp_client.lua)
+            "lib/audio.lua",        -- Love2D audio override (not needed)
+            "lib/baton.lua",        -- Love2D gamepad lib (not needed)
+            "*.sh",
+            "*.log",
+            "*.md",
+        },
+    },
+}

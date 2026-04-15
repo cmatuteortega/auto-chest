@@ -1,431 +1,401 @@
--- AutoChest – Login Screen
--- Handles player authentication and connects to the game server
+-- AutoChest – Login Screen (Solar2D composer scene)
+--
+-- Replaces the Love2D Screen-based login.lua.
+-- • Custom input fields replaced with native.newTextField (mobile keyboard built-in)
+-- • love.graphics.* replaced with display objects
+-- • sock.lua replaced with lib/tcp_client.lua (same public API)
+-- • love.filesystem replaced with _G.readFile / _G.writeFile (set in main.lua)
 
-local Screen    = require('lib.screen')
-local Constants = require('src.constants')
-local config    = require('src.config')
-local sock      = require('lib.sock')
-local json      = require('lib.json')
+local composer     = require("composer")
+local Constants    = require("src.constants")
+local config       = require("src.config")
+local sock         = require("lib.tcp_client")   -- drop-in for lib/sock
+local json         = require("lib.json")
 
-local LoginScreen = {}
+local scene = composer.newScene()
 
-function LoginScreen.new()
-    local self = Screen.new()
+-- ── Helpers ───────────────────────────────────────────────────────────────────
 
-    -- ── init ────────────────────────────────────────────────────────────────
+local function makeButton(group, label, x, y, w, h, font, enabled)
+    local btn = display.newGroup()
+    group:insert(btn)
+    btn.x, btn.y = x + w / 2, y + h / 2
 
-    function self:init()
-        -- Input fields
-        self.usernameText = ""
-        self.passwordText = ""
-        self.activeField = "username"  -- "username", "password", or nil
-
-        -- Status
-        self.status = "connecting"  -- connecting, ready, error
-        self.statusMessage = "Connecting to server..."
-
-        -- Network
-        self.client = nil
-        self.playerData = nil  -- {id, username, trophies, coins, deck, token}
-
-        -- Cursor animation
-        self.cursorTimer = 0
-        self.cursorVisible = true
-
-        -- Hit rects (rebuilt each draw)
-        self._usernameRect = nil
-        self._passwordRect = nil
-        self._loginBtnRect = nil
-        self._registerBtnRect = nil
-
-        -- Connect to server
-        self:connectToServer()
-
-        love.keyboard.setKeyRepeat(true)
+    local bg = display.newRoundedRect(btn, 0, 0, w, h, 8 * Constants.SCALE)
+    if enabled then
+        bg:setFillColor(0.15, 0.32, 0.65)
+        bg:setStrokeColor(0.25, 0.45, 0.85)
+    else
+        bg:setFillColor(0.12, 0.12, 0.18)
+        bg:setStrokeColor(0.22, 0.22, 0.30)
     end
+    bg.strokeWidth = 2 * Constants.SCALE
 
-    function self:close()
-        love.keyboard.setKeyRepeat(false)
-        love.keyboard.setTextInput(false)  -- Close mobile keyboard
-        -- Only disconnect if not logged in successfully
-        if self.client and self.status ~= "logged_in" then
-            self.client:disconnect()
-        end
-    end
+    local lbl = display.newText({
+        parent   = btn,
+        text     = label,
+        x        = 0,
+        y        = 0,
+        font     = font.name,
+        fontSize = font.size,
+    })
+    lbl:setFillColor(enabled and 1 or 0.4, enabled and 1 or 0.4, enabled and 1 or (enabled and 1 or 0.45))
 
-    function self:connectToServer()
-        self.client = sock.newClient(config.SERVER_ADDRESS, config.SERVER_PORT)
-        self.client:setSerialization(json.encode, json.decode)
-
-        self.client:on("connect", function()
-            self.status = "ready"
-            self.statusMessage = "Connected. Please log in."
-        end)
-
-        self.client:on("disconnect", function()
-            if self.status ~= "logged_in" then
-                self.status = "error"
-                self.statusMessage = "Disconnected from server"
-            end
-        end)
-
-        self.client:on("login_success", function(data)
-            print("[LOGIN] gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
-            self.playerData = {
-                id = data.player_id,
-                username = data.username,
-                trophies = data.trophies,
-                coins = data.coins,
-                gold = data.gold or 0,
-                gems = data.gems or 0,
-                xp = data.xp or 0,
-                level = data.level or 1,
-                activeDeckIndex = data.active_deck_index,
-                decks = data.decks,
-                token = data.token,
-                unlocks = data.unlocks
-            }
-            self.status = "logged_in"
-            self.statusMessage = "Login successful!"
-
-            -- Persist session as JSON {token, username} for auto-login on next launch
-            if data.token and data.token ~= "" then
-                love.filesystem.write("session.dat", json.encode({
-                    token    = data.token,
-                    username = data.username,
-                }))
-            end
-
-            -- Store player data and socket globally for other screens
-            _G.PlayerData = self.playerData
-            _G.GameSocket = self.client
-
-            -- Wait a moment then switch to menu
-            love.timer.sleep(0.5)
-            local ScreenManager = require('lib.screen_manager')
-            ScreenManager.switch('menu')
-        end)
-
-        self.client:on("login_failed", function(data)
-            self.status = "error"
-            self.statusMessage = data.reason or "Login failed"
-        end)
-
-        self.client:on("register_success", function(data)
-            self.status = "ready"
-            self.statusMessage = "Registration successful! Please log in."
-            self.usernameText = ""
-            self.passwordText = ""
-        end)
-
-        self.client:on("register_failed", function(data)
-            self.status = "error"
-            self.statusMessage = data.reason or "Registration failed"
-        end)
-
-        self.client:connect()
-        -- Generous timeout so brief interruptions (notification, quick app switch) don't kill the socket
-        self.client:setTimeout(32, 5000, 60000)
-    end
-
-    -- ── update ──────────────────────────────────────────────────────────────
-
-    function self:update(dt)
-        if self.client then
-            self.client:update()
-        end
-
-        -- Cursor blink
-        self.cursorTimer = self.cursorTimer + dt
-        if self.cursorTimer >= 0.5 then
-            self.cursorTimer = 0
-            self.cursorVisible = not self.cursorVisible
-        end
-    end
-
-    -- ── draw helpers ────────────────────────────────────────────────────────
-
-    local function roundedRect(x, y, w, h, r, sc)
-        love.graphics.rectangle('fill', x, y, w, h, r * sc, r * sc)
-    end
-
-    local function roundedRectLine(x, y, w, h, r, sc, lw)
-        love.graphics.setLineWidth(lw or 2)
-        love.graphics.rectangle('line', x, y, w, h, r * sc, r * sc)
-    end
-
-    local function textCY(font, boxY, boxH)
-        return math.floor(boxY + (boxH - (font:getAscent() - font:getDescent())) / 2)
-    end
-
-    -- ── draw ────────────────────────────────────────────────────────────────
-
-    function self:draw()
-        local lg = love.graphics
-        local W  = Constants.GAME_WIDTH
-        local H  = Constants.GAME_HEIGHT
-        local sc = Constants.SCALE
-        local cx = W / 2
-
-        lg.clear(Constants.COLORS.BACKGROUND)
-
-        -- Title
-        lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
-        lg.printf("AutoChest", 0, H * 0.10, W, 'center')
-
-        -- Status message
-        lg.setFont(Fonts.small)
-        if self.status == "error" then
-            lg.setColor(1, 0.4, 0.4, 1)
-        elseif self.status == "connecting" then
-            lg.setColor(0.7, 0.7, 0.7, 1)
-        else
-            lg.setColor(0.6, 1, 0.6, 1)
-        end
-        lg.printf(self.statusMessage, 0, H * 0.10 + Fonts.large:getHeight() + 20 * sc, W, 'center')
-
-        -- Only show input fields if connected
-        if self.status ~= "connecting" and self.status ~= "logged_in" then
-            local fieldW   = 300 * sc
-            local fieldH   = 50 * sc
-            local fieldX   = cx - fieldW / 2
-            local labelGap = 8 * sc   -- space between label and field above it
-            local fieldGap = 36 * sc  -- space between bottom of one field and label of next
-            local textPad  = 12 * sc
-
-            local startY = H * 0.32
-
-            -- ── Username ──────────────────────────────────────────────────────
-            local usernameY = startY
-            lg.setFont(Fonts.small)
-            lg.setColor(0.65, 0.65, 0.7, 1)
-            lg.print("Username", fieldX, usernameY - Fonts.small:getHeight() - labelGap)
-
-            local active = (self.activeField == "username")
-            lg.setColor(active and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
-            roundedRect(fieldX, usernameY, fieldW, fieldH, 5, sc)
-            lg.setColor(active and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
-            roundedRectLine(fieldX, usernameY, fieldW, fieldH, 5, sc, 2 * sc)
-
-            lg.setFont(Fonts.small)
-            lg.setColor(1, 1, 1, 1)
-            local textY = textCY(Fonts.small, usernameY, fieldH)
-            lg.print(self.usernameText, fieldX + textPad, textY)
-
-            if active and self.cursorVisible then
-                local tw = Fonts.small:getWidth(self.usernameText)
-                lg.setColor(1, 1, 1, 0.85)
-                lg.rectangle('fill', fieldX + textPad + tw + 1, textY + 2 * sc,
-                             2 * sc, Fonts.small:getHeight() - 4 * sc)
-            end
-
-            self._usernameRect = {x = fieldX, y = usernameY, w = fieldW, h = fieldH}
-
-            -- ── Password ──────────────────────────────────────────────────────
-            local passwordY = usernameY + fieldH + fieldGap
-            lg.setFont(Fonts.small)
-            lg.setColor(0.65, 0.65, 0.7, 1)
-            lg.print("Password", fieldX, passwordY - Fonts.small:getHeight() - labelGap)
-
-            active = (self.activeField == "password")
-            lg.setColor(active and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
-            roundedRect(fieldX, passwordY, fieldW, fieldH, 5, sc)
-            lg.setColor(active and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
-            roundedRectLine(fieldX, passwordY, fieldW, fieldH, 5, sc, 2 * sc)
-
-            lg.setFont(Fonts.small)
-            lg.setColor(1, 1, 1, 1)
-            local maskedPassword = string.rep("*", #self.passwordText)
-            textY = textCY(Fonts.small, passwordY, fieldH)
-            lg.print(maskedPassword, fieldX + textPad, textY)
-
-            if active and self.cursorVisible then
-                local tw = Fonts.small:getWidth(maskedPassword)
-                lg.setColor(1, 1, 1, 0.85)
-                lg.rectangle('fill', fieldX + textPad + tw + 1, textY + 2 * sc,
-                             2 * sc, Fonts.small:getHeight() - 4 * sc)
-            end
-
-            self._passwordRect = {x = fieldX, y = passwordY, w = fieldW, h = fieldH}
-
-            -- ── Buttons ───────────────────────────────────────────────────────
-            local btnW = 140 * sc
-            local btnH = 54 * sc
-            local btnGap = 20 * sc
-            local btnY = passwordY + fieldH + 44 * sc
-            local loginX    = cx - btnW - btnGap / 2
-            local registerX = cx + btnGap / 2
-
-            local canLogin = #self.usernameText > 0 and #self.passwordText > 0
-
-            -- Login button
-            if canLogin then
-                lg.setColor(0.15, 0.32, 0.65, 1)
-                roundedRect(loginX, btnY, btnW, btnH, 8, sc)
-                lg.setColor(0.25, 0.45, 0.85, 1)
-                roundedRectLine(loginX, btnY, btnW, btnH, 8, sc, 2 * sc)
-            else
-                lg.setColor(0.12, 0.12, 0.18, 1)
-                roundedRect(loginX, btnY, btnW, btnH, 8, sc)
-                lg.setColor(0.22, 0.22, 0.30, 1)
-                roundedRectLine(loginX, btnY, btnW, btnH, 8, sc, 2 * sc)
-            end
-            lg.setFont(Fonts.medium)
-            lg.setColor(canLogin and {1, 1, 1, 1} or {0.4, 0.4, 0.45, 1})
-            lg.printf("Login", loginX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
-            self._loginBtnRect = canLogin and {x = loginX, y = btnY, w = btnW, h = btnH} or nil
-
-            -- Register button
-            if canLogin then
-                lg.setColor(0.15, 0.45, 0.25, 1)
-                roundedRect(registerX, btnY, btnW, btnH, 8, sc)
-                lg.setColor(0.25, 0.65, 0.40, 1)
-                roundedRectLine(registerX, btnY, btnW, btnH, 8, sc, 2 * sc)
-            else
-                lg.setColor(0.12, 0.12, 0.18, 1)
-                roundedRect(registerX, btnY, btnW, btnH, 8, sc)
-                lg.setColor(0.22, 0.22, 0.30, 1)
-                roundedRectLine(registerX, btnY, btnW, btnH, 8, sc, 2 * sc)
-            end
-            lg.setFont(Fonts.medium)
-            lg.setColor(canLogin and {1, 1, 1, 1} or {0.4, 0.4, 0.45, 1})
-            lg.printf("Register", registerX, textCY(Fonts.medium, btnY, btnH), btnW, 'center')
-            self._registerBtnRect = canLogin and {x = registerX, y = btnY, w = btnW, h = btnH} or nil
-        end
-    end
-
-    -- ── input ───────────────────────────────────────────────────────────────
-
-    function self:mousepressed(x, y, button)
-        if button ~= 1 then return end
-
-        -- Check field taps
-        if self._usernameRect then
-            local r = self._usernameRect
-            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                self.activeField = "username"
-                self.status = "ready"
-                -- Open mobile keyboard
-                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
-                return
-            end
-        end
-        if self._passwordRect then
-            local r = self._passwordRect
-            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                self.activeField = "password"
-                self.status = "ready"
-                -- Open mobile keyboard
-                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
-                return
-            end
-        end
-
-        -- Check button taps
-        if self._loginBtnRect then
-            local r = self._loginBtnRect
-            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                AudioManager.playTap()
-                -- Close keyboard before login
-                love.keyboard.setTextInput(false)
-                self:doLogin()
-                return
-            end
-        end
-        if self._registerBtnRect then
-            local r = self._registerBtnRect
-            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                AudioManager.playTap()
-                -- Close keyboard before register
-                love.keyboard.setTextInput(false)
-                self:doRegister()
-                return
-            end
-        end
-
-        -- Tap elsewhere deactivates and closes keyboard
-        self.activeField = nil
-        love.keyboard.setTextInput(false)
-    end
-
-    function self:touchpressed(_, x, y)
-        self:mousepressed(x, y, 1)
-    end
-
-    function self:textinput(t)
-        if not self.activeField then return end
-
-        if self.activeField == "username" then
-            -- Only allow alphanumeric and underscore for username
-            if t:match("^[%w_]+$") then
-                self.usernameText = self.usernameText .. t
-            end
-        elseif self.activeField == "password" then
-            self.passwordText = self.passwordText .. t
-        end
-    end
-
-    function self:keypressed(key)
-        if key == "escape" then
-            self.activeField = nil
-            love.keyboard.setTextInput(false)
-            return
-        end
-
-        if not self.activeField then return end
-
-        if key == "backspace" then
-            if self.activeField == "username" then
-                self.usernameText = self.usernameText:sub(1, -2)
-            elseif self.activeField == "password" then
-                self.passwordText = self.passwordText:sub(1, -2)
-            end
-        elseif key == "tab" then
-            -- Switch fields - update keyboard position for mobile
-            if self.activeField == "username" and self._passwordRect then
-                self.activeField = "password"
-                local r = self._passwordRect
-                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
-            elseif self._usernameRect then
-                self.activeField = "username"
-                local r = self._usernameRect
-                love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
-            end
-        elseif key == "return" or key == "kpenter" then
-            -- Submit login and close keyboard
-            if #self.usernameText > 0 and #self.passwordText > 0 then
-                love.keyboard.setTextInput(false)
-                self:doLogin()
-            end
-        end
-    end
-
-    function self:doLogin()
-        if not self.client or self.status == "connecting" then return end
-
-        self.status = "connecting"
-        self.statusMessage = "Logging in..."
-        self.client:send("login", {
-            username  = self.usernameText,
-            password  = self.passwordText,
-            device_id = _G.DeviceId or ""
-        })
-    end
-
-    function self:doRegister()
-        if not self.client or self.status == "connecting" then return end
-
-        self.status = "connecting"
-        self.statusMessage = "Creating account..."
-        self.client:send("register", {
-            username  = self.usernameText,
-            password  = self.passwordText,
-            device_id = _G.DeviceId or ""
-        })
-    end
-
-    return self
+    return btn, bg, lbl
 end
 
-return LoginScreen
+-- ── Scene lifecycle ───────────────────────────────────────────────────────────
+
+function scene:create(event)
+    local group = self.view
+    local W     = Constants.GAME_WIDTH
+    local H     = Constants.GAME_HEIGHT
+    local sc    = Constants.SCALE
+
+    -- Background
+    local bg = display.newRect(group, W / 2, H / 2, W, H)
+    local c  = Constants.COLORS.BACKGROUND
+    bg:setFillColor(c[1], c[2], c[3])
+
+    -- Title
+    self._titleLbl = display.newText({
+        parent   = group,
+        text     = "AutoChest",
+        x        = W / 2,
+        y        = H * 0.13,
+        font     = Fonts.large.name,
+        fontSize = Fonts.large.size,
+        align    = "center",
+    })
+    self._titleLbl:setFillColor(1, 1, 1)
+
+    -- Status message
+    self._statusLbl = display.newText({
+        parent   = group,
+        text     = "Connecting to server...",
+        x        = W / 2,
+        y        = H * 0.13 + Fonts.large.size + 20 * sc,
+        font     = Fonts.small.name,
+        fontSize = Fonts.small.size,
+        align    = "center",
+    })
+    self._statusLbl:setFillColor(0.7, 0.7, 0.7)
+
+    -- ── Input fields (native text fields handle the mobile keyboard) ──────────
+    local fieldW  = 300 * sc
+    local fieldH  = 50  * sc
+    local fieldX  = W / 2 - fieldW / 2     -- left edge in content coords
+    local startY  = H * 0.32
+    local fieldGap = 36 * sc
+
+    -- Username label
+    display.newText({
+        parent   = group,
+        text     = "Username",
+        x        = fieldX,
+        y        = startY - Fonts.small.size - 8 * sc,
+        font     = Fonts.small.name,
+        fontSize = Fonts.small.size,
+        align    = "left",
+    }):setFillColor(0.65, 0.65, 0.7)
+
+    -- Username field
+    self._userField = native.newTextField(
+        fieldX + fieldW / 2,            -- center x
+        startY + fieldH / 2,            -- center y
+        fieldW,
+        fieldH
+    )
+    self._userField.font         = native.newFont(Fonts.small.name, Fonts.small.size)
+    self._userField.placeholder  = ""
+    self._userField.inputType    = "default"
+    self._userField.hasBackground = false
+    -- Visual background behind native field
+    local userBg = display.newRoundedRect(group,
+        fieldX + fieldW / 2, startY + fieldH / 2, fieldW, fieldH, 5 * sc)
+    userBg:setFillColor(0.16, 0.16, 0.22)
+    userBg:setStrokeColor(0.32, 0.32, 0.42)
+    userBg.strokeWidth = 2 * sc
+    -- Native field must be inserted AFTER background rect so it renders on top
+    -- (Solar2D native objects are always above display objects)
+
+    -- Password label
+    local passY = startY + fieldH + fieldGap
+    display.newText({
+        parent   = group,
+        text     = "Password",
+        x        = fieldX,
+        y        = passY - Fonts.small.size - 8 * sc,
+        font     = Fonts.small.name,
+        fontSize = Fonts.small.size,
+        align    = "left",
+    }):setFillColor(0.65, 0.65, 0.7)
+
+    -- Password field
+    self._passField = native.newTextField(
+        fieldX + fieldW / 2,
+        passY + fieldH / 2,
+        fieldW,
+        fieldH
+    )
+    self._passField.font         = native.newFont(Fonts.small.name, Fonts.small.size)
+    self._passField.placeholder  = ""
+    self._passField.inputType    = "password"
+    self._passField.hasBackground = false
+    local passBg = display.newRoundedRect(group,
+        fieldX + fieldW / 2, passY + fieldH / 2, fieldW, fieldH, 5 * sc)
+    passBg:setFillColor(0.16, 0.16, 0.22)
+    passBg:setStrokeColor(0.32, 0.32, 0.42)
+    passBg.strokeWidth = 2 * sc
+
+    -- ── Buttons ───────────────────────────────────────────────────────────────
+    local btnW   = 140 * sc
+    local btnH   = 54  * sc
+    local btnGap = 20  * sc
+    local btnY   = passY + fieldH + 44 * sc
+    local loginX    = W / 2 - btnW - btnGap / 2
+    local registerX = W / 2 + btnGap / 2
+
+    local loginBtn, loginBg, loginLbl = makeButton(
+        group, "Login", loginX, btnY, btnW, btnH, Fonts.medium, false)
+    local regBtn, regBg, regLbl = makeButton(
+        group, "Register", registerX, btnY, btnW, btnH, Fonts.medium, false)
+
+    self._loginBtn    = loginBtn
+    self._loginBg     = loginBg
+    self._loginLbl    = loginLbl
+    self._regBtn      = regBtn
+    self._regBg       = regBg
+    self._regLbl      = regLbl
+    self._btnY        = btnY
+    self._btnW        = btnW
+    self._btnH        = btnH
+    self._loginX      = loginX
+    self._registerX   = registerX
+    self._fieldsVisible = false
+
+    -- Hide fields until connected
+    self._userField.isVisible = false
+    self._passField.isVisible = false
+    loginBtn.isVisible = false
+    regBtn.isVisible   = false
+end
+
+function scene:show(event)
+    if event.phase ~= "did" then return end
+
+    self._status = "connecting"
+    self:_connectToServer()
+
+    -- Poll network every frame
+    self._frameListener = Runtime:addEventListener("enterFrame", function()
+        if self._client then self._client:update() end
+    end)
+
+    -- Watch text fields to enable/disable buttons
+    local function onFieldEdit(e)
+        self:_updateButtonState()
+    end
+    self._userField:addEventListener("userInput", onFieldEdit)
+    self._passField:addEventListener("userInput", onFieldEdit)
+
+    -- Touch listener for buttons
+    self._touchListener = Runtime:addEventListener("touch", function(e)
+        if e.phase ~= "ended" then return end
+        self:_handleTouch(e.x, e.y)
+    end)
+end
+
+function scene:hide(event)
+    if event.phase ~= "will" then return end
+
+    Runtime:removeEventListener("enterFrame", self._frameListener)
+    Runtime:removeEventListener("touch", self._touchListener)
+
+    -- Hide native fields (they float above composer scenes)
+    self._userField.isVisible = false
+    self._passField.isVisible = false
+    native.setKeyboardFocus(nil)
+end
+
+function scene:destroy(event)
+    if self._client and self._status ~= "logged_in" then
+        self._client:disconnect()
+    end
+    if self._userField then self._userField:removeSelf(); self._userField = nil end
+    if self._passField then self._passField:removeSelf(); self._passField = nil end
+end
+
+-- ── Network ───────────────────────────────────────────────────────────────────
+
+function scene:_connectToServer()
+    self._client = sock.newClient(config.SERVER_ADDRESS, config.SERVER_PORT)
+    self._client:setSerialization(json.encode, json.decode)
+
+    self._client:on("connect", function()
+        self._status = "ready"
+        self:_setStatus("Connected. Please log in.", 0.6, 1, 0.6)
+        self:_showFields(true)
+    end)
+
+    self._client:on("disconnect", function()
+        if self._status ~= "logged_in" then
+            self._status = "error"
+            self:_setStatus("Disconnected from server", 1, 0.4, 0.4)
+        end
+    end)
+
+    self._client:on("connect_failed", function(data)
+        self._status = "error"
+        self:_setStatus("Cannot reach server", 1, 0.4, 0.4)
+    end)
+
+    self._client:on("login_success", function(data)
+        self._status = "logged_in"
+        self:_setStatus("Login successful!", 0.6, 1, 0.6)
+
+        local playerData = {
+            id              = data.player_id,
+            username        = data.username,
+            trophies        = data.trophies,
+            coins           = data.coins,
+            gold            = data.gold   or 0,
+            gems            = data.gems   or 0,
+            xp              = data.xp     or 0,
+            level           = data.level  or 1,
+            activeDeckIndex = data.active_deck_index,
+            decks           = data.decks,
+            token           = data.token,
+            unlocks         = data.unlocks,
+        }
+
+        -- Persist session token
+        if data.token and data.token ~= "" then
+            _G.writeFile("session.dat", json.encode({
+                token    = data.token,
+                username = data.username,
+            }))
+        end
+
+        _G.PlayerData  = playerData
+        _G.GameSocket  = self._client
+
+        -- Brief pause then navigate to menu
+        timer.performWithDelay(500, function()
+            composer.gotoScene("src.screens.menu", { effect = "fade", time = 300 })
+        end)
+    end)
+
+    self._client:on("login_failed", function(data)
+        self._status = "error"
+        self:_setStatus(data.reason or "Login failed", 1, 0.4, 0.4)
+    end)
+
+    self._client:on("register_success", function()
+        self._status = "ready"
+        self:_setStatus("Account created! Please log in.", 0.6, 1, 0.6)
+        self._userField.text = ""
+        self._passField.text = ""
+        self:_updateButtonState()
+    end)
+
+    self._client:on("register_failed", function(data)
+        self._status = "error"
+        self:_setStatus(data.reason or "Registration failed", 1, 0.4, 0.4)
+    end)
+
+    self._client:connect()
+end
+
+-- ── UI helpers ────────────────────────────────────────────────────────────────
+
+function scene:_setStatus(msg, r, g, b)
+    if self._statusLbl then
+        self._statusLbl.text = msg
+        self._statusLbl:setFillColor(r, g, b)
+    end
+end
+
+function scene:_showFields(visible)
+    self._fieldsVisible = visible
+    self._userField.isVisible = visible
+    self._passField.isVisible = visible
+    self._loginBtn.isVisible  = visible
+    self._regBtn.isVisible    = visible
+end
+
+function scene:_updateButtonState()
+    local user = self._userField.text or ""
+    local pass = self._passField.text or ""
+    local enabled = #user > 0 and #pass > 0
+
+    if enabled then
+        self._loginBg:setFillColor(0.15, 0.32, 0.65)
+        self._loginBg:setStrokeColor(0.25, 0.45, 0.85)
+        self._loginLbl:setFillColor(1, 1, 1)
+        self._regBg:setFillColor(0.15, 0.45, 0.25)
+        self._regBg:setStrokeColor(0.25, 0.65, 0.40)
+        self._regLbl:setFillColor(1, 1, 1)
+    else
+        self._loginBg:setFillColor(0.12, 0.12, 0.18)
+        self._loginBg:setStrokeColor(0.22, 0.22, 0.30)
+        self._loginLbl:setFillColor(0.4, 0.4, 0.45)
+        self._regBg:setFillColor(0.12, 0.12, 0.18)
+        self._regBg:setStrokeColor(0.22, 0.22, 0.30)
+        self._regLbl:setFillColor(0.4, 0.4, 0.45)
+    end
+    self._canSubmit = enabled
+end
+
+function scene:_handleTouch(x, y)
+    if not self._fieldsVisible or not self._canSubmit then return end
+
+    -- Dismiss keyboard first
+    native.setKeyboardFocus(nil)
+
+    local function hitTest(btn)
+        -- btn.x/y is the center of the button group in content coords
+        local hw = self._btnW / 2
+        local hh = self._btnH / 2
+        return x >= btn.x - hw and x <= btn.x + hw
+           and y >= btn.y - hh and y <= btn.y + hh
+    end
+
+    if hitTest(self._loginBtn) then
+        AudioManager.playTap()
+        self:_doLogin()
+    elseif hitTest(self._regBtn) then
+        AudioManager.playTap()
+        self:_doRegister()
+    end
+end
+
+function scene:_doLogin()
+    if not self._client or self._status == "connecting" then return end
+    self._status = "connecting"
+    self:_setStatus("Logging in...", 0.7, 0.7, 0.7)
+    self._client:send("login", {
+        username  = self._userField.text,
+        password  = self._passField.text,
+        device_id = _G.DeviceId or "",
+    })
+end
+
+function scene:_doRegister()
+    if not self._client or self._status == "connecting" then return end
+    self._status = "connecting"
+    self:_setStatus("Creating account...", 0.7, 0.7, 0.7)
+    self._client:send("register", {
+        username  = self._userField.text,
+        password  = self._passField.text,
+        device_id = _G.DeviceId or "",
+    })
+end
+
+-- ── Register lifecycle events ─────────────────────────────────────────────────
+scene:addEventListener("create",  scene)
+scene:addEventListener("show",    scene)
+scene:addEventListener("hide",    scene)
+scene:addEventListener("destroy", scene)
+
+return scene
