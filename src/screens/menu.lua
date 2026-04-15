@@ -923,7 +923,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         -- ── Back button (below ticker stripe bottom at 111*sc) ──
         local btnH = math.floor(40 * sc)
-        local btnY = math.floor(118 * sc)
+        local btnY = math.floor(118 * sc + Constants.MENU_CONTENT_PUSH)
         local btnX = ox + math.floor(16 * sc)
         lg.setFont(Fonts.small)
         lg.setColor(0.965, 0.839, 0.741, 1)
