@@ -1048,18 +1048,20 @@ function GameScreen.new()
 
             -- Centre of bubble content area
             local cx = bx + imgW * bubScale * 0.5
-            local cy = by + imgH * bubScale * 0.42 - math.floor(6 * bubScale)  -- 6px up (scaled)
+            local cyOffset = isMine and math.floor(6 * bubScale) or 0
+            local cy = by + imgH * bubScale * 0.42 - cyOffset
 
-            -- Smooth bounce: ±15% of emH, sin wave
+            -- Smooth bounce: ±6% of emH, sin wave
             local t          = love.timer.getTime()
             local bounceAmp  = emH * 0.06
             local bounceY    = math.sin(t * 3.0) * bounceAmp * disp.alpha
 
             -- Draw ellipse shadow behind emote (on top of bubble sprite)
-            local shadowW  = emW * 0.65
-            local shadowH2 = emH * 0.12
-            local shadowX  = cx
-            local shadowY  = cy + emH * 0.5 + emH * 0.04 - math.floor(4 * bubScale)
+            local shadowW      = emW * 0.65
+            local shadowH2     = emH * 0.12
+            local shadowX      = cx
+            local shadowOffset = isMine and math.floor(4 * bubScale) or math.floor(6 * bubScale)
+            local shadowY      = cy + emH * 0.5 + emH * 0.04 - shadowOffset
             lg.setColor(0, 0, 0, 0.28 * disp.alpha)
             -- Approximate ellipse with a scaled circle
             lg.push()
@@ -1077,19 +1079,34 @@ function GameScreen.new()
     function self:drawUI()
         local lg = love.graphics
 
-        -- State and timer (positioned as percentage from top)
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.9, 0.9, 0.9, 1)
-        local stateText = self.state:upper()
+        -- Player labels (proportional positioning)
+        -- In online mode the local player is always shown at the bottom right.
+        lg.setFont(Fonts.large)
+        local topMargin    = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_TOP    + 4 * Constants.SCALE)
+        local bottomMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_BOTTOM + 4 * Constants.SCALE)
+        local leftMargin   = 20 * Constants.SCALE
+        local rightMargin  = 20 * Constants.SCALE
+        local fontHeight = Fonts.large:getHeight()
+
+        -- State label: top-right, same font/Y as P2 name; timer on line below during setup
+        lg.setFont(Fonts.large)
+        local stateText = ""
+        local timerText = nil
         if self.state == "setup" then
+            stateText = "SETUP"
             if not self.isTutorial then
-                stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
+                timerText = math.ceil(self.timer) .. "s"
             end
+            lg.setColor(0.9, 0.9, 0.9, 1)
         elseif self.state == "intermission" then
             stateText = "ROUND " .. self.roundNumber
+            lg.setColor(0.9, 0.9, 0.9, 1)
         elseif self.state == "pre_battle" then
             stateText = "GO!"
             lg.setColor(0.3, 1, 0.3, 1)
+        elseif self.state == "battle" then
+            stateText = "BATTLE"
+            lg.setColor(0.9, 0.9, 0.9, 1)
         elseif self.state == "battle_ending" then
             stateText = ""
         elseif self.state == "finished" and self.winner then
@@ -1097,8 +1114,16 @@ function GameScreen.new()
             stateText = didWin and "YOU WIN!" or "YOU LOSE"
             lg.setColor(didWin and {0.3, 1, 0.3, 1} or {1, 0.3, 0.3, 1})
         end
-        local stateTextY = math.max(Constants.GAME_HEIGHT * 0.025, Constants.SAFE_INSET_TOP)
-        lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
+        local rightEdge = Constants.GAME_WIDTH - rightMargin
+        if stateText ~= "" then
+            lg.printf(stateText, 0, topMargin, rightEdge, 'right')
+        end
+        if timerText then
+            lg.setFont(Fonts.medium)
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.printf(timerText, 0, topMargin + Fonts.large:getHeight(), rightEdge, 'right')
+        end
+        local stateTextY = topMargin
 
         -- Trophy and gold changes (if in finished state and online mode)
         if self.state == "finished" and self.trophyChange and self.isOnline and not self.isSandbox then
@@ -1115,13 +1140,6 @@ function GameScreen.new()
                 lg.printf("+" .. self.goldEarned .. " gold", 0, offsetY + Fonts.medium:getHeight() + 4 * sc, Constants.GAME_WIDTH, 'center')
             end
         end
-
-        -- Player labels (proportional positioning)
-        -- In online mode the local player is always shown at the bottom right.
-        lg.setFont(Fonts.large)
-        local topMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_TOP + 4 * Constants.SCALE)
-        local fontHeight = Fonts.large:getHeight()
-        local bottomMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_BOTTOM + 4 * Constants.SCALE)
 
         -- Determine which label goes where based on perspective
         local topLabel     = self.opponentName  -- Opponent always at top
@@ -1151,24 +1169,25 @@ function GameScreen.new()
         end
 
         -- Top player (opponent)
+        lg.setFont(Fonts.large)
         lg.setColor(topColor)
-        lg.print(topLabel, topMargin, topMargin)
+        lg.print(topLabel, leftMargin, topMargin)
         lg.setFont(Fonts.tiny)
         lg.setColor(0.9, 0.85, 0.3, 1)
-        lg.print(topTrophies .. " trophies", topMargin, topMargin + Fonts.large:getHeight())
-        drawLives(topMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
+        lg.print(topTrophies .. " trophies", leftMargin, topMargin + Fonts.large:getHeight())
+        drawLives(leftMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
 
         -- Bottom player (you)
         lg.setFont(Fonts.large)
         lg.setColor(bottomColor)
         local bLabelWidth = Fonts.large:getWidth(bottomLabel)
-        local bLabelX = Constants.GAME_WIDTH - bLabelWidth - topMargin
+        local bLabelX = Constants.GAME_WIDTH - bLabelWidth - rightMargin
         lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
         lg.setFont(Fonts.tiny)
         lg.setColor(0.9, 0.85, 0.3, 1)
         local trophyText = bottomTrophies .. " trophies"
         local trophyW = Fonts.tiny:getWidth(trophyText)
-        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - topMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
+        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - rightMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 
@@ -1183,8 +1202,8 @@ function GameScreen.new()
         local iconGap = math.floor(4 * Constants.SCALE)
         local visH  = Fonts.large:getAscent() - Fonts.large:getDescent()
         local iconY = math.floor(baseY + (visH - iconH) / 2)
-        lg.draw(self.goldIcon, topMargin, iconY, 0, iconSc, iconSc)
-        lg.print(coinStr, topMargin + iconW + iconGap, baseY)
+        lg.draw(self.goldIcon, leftMargin, iconY, 0, iconSc, iconSc)
+        lg.print(coinStr, leftMargin + iconW + iconGap, baseY)
 
         -- Reset font for buttons
         lg.setFont(Fonts.medium)
