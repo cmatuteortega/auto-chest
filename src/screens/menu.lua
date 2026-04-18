@@ -19,6 +19,10 @@ function MenuScreen.new()
     function self:init(entering)
         local W = Constants.GAME_WIDTH
 
+        -- Background sprite
+        self.bgSprite  = love.graphics.newImage('src/assets/background_menu.png')
+        self.bgOffsetY = -49  -- tweak to shift background up (negative) or down (positive)
+
         -- Panel state (1=Collection, 2=Decks, 3=Battle, 4=Shop, 5=Ranking); start on Battle
         self.NUM_PANELS   = 5
         self.currentPanel = 3
@@ -98,7 +102,7 @@ function MenuScreen.new()
 
         -- Bottom tab bar icons (order matches panel indices)
         self.uiIcons = {}
-        for i, name in ipairs({ 'collection', 'decks', 'battle', 'ranking', 'shop' }) do
+        for i, name in ipairs({ 'collection', 'decks', 'battle', 'shop', 'ranking' }) do
             local img = love.graphics.newImage('src/assets/ui/' .. name .. '.png')
             img:setFilter('nearest', 'nearest')
             self.uiIcons[i] = img
@@ -445,7 +449,7 @@ function MenuScreen.new()
         end
 
         -- Leaderboard fetch when ranking panel is active
-        if self.currentPanel == 4 then
+        if self.currentPanel == 5 then
             if not self._leaderboardFetched and _G.GameSocket and _G.GameSocket:isConnected() then
                 self._leaderboardFetched = true
                 self._leaderboardLoading = true
@@ -1166,6 +1170,17 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local btnY        = H * 0.62
         local contentTop  = 100 * sc + Constants.MENU_CONTENT_PUSH
         local gridY       = math.floor(contentTop + (btnY - contentTop - gridH) / 2)
+
+        -- Background sprite
+        if self.bgSprite then
+            local imgW      = self.bgSprite:getWidth()
+            local drawScale = Constants.CELL_SIZE / 16
+            local drawW     = imgW * drawScale
+            lg.setColor(1, 1, 1, 1)
+            lg.setShader(BaseUnit.getPaletteShader())
+            lg.draw(self.bgSprite, math.floor(ox + (W - drawW) / 2), math.floor(gridY + self.bgOffsetY), 0, drawScale, drawScale)
+            lg.setShader()
+        end
 
         -- Checkerboard cells
         local CDARK  = Constants.COLORS.CHESS_DARK
@@ -2367,8 +2382,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self:drawCollectionPanel(0,       W, H - barH, sc)
         self:drawDecksPanel(     W,       W, H - barH, sc)
         self:drawPlayPanel(      2 * W,   W, H - barH, sc)
-        self:drawRankingPanel(   3 * W,   W, H - barH)
-        self:drawShopPanel(      4 * W,   W, H - barH)
+        self:drawShopPanel(      3 * W,   W, H - barH)
+        self:drawRankingPanel(   4 * W,   W, H - barH)
 
         lg.pop()
         lg.setScissor()
@@ -2836,7 +2851,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- Chest press: flash HitChest briefly on touch-down (waiting state only)
-        if self.currentPanel == 5 and self._chestState == "waiting" and self._chestBtnRect then
+        if self.currentPanel == 4 and self._chestState == "waiting" and self._chestBtnRect then
             local r = self._chestBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self._chestHitFlash = 0.12
@@ -2852,7 +2867,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- Spring press: trade buy buttons (shop panel)
-        if self.currentPanel == 5 then
+        if self.currentPanel == 4 then
             for _, r in ipairs(self._tradeCardRects) do
                 if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                     self._tradeBtnSprings[r.slotIndex].pressed = true
@@ -2873,7 +2888,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 self._sbtnSpring.pressed = true
             end
         end
-        if self.currentPanel == 4 and self._roomKeyText ~= "" then
+        if self.currentPanel == 5 and self._roomKeyText ~= "" then
             local jbtn = self._roomKeyJoinRect
             if jbtn and x >= jbtn.x and x <= jbtn.x + jbtn.w and
                         y >= jbtn.y and y <= jbtn.y + jbtn.h then
@@ -3102,7 +3117,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- Shop panel: daily chest input
-        if self.currentPanel == 5 then
+        if self.currentPanel == 4 then
             -- God Mode skip timer button
             if _G.GodMode and self._chestSkipRect and self._chestState == "waiting" then
                 local r = self._chestSkipRect
@@ -3169,7 +3184,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             self.targetOffset = -(self.currentPanel - 1) * W
             self.isDragging   = false
             -- Leaving Shop panel: reset broken easter egg
-            if self.currentPanel ~= 4 and self._chestState == "broken" then
+            if self.currentPanel ~= 5 and self._chestState == "broken" then
                 self._chestState     = "waiting"
                 self._chestAnimTimer = 0
                 self._chestAnimFrame = 1
@@ -3213,7 +3228,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     self.currentPanel = i
                     self.targetOffset = -(i - 1) * Constants.GAME_WIDTH
                     -- Leaving Shop panel: reset broken easter egg
-                    if i ~= 4 and self._chestState == "broken" then
+                    if i ~= 5 and self._chestState == "broken" then
                         self._chestState     = "waiting"
                         self._chestAnimTimer = 0
                         self._chestAnimFrame = 1
@@ -3353,7 +3368,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- Tap: ranking panel (room key input + join button)
-        if self.currentPanel == 4 then
+        if self.currentPanel == 5 then
             local rk = self._roomKeyRect
             if rk and x >= rk.x and x <= rk.x + rk.w and y >= rk.y and y <= rk.y + rk.h then
                 self._roomKeyActive = true
@@ -3374,7 +3389,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- Tap: shop buttons
-        if self.currentPanel == 5 then
+        if self.currentPanel == 4 then
             -- Gem purchase buttons (placeholder)
             for _, btn in ipairs(self._shopGemBtns) do
                 if x >= btn.x and x <= btn.x + btn.w and

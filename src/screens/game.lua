@@ -57,7 +57,7 @@ function GameScreen.new()
 
         -- Load battle background sprite
         self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
-        self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
+        self.bgOffsetY = 273 -- adjust to shift the background up (negative) or down (positive)
         self.cameraShiftY = 0
         self.goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
         self.goldIcon:setFilter('nearest', 'nearest')

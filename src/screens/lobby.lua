@@ -57,6 +57,10 @@ function LobbyScreen.new()
         }
         self.waitingSentence = sentences[math.random(#sentences)]
 
+        -- Background sprite
+        self.bgSprite  = love.graphics.newImage('src/assets/background_menu.png')
+        self.bgOffsetY = -49  -- tweak to shift background up (negative) or down (positive)
+
         -- Match delay timer
         self.matchTimer = nil
 
@@ -417,6 +421,23 @@ function LobbyScreen.new()
         local cx = W / 2
 
         lg.clear(Constants.COLORS.BACKGROUND)
+
+        -- Background sprite (same pixel scale as deck preview unit sprites: 1px = CELL_SIZE/16)
+        -- Compute gridY identically to the deck preview so the background aligns with it
+        local bgBarH       = 90 * sc
+        local bgBtnY       = (H - bgBarH) * 0.62
+        local bgContentTop = 100 * sc + Constants.MENU_CONTENT_PUSH
+        local bgGridH      = 4 * Constants.CELL_SIZE
+        local bgGridY      = math.floor(bgContentTop + (bgBtnY - bgContentTop - bgGridH) / 2)
+        if self.bgSprite then
+            local imgW      = self.bgSprite:getWidth()
+            local drawScale = Constants.CELL_SIZE / 16
+            local drawW     = imgW * drawScale
+            lg.setColor(1, 1, 1, 1)
+            lg.setShader(BaseUnit.getPaletteShader())
+            lg.draw(self.bgSprite, math.floor((W - drawW) / 2), math.floor(bgGridY + self.bgOffsetY), 0, drawScale, drawScale)
+            lg.setShader()
+        end
 
         -- Queue timer
         if self.status == "queueing" then
