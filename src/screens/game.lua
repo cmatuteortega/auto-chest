@@ -7,6 +7,7 @@ local suit = require('lib.suit')
 local Tooltip = require('src.tooltip')
 local json = require('lib.json')
 local DeckManager = require('src.deck_manager')
+local BaseUnit = require('src.base_unit')
 
 local GameScreen = {}
 
@@ -57,6 +58,7 @@ function GameScreen.new()
         -- Load battle background sprite
         self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
         self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
+        self.cameraShiftY = 0
         self.goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
         self.goldIcon:setFilter('nearest', 'nearest')
 
@@ -598,6 +600,14 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- Camera shift: grid slides to vertical center during battle, returns for setup UI
+        local gridCenterY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
+        local cameraShiftTarget = 0
+        if self.state == "pre_battle" or self.state == "battle" or self.state == "battle_ending" then
+            cameraShiftTarget = Constants.GAME_HEIGHT / 2 - gridCenterY
+        end
+        self.cameraShiftY = self.cameraShiftY + (cameraShiftTarget - self.cameraShiftY) * math.min(1, dt * 7)
+
         -- Tutorial manager update (AI placement, step auto-advancement)
         if self.isTutorial and self.tutorialManager then
             self.tutorialManager:update(dt)
@@ -889,18 +899,27 @@ function GameScreen.new()
     function self:draw()
         local lg = love.graphics
 
-        -- Draw battle background centered on the grid at unit sprite scale
+        -- Draw battle background and grid, shifted by camera animation.
+        -- Store shift on Constants so drawFirePatch scissor calls can offset to screen space.
+        Constants.cameraShiftY = math.floor(self.cameraShiftY)
+        lg.push()
+        lg.translate(0, Constants.cameraShiftY)
+
         local spriteScale = Constants.CELL_SIZE / 16
         local bgW = self.bgSprite:getWidth()
         local bgH = self.bgSprite:getHeight()
         local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
         local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2 + self.bgOffsetY
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(self.bgSprite, bgX, bgY, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
+        lg.setShader()
 
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
+
+        lg.pop()
 
         -- Draw entering cards behind the UI (behind reroll button)
         if self.cards then
@@ -1025,8 +1044,8 @@ function GameScreen.new()
         local rowH       = Constants.CELL_SIZE
         local by
         if isMine then
-            -- centre of the bottom half-row = gridBottom - rowH/2
-            by = math.floor(gridBottom - rowH / 2 - imgH * bubScale / 2)
+            -- centre of the bottom half-row = gridBottom - rowH/2, shifted with camera
+            by = math.floor(gridBottom - rowH / 2 - imgH * bubScale / 2 + (Constants.cameraShiftY or 0))
         else
             -- centre of the top half-row = GRID_OFFSET_Y + rowH/2
             by = math.floor(Constants.GRID_OFFSET_Y + rowH / 2 - imgH * bubScale / 2)
