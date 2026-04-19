@@ -1,12 +1,13 @@
-# AutoChest — CLAUDE.md
+# CLAUDE.md
 
-Project reference for Claude Code. Keep this up to date as features are added.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+AutoChest is a 1v1 online autobattler (Clash Mini-style) built in Love2D/Lua. Keep this file up to date as features are added.
 
 ---
 
 ## What This Game Is
 
-AutoChest is a 1v1 online autobattler (Clash Mini-style) built in Love2D/Lua.
 - Players draft cards during a 30s setup phase to place/upgrade units on their side of the grid.
 - Both players click Ready (or the timer runs out) → GO! flash → battle simulates automatically.
 - Units fight until one side is wiped. The loser loses a life.
@@ -34,34 +35,32 @@ sudo systemctl status autochest-server
 sudo journalctl -u autochest-server -f   # view logs
 ```
 
+**Determinism regression test** (run after any combat changes):
+```bash
+lua tests/test_battle_determinism.lua
+```
+
 ---
 
 ## Project Structure
 
 ```
 autochest/
-├── CLAUDE.md            ← this file
 ├── conf.lua             # Love2D config (540×960 window)
 ├── main.lua             # Entry point, font loading, screen manager setup
 ├── play-online.sh       # Quick launcher for production server
 ├── tests/
-│   └── test_battle_determinism.lua  # Determinism regression test
+│   ├── test_battle_determinism.lua  # Determinism regression test (lua, not love)
+│   └── balance_sim.lua              # Unit balance simulation tool
 ├── deploy/              # Cloud deployment files
-│   ├── DEPLOYMENT_GUIDE.md          # Complete deployment guide
-│   ├── YOUR_DEPLOYMENT_STEPS.md     # Quick setup with actual IP
-│   ├── server-setup.sh              # VPS setup script
-│   ├── autochest-server.service     # Systemd service file
-│   └── backup-db.sh                 # Database backup script
 ├── server/              # Authentication + Matchmaking Server
-│   ├── conf.lua         # Love2D config (disables audio for headless)
 │   ├── main.lua         # ENet server: auth, queue-based matchmaking, relay
-│   ├── database.lua     # SQLite wrapper (players, sessions, decks)
-│   ├── players.db       # SQLite database (created on first run)
-│   └── matchmaking.log  # Server event log
+│   ├── database.lua     # SQLite wrapper (bcrypt password hashing, session tokens)
+│   └── players.db       # SQLite database (created on first run)
 ├── lib/
 │   ├── classic.lua      # OOP (Class:extend())
 │   ├── sock.lua         # ENet networking wrapper
-│   ├── json.lua         # JSON encode/decode (used for network messages)
+│   ├── json.lua         # JSON encode/decode
 │   ├── screen.lua       # Base screen object
 │   ├── screen_manager.lua
 │   └── suit/            # Immediate-mode UI (buttons)
@@ -73,15 +72,17 @@ autochest/
     ├── base_unit.lua        # Base class for all units
     ├── base_unit_ranged.lua # Ranged unit base (adds arrow projectiles)
     ├── unit_registry.lua    # Unit type registry, cost table, sprite loader
+    ├── audio_manager.lua    # Music/SFX singleton with persistent settings
+    ├── socket_manager.lua   # Socket health check + async reconnection
+    ├── tutorial_manager.lua # First-time tutorial overlay + AI opponent
     ├── card.lua             # Draggable card UI element
     ├── tooltip.lua          # Unit stat tooltip with upgrade button
     ├── pathfinding.lua      # A* pathfinding for unit movement
-    ├── units/
-    │   ├── knight.lua
-    │   ├── samurai.lua
-    │   ├── boney.lua
-    │   └── marrow.lua
+    ├── units/               # 17 unit types: amalgam, boney, bonk, bull, burrow,
+    │                        #   catapult, clavicula, humerus, knight, mage, marc,
+    │                        #   marrow, mend, migraine, samurai, sinner, tomb
     └── screens/
+        ├── loading.lua      # Auto-auth screen (reads session.dat token, 5s timeout)
         ├── login.lua        # Authentication screen (register/login)
         ├── menu.lua         # Main menu (5-panel swipe UI: Collection/Decks/Battle/Shop/Ranking)
         ├── lobby.lua        # Matchmaking lobby (auto-joins queue, waits for match)
@@ -148,8 +149,8 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 4. `battle`: Units advance via a **fixed timestep loop** (see Battle Simulation below).
 5. One side wiped → `state = "battle_ending"`.
 6. `battle_ending`: Animations play out; once `areAllAnimationsComplete()`:
-   - Send `round_end_ready` (online).
-   - When both sides done: consolation coins → `state = "intermission"`, `intermissionTimer = 2.5`.
+   - Both clients set `localRoundEndReady = true` and send `round_end_ready`.
+   - When `opponentRoundEndReady` also arrives: consolation coins → `state = "intermission"`, `intermissionTimer = 2.5`.
 7. `intermission` (2.5s, bodies stay): Timer expires → deduct life → if 0: `finished`, else `resetRound()`.
 8. `resetRound()`: Clear grid, re-place all units at home positions, `+6 coins`, `state = "setup"`.
 
@@ -157,32 +158,17 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 
 ## Online Multiplayer Architecture
 
-**Server Architecture**: Cloud-hosted matchmaking server with authentication and persistent player data.
-
 **Production Server**: `75.119.142.247:12345` (Contabo VPS, Ubuntu 22.04)
 
-**Server Components** (`server/`):
-- `main.lua`: ENet server with auth, queue-based matchmaking, relay
-- `database.lua`: SQLite wrapper (bcrypt password hashing, session tokens)
-- `players.db`: SQLite database (players, sessions, decks)
-
 **Authentication Flow**:
-1. Client connects to server via ENet (TCP/UDP port 12345)
-2. Login screen: `login` or `register` message → server validates/creates account
-3. Server responds with `login_success` containing: `player_id`, `username`, `trophies`, `coins`, `decks`, `token`
-4. Client stores `_G.PlayerData` and `_G.GameSocket` globally
+1. `loading.lua` auto-reads `session.dat`; if token exists, sends `auto_login` → skips login screen.
+2. Login screen: `login` or `register` → server validates → `login_success` with `player_id`, `username`, `trophies`, `coins`, `decks`, `token`.
+3. Client stores `_G.PlayerData` and `_G.GameSocket` globally.
 
 **Matchmaking Flow**:
-1. Client sends `queue_join` with `player_id` and `trophies`
-2. Server adds player to matchmaking queue: `{peer, player_id, username, trophies, queue_time}`
-3. Server continuously processes queue (every frame):
-   - Base trophy range: ±100
-   - Expands by +50 every 5 seconds (max ±500)
-4. When match found: Server sends `match_found` to both players with:
-   - `role` (1 = P1/host, 2 = P2/guest)
-   - `opponent_name`, `opponent_trophies`, `my_trophies`
-5. Server creates "room": pairs peers for relay forwarding
-6. Clients receive role → update `Constants.PERSPECTIVE` → launch GameScreen
+1. Client sends `queue_join` with `player_id` and `trophies`.
+2. Server matches by trophy range ±100 (expands +50/5s, max ±500).
+3. `match_found` → `role` (1=P1/host, 2=P2/guest), opponent info → `Constants.PERSPECTIVE` set → `GameScreen`.
 
 **Game Messages** (relayed through server):
 
@@ -201,38 +187,68 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 
 | Message | Description |
 |---------|-------------|
-| `login` / `register` | Authentication |
+| `login` / `register` / `auto_login` | Authentication |
 | `login_success` / `login_failed` | Auth responses |
 | `queue_join` / `queue_leave` | Matchmaking queue |
-| `queue_joined` / `match_found` | Queue status |
 | `sync_decks` | Save all 5 deck slots to server |
-| `update_deck_slot` | Update single deck |
 | `update_active_deck` | Set active deck for battle |
 
-**Trophy System**:
-- Winner: +20 trophies
-- Loser: -15 trophies (min 0)
-- Server updates database after each match
+**Trophy System**: Winner: +20, Loser: -15 (min 0). Server updates DB after each match.
 
 **Client Roles**: P1 = host (role 1), P2 = guest (role 2). Set in `Constants.PERSPECTIVE`.
 
-**Opponent placement buffering**: During `setup`/`intermission`/`pre_battle`, incoming `place_unit`/`remove_unit`/`upgrade_unit` messages are buffered in `pendingOpponentMsgs`. Applied at `startBattle()` so enemy unit positions appear frozen during setup (showing last round's positions).
+**Opponent placement buffering**: During `setup`/`intermission`/`pre_battle`, incoming placement messages buffer in `pendingOpponentMsgs`. Applied at `startBattle()` so enemy positions appear frozen during setup.
 
-**Round 1**: Enemy units hidden entirely (element of surprise). Round 2+: enemy units visible during setup.
+**Round 1**: Enemy units hidden entirely. Round 2+: enemy units visible during setup.
 
-**Socket Keepalive**: Menu screen calls `_G.GameSocket:update()` every frame to prevent ENet connection timeout.
+**Socket Keepalive**: Menu screen calls `_G.GameSocket:update()` every frame to prevent ENet timeout.
+
+**SocketManager** (`src/socket_manager.lua`): Use `SocketManager.isHealthy()` to check connection. `SocketManager.reconnect(onSuccess, onFailure)` handles async reconnection with saved token; pump with `SocketManager.updateReconnect(handle, dt)` each frame.
 
 ---
 
 ## Unit System
 
-- All units extend `BaseUnit` (via `classic.lua`).
-- Ranged units extend `BaseUnitRanged`.
-- Key fields: `unitType`, `owner` (1 or 2), `col`, `row`, `level` (0–3), `isDead`, `health`, `maxHealth`.
-- `unit:resetCombatState()` — resets all per-round combat state, restores full health.
-- `unit:onBattleStart(grid)` — called once when battle begins.
-- Units with `isDead == true` are drawn **behind** alive units (two-pass rendering in `Grid:draw()`).
-- Sprites: `front.png` (facing enemy), `back.png` (moving away), `dead.png`.
+All units extend `BaseUnit` (via `classic.lua`). Ranged units extend `BaseUnitRanged`.
+
+**Key fields**: `unitType`, `owner` (1 or 2), `col`, `row`, `level` (0–3), `isDead`, `health`, `maxHealth`.
+
+**Combat hooks to override**:
+- `unit:onBattleStart(grid)` — called once when battle begins
+- `unit:getDamage(grid)` — override for conditional damage
+- `unit:onKill(target)` — called when this unit kills an enemy
+- `unit:findGoalNearTarget(grid, target)` — override movement goal calculation
+
+**Per-round state**: `unit:resetCombatState()` resets all combat state and restores full health.
+
+**Status effects**:
+- `stunTimer > 0` — unit cannot move or attack
+- `tauntedBy` + `tauntTimer` — overrides target selection (always attack taunter)
+
+**Sprites**: `front.png` (facing enemy), `back.png` (moving away), `dead.png`. Units with `hasDirectionalSprites = true` use 8-directional animation via `getDirectionalSprite()`.
+
+**Ranged projectiles** (`base_unit_ranged.lua`): `createProjectile(target, grid)` launches a projectile tracked in `self.arrows`. Override `onProjectileHit(projectile, grid)` for AoE effects. Override `drawProjectile(projectile)` for custom visuals.
+
+---
+
+## Upgrade System
+
+Each unit has an `upgradeTree` table (up to 3 entries). Players choose upgrades during setup via the tooltip.
+
+```lua
+upgradeTree = {
+    { name = "...", description = "...", onApply = function(unit) ... end },
+    ...
+}
+```
+
+- `unit:upgrade(index)` — purchases upgrade at index, calls `onApply`, broadcasts `upgrade_unit` in online mode.
+- `unit:hasUpgrade(index)` — checks if upgrade is active.
+- `unit:getNextAvailableUpgrade()` — returns index of next purchasable upgrade.
+- `activeUpgrades` — list of purchased upgrade indices.
+- Stat scaling: 1.3× per level (level 3 = 2.197× base).
+
+In online mode the tooltip upgrade button is hidden/blocked for enemy units.
 
 ---
 
@@ -243,7 +259,7 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 2. Draw alive units (on top).
 3. Dragged unit drawn separately in `game.lua` on top of everything.
 
-`hideOwner`: if set, skips drawing units belonging to that owner (used in round 1 setup).
+`hideOwner`: skips drawing units belonging to that owner (used in round 1 setup).
 
 ---
 
@@ -260,34 +276,40 @@ Unified tap vs drag detection:
 
 ## Battle Simulation (Determinism)
 
-Battle runs as an independent peer-to-peer simulation on each client. Determinism is enforced by three mechanisms:
+Battle runs as independent peer-to-peer simulation on each client.
 
 **Fixed timestep loop** (`game.lua`, `battle` state):
-- Real `dt` is accumulated in `self.battleAccumulator`.
-- The simulation advances in discrete `FIXED_DT = 1/60` steps: `unit:update(FIXED_DT, grid)`.
-- Both clients process the exact same number of steps per battle, eliminating drift from variable frame rates.
-- `battle_ending` still uses real `dt` — it is cosmetic animation drain only, no simulation logic fires.
-- `self.battleStepCount` tracks total steps for debugging/testing.
+- Real `dt` accumulated in `self.battleAccumulator`.
+- Simulation advances in discrete `FIXED_DT = 1/60` steps: `unit:update(FIXED_DT, grid)`.
+- `battle_ending` uses real `dt` — cosmetic only, no simulation logic.
+- `self.battleStepCount` tracks total steps for debugging.
 
-**Deterministic pathfinding** (`pathfinding.lua`):
-- A* open-set selection tie-breaks equal f-scores by lower row → lower col, making path choices independent of insertion order.
+**Deterministic pathfinding** (`pathfinding.lua`): A* tie-breaks equal f-scores by lower row → lower col.
 
-**Deterministic target selection** (`base_unit.lua`, `findNearestEnemy`):
-- Equidistant enemies are broken by lower col → lower row → lower owner number.
-
-**Run the determinism regression test** after any combat changes:
-```bash
-lua tests/test_battle_determinism.lua
-```
+**Deterministic target selection** (`base_unit.lua`, `findNearestEnemy`): equidistant enemies broken by lower col → lower row → lower owner.
 
 ---
 
 ## Desync Detection
 
-At `startBattle()`, each client:
-1. Computes `computeBoardHash()`: sorted list of `"unitType,col,row,owner,level"` for all units.
-2. Sends `board_sync_check` message with hash.
-3. On receiving opponent's hash, `checkBoardSync()` compares and prints `[SYNC]` or `[DESYNC]` to console.
+At `startBattle()`, each client computes `computeBoardHash()` (sorted `"unitType,col,row,owner,level"` strings), sends `board_sync_check`, and `checkBoardSync()` prints `[SYNC]` or `[DESYNC]`.
+
+---
+
+## Audio
+
+`AudioManager` (`src/audio_manager.lua`) is a singleton initialized at startup.
+
+- `AudioManager.playMusic()` / `stopMusic()` — background OST
+- `AudioManager.setBattleMode(enabled)` — applies low-pass filter during battle
+- `AudioManager.playTap()` / `playSFX(name, volume)` — one-shot SFX
+- `AudioManager.setMusic(enabled)` / `setSFX(enabled)` — toggles with persistence
+
+---
+
+## Tutorial
+
+`TutorialManager` (`src/tutorial_manager.lua`) attaches to `GameScreen` when `isTutorial = true`. It drives an 8-step tutorial with required actions and schedules AI opponent placements via `AI_ACTIONS`. Detection is polling-based — no modifications to core game logic.
 
 ---
 
@@ -298,6 +320,7 @@ At `startBattle()`, each client:
 - Life pips: filled squares near player labels (top-left for top player, bottom-right for bottom player).
 - Coin display: bottom-left, always visible during setup.
 - State text: top-center. Shows timer during setup, "ROUND X" during intermission, "GO!" pre_battle, "YOU WIN!"/"YOU LOSE" only on `finished`.
+- Emote panel: in-game with cooldown, visible to both players.
 
 ---
 
@@ -305,7 +328,6 @@ At `startBattle()`, each client:
 
 - Auto-joins matchmaking queue on init (no manual buttons).
 - Displays animated spinner while searching.
-- Shows queue time, player's trophy count.
 - On `match_found`: receives `role`, opponent info → brief display (1.2s) → launches GameScreen.
 - Cancel button: leaves queue, returns to menu.
 - `close()` skips disconnect if `status == "matched"` (socket handed to GameScreen).
@@ -318,45 +340,19 @@ At `startBattle()`, each client:
 
 **Deck Structure**:
 ```lua
-{
-    name = "Deck 1",
-    counts = {
-        knight = 5,
-        samurai = 3,
-        boney = 7,
-        marrow = 5
-    }
-}
+{ name = "Deck 1", counts = { knight = 5, samurai = 3, boney = 7, marrow = 5 } }
 ```
 
 **Deck Manager** (`src/deck_manager.lua`):
-- **Persistent data**: `_data = {activeDeckIndex, decks}` (survives screen switches)
-- **Transient draw pile**: `_drawPile = []` (reset each match)
-- Max 20 cards per deck
-- 5 deck slots (indices 1-5)
-- Active deck index (nullable) indicates which deck is equipped for battle
+- `_data = {activeDeckIndex, decks}` persists across screen switches; `_drawPile` is reset each match.
+- Max 20 cards per deck, 5 slots.
 
 **Key Functions**:
-- `DeckManager.load()`: Loads from `_G.PlayerData.decks` (server) or local `decks.json` (offline backup)
-- `DeckManager.save()`: Syncs to server via `sync_decks` message, saves locally as backup
-- `DeckManager.setActive(deckIndex)`: Sets/toggles active deck for battle
-- `DeckManager.initDrawPile()`: Builds and shuffles draw pile from active deck at game start
-- `DeckManager.drawCards(n)`: Draws n cards from top of pile
-- `DeckManager.reshuffleAndDraw(currentHand, n)`: Returns hand to pile, reshuffles, draws n new
-
-**Menu UI** (Decks Panel):
-- 5 deck slot tabs (D1-D5)
-- Gold dot indicates active deck
-- Card grid with +/- buttons to adjust unit counts
-- Save button (shows "Saved!" feedback for 1.5s)
-- Equip button (toggle active deck)
-- Total card counter (20 max, red when full)
-
-**Battle Integration**:
-- `initDrawPile()` called at game start
-- Returns `true` if active deck loaded, `false` for random fallback
-- Cards drawn via `drawCards()` during setup phase
-- Reroll returns cards via `returnCards()` then draws new ones
+- `DeckManager.load()` — loads from `_G.PlayerData.decks` (server) or local `decks.json` (offline fallback)
+- `DeckManager.save()` — syncs via `sync_decks`, saves local backup
+- `DeckManager.setActive(deckIndex)` — sets/toggles active deck
+- `DeckManager.initDrawPile()` — builds and shuffles draw pile; returns `true` if active deck loaded, `false` for random fallback
+- `DeckManager.drawCards(n)` / `reshuffleAndDraw(currentHand, n)` — card draw operations
 
 ---
 
@@ -377,33 +373,21 @@ At `startBattle()`, each client:
 
 1. **Upload changes to VPS:**
    ```bash
-   cd /Users/cmatute1/auto-chest/auto-chest
    rsync -avz --exclude 'server/players.db' . root@75.119.142.247:/opt/autochest/
    ```
 
 2. **Restart server:**
    ```bash
-   ssh root@75.119.142.247
-   sudo systemctl restart autochest-server
+   ssh root@75.119.142.247 sudo systemctl restart autochest-server
    ```
 
-3. **Verify server is running:**
+3. **Verify:**
    ```bash
-   sudo systemctl status autochest-server
-   sudo journalctl -u autochest-server -f  # view logs
+   sudo journalctl -u autochest-server -f
    ```
 
-**Changes that require server restart:**
-- Any changes to `server/` folder (matchmaking, database, authentication)
-- Changes to network message formats in `src/screens/game.lua` or `src/screens/lobby.lua`
-- Changes to unit behavior that affect determinism
-- Changes to deck system or economy
+**Requires server restart:** changes to `server/`, network message formats, unit determinism, deck/economy logic.
 
-**Local changes only (no server restart needed):**
-- UI/visual changes (fonts, colors, layout)
-- Client-side animations
-- Menu screen changes (unless affecting networking)
-
-**Production server:** `75.119.142.247:12345` (Contabo VPS, Ubuntu 22.04)
+**Local only:** UI/visual changes, client-side animations, menu screen changes (unless affecting networking).
 
 See `deploy/YOUR_DEPLOYMENT_STEPS.md` for complete deployment instructions.

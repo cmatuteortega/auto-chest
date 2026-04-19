@@ -10,7 +10,7 @@ local function drawFirePatch(patch, sprites, clipTop, clipH)
     local alpha = math.min(1, patch.timer / 2) * 0.8 + 0.2
     local fireFrames = sprites and sprites.fireFrames
 
-    lg.setScissor(cx - Constants.CELL_SIZE / 2, clipTop, Constants.CELL_SIZE, clipH)
+    lg.setScissor(cx - Constants.CELL_SIZE / 2, clipTop + (Constants.cameraShiftY or 0), Constants.CELL_SIZE, clipH)
     if fireFrames then
         local fps      = 8
         local elapsed  = 2 - patch.timer

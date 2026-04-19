@@ -7,6 +7,7 @@ local suit = require('lib.suit')
 local Tooltip = require('src.tooltip')
 local json = require('lib.json')
 local DeckManager = require('src.deck_manager')
+local BaseUnit = require('src.base_unit')
 
 local GameScreen = {}
 
@@ -56,7 +57,8 @@ function GameScreen.new()
 
         -- Load battle background sprite
         self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
-        self.bgOffsetY = 42  -- adjust to shift the background up (negative) or down (positive)
+        self.bgOffsetY = 273 -- adjust to shift the background up (negative) or down (positive)
+        self.cameraShiftY = 0
         self.goldIcon = love.graphics.newImage('src/assets/ui/gold.png')
         self.goldIcon:setFilter('nearest', 'nearest')
 
@@ -77,6 +79,40 @@ function GameScreen.new()
         -- Emote button spring + hit rect
         self._emoteSpring  = { scale = 1.0, vel = 0.0, pressed = false }
         self._emoteBtnRect = nil
+
+        -- Emote panel state
+        self._emotePanelOpen   = false
+        self._emotePanelCards  = {}    -- per-card animation state tables
+        self._emotePanelRects  = {}    -- hit rects for the 4 cards (set during draw)
+
+        -- Emote cooldown: player cannot send another emote for 5s after sending
+        self._emoteCooldown    = 0.0   -- counts down from 5 to 0
+
+        -- Active emote display state
+        self._myEmoteDisplay  = nil    -- { timer, phase, emoteIndex, scale, alpha }
+        self._oppEmoteDisplay = nil
+
+        -- Emote image assets
+        self._emoteBoxImg  = love.graphics.newImage('src/assets/emotes/emote-box.png')
+        self._emotePlayP1  = love.graphics.newImage('src/assets/emotes/emote-play-p1.png')
+        self._emotePlayP2  = love.graphics.newImage('src/assets/emotes/emote-play-p2.png')
+        self._emoteBoxImg:setFilter('nearest', 'nearest')
+        self._emotePlayP1:setFilter('nearest', 'nearest')
+        self._emotePlayP2:setFilter('nearest', 'nearest')
+
+        -- Emote registry: index → { frames = {}, fps = N }
+        local function loadEmote(folder, frameCount)
+            local frames = {}
+            for i = 1, frameCount do
+                local img = love.graphics.newImage('src/assets/emotes/' .. folder .. '/' .. i .. '.png')
+                img:setFilter('nearest', 'nearest')
+                frames[i] = img
+            end
+            return frames
+        end
+        self._emoteRegistry = {
+            [1] = { frames = loadEmote('plead', 11), fps = 7 },
+        }
 
         -- Initialize Tooltip
         self.tooltip = Tooltip()
@@ -268,6 +304,9 @@ function GameScreen.new()
         elseif t == "board_sync_check" then
             self.opponentBoardHash = msg.hash
             self:checkBoardSync()
+
+        elseif t == "emote" then
+            self._oppEmoteDisplay = { timer = 0, phase = "in", emoteIndex = msg.emoteIndex or 1, scale = 0, alpha = 0 }
         end
     end
 
@@ -561,6 +600,14 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- Camera shift: grid slides to vertical center during battle, returns for setup UI
+        local gridCenterY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
+        local cameraShiftTarget = 0
+        if self.state == "pre_battle" or self.state == "battle" or self.state == "battle_ending" then
+            cameraShiftTarget = Constants.GAME_HEIGHT / 2 - gridCenterY
+        end
+        self.cameraShiftY = self.cameraShiftY + (cameraShiftTarget - self.cameraShiftY) * math.min(1, dt * 7)
+
         -- Tutorial manager update (AI placement, step auto-advancement)
         if self.isTutorial and self.tutorialManager then
             self.tutorialManager:update(dt)
@@ -758,6 +805,82 @@ function GameScreen.new()
         self._emoteSpring.scale = self._emoteSpring.scale + self._emoteSpring.vel * dt
         self._emoteSpring.scale = math.max(0.85, math.min(1.12, self._emoteSpring.scale))
 
+        -- Update emote panel cards (enter slide-in + exit gravity/spin/fade)
+        do
+            local sc       = Constants.SCALE
+            local imgScale = math.max(1, math.floor(3 * sc))
+            local cardSize = math.floor(24 * imgScale)
+            local ci = 1
+            while ci <= #self._emotePanelCards do
+                local c = self._emotePanelCards[ci]
+                if c.isEntering then
+                    c.enterDelay = c.enterDelay - dt
+                    if c.enterDelay <= 0 then
+                        local adt    = math.min(dt, 1/30)
+                        local dx, dy = c.targetX - c.x, c.targetY - c.y
+                        c.velX  = c.velX * 0.004 + dx * 1200 * adt
+                        c.velY  = c.velY * 0.004 + dy * 1200 * adt
+                        c.x     = c.x + c.velX * adt
+                        c.y     = c.y + c.velY * adt
+                        c.alpha = math.min(1, c.alpha + dt * 240)
+                        if math.abs(dx) < 1 and math.abs(dy) < 1
+                        and math.abs(c.velX) < 5 and math.abs(c.velY) < 5 then
+                            c.x, c.y     = c.targetX, c.targetY
+                            c.isEntering = false
+                        end
+                    end
+                elseif c.isExiting then
+                    c.exitVelY     = c.exitVelY + 600 * sc * dt
+                    c.x            = c.x + c.exitVelX * dt
+                    c.y            = c.y + c.exitVelY * dt
+                    c.exitRotation = c.exitRotation + c.exitRotVel * dt
+                    c.alpha        = c.alpha - dt * 3
+                    if c.alpha <= 0 or c.y > Constants.GAME_HEIGHT + cardSize then
+                        table.remove(self._emotePanelCards, ci)
+                        ci = ci - 1
+                    end
+                end
+                ci = ci + 1
+            end
+        end
+
+        -- Emote cooldown countdown
+        if self._emoteCooldown > 0 then
+            self._emoteCooldown = math.max(0, self._emoteCooldown - dt)
+        end
+
+        -- Emote display updater (pop-in / hold / pop-out)
+        do
+            local IN_DUR, HOLD_DUR, OUT_DUR = 0.3, 3.0, 0.25
+            local function updateEmoteDisp(disp)
+                if not disp then return nil end
+                disp.timer     = disp.timer     + dt
+                disp.animTimer = (disp.animTimer or 0) + dt
+                if disp.phase == "in" then
+                    local t = math.min(1, disp.timer / IN_DUR)
+                    -- outBack approximation: overshoot then settle
+                    disp.scale = t * t * (2.7 * t - 1.7)
+                    disp.alpha = t
+                    if disp.timer >= IN_DUR then
+                        disp.phase = "hold"; disp.timer = 0
+                        disp.scale = 1;      disp.alpha = 1
+                    end
+                elseif disp.phase == "hold" then
+                    disp.scale = 1; disp.alpha = 1
+                    if disp.timer >= HOLD_DUR then disp.phase = "out"; disp.timer = 0 end
+                elseif disp.phase == "out" then
+                    local t = math.min(1, disp.timer / OUT_DUR)
+                    local s = 1 - t
+                    disp.scale = s * s   -- ease-in shrink
+                    disp.alpha = 1 - t
+                    if disp.timer >= OUT_DUR then return nil end
+                end
+                return disp
+            end
+            self._myEmoteDisplay  = updateEmoteDisp(self._myEmoteDisplay)
+            self._oppEmoteDisplay = updateEmoteDisp(self._oppEmoteDisplay)
+        end
+
         -- Spring physics for reroll button
         local rrTarget = self._rerollSpring.pressed and 0.93 or 1.0
         local rrAccel  = -480 * (self._rerollSpring.scale - rrTarget) - 18 * self._rerollSpring.vel
@@ -776,18 +899,27 @@ function GameScreen.new()
     function self:draw()
         local lg = love.graphics
 
-        -- Draw battle background centered on the grid at unit sprite scale
+        -- Draw battle background and grid, shifted by camera animation.
+        -- Store shift on Constants so drawFirePatch scissor calls can offset to screen space.
+        Constants.cameraShiftY = math.floor(self.cameraShiftY)
+        lg.push()
+        lg.translate(0, Constants.cameraShiftY)
+
         local spriteScale = Constants.CELL_SIZE / 16
         local bgW = self.bgSprite:getWidth()
         local bgH = self.bgSprite:getHeight()
         local bgX = Constants.GRID_OFFSET_X + Constants.GRID_WIDTH / 2
         local bgY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2 + self.bgOffsetY
         lg.setColor(1, 1, 1, 1)
+        lg.setShader(BaseUnit.getPaletteShader())
         lg.draw(self.bgSprite, bgX, bgY, 0, spriteScale, spriteScale, bgW / 2, bgH / 2)
+        lg.setShader()
 
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
+
+        lg.pop()
 
         -- Draw entering cards behind the UI (behind reroll button)
         if self.cards then
@@ -829,6 +961,10 @@ function GameScreen.new()
         -- Draw SUIT UI elements
         self.suit:draw()
 
+        -- Draw emote speech bubble popups (above SUIT, below tooltip)
+        self:_drawEmoteDisplay(self._myEmoteDisplay, true)
+        self:_drawEmoteDisplay(self._oppEmoteDisplay, false)
+
         -- Draw tooltip on top of everything
         self.tooltip:draw()
 
@@ -838,22 +974,159 @@ function GameScreen.new()
         end
     end
 
+    -- Opens the emote panel: creates 4 card states that slide in from the left.
+    function self:_openEmotePanel()
+        local sc           = Constants.SCALE
+        local imgScale     = math.max(1, math.floor(3 * sc))
+        local cardSize     = math.floor(24 * imgScale)
+        local gap          = math.floor(10 * sc)
+        local buttonHeight = 40 * sc
+        local gridBottom   = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+        local buttonY      = ((gridBottom + self.cardY) / 2) - (buttonHeight / 2)
+        local card4CyTop   = buttonY + buttonHeight - cardSize  -- card 4 bottom = ready button bottom
+
+        self._emotePanelCards = {}
+        self._emotePanelOpen  = true
+        for i = 1, 4 do
+            local targetX = self.emoteButtonX
+            local targetY = card4CyTop - (4 - i) * (cardSize + gap)
+            self._emotePanelCards[i] = {
+                x = -cardSize, y = targetY,
+                targetX = targetX, targetY = targetY,
+                velX = 0, velY = 0,
+                alpha = 0,
+                enterDelay = (i - 1) * 0.03,
+                isEntering = true,
+                isExiting  = false,
+                exitVelX = 0, exitVelY = 0,
+                exitRotation = 0, exitRotVel = 0,
+            }
+        end
+    end
+
+    -- Closes the emote panel: triggers exit (gravity+spin+fade) on all remaining cards.
+    function self:_closeEmotePanel()
+        self._emotePanelOpen = false
+        local sc = Constants.SCALE
+        for i, c in ipairs(self._emotePanelCards) do
+            if not c.isExiting then
+                c.isEntering   = false
+                c.isExiting    = true
+                local rotDir   = (i % 2 == 0) and 1 or -1
+                c.exitVelX     = rotDir * 20 * sc
+                c.exitVelY     = 180 * sc
+                c.exitRotVel   = rotDir * 2.5
+                c.exitRotation = 0
+            end
+        end
+    end
+
+    -- Draws an emote speech bubble popup with pop-in/hold/pop-out animation.
+    -- isMine = true  → P1 sprite, horizontally at emote button, vertically centred on grid bottom
+    -- isMine = false → P2 sprite, horizontally at emote button, vertically centred on grid top
+    function self:_drawEmoteDisplay(disp, isMine)
+        if not disp or disp.alpha <= 0 then return end
+        local lg  = love.graphics
+        local sc  = Constants.SCALE
+
+        -- Choose speech bubble sprite based on perspective
+        local sprite = isMine and self._emotePlayP1 or self._emotePlayP2
+        local imgW   = sprite:getWidth()
+        local imgH   = sprite:getHeight()
+        -- Scale: 4× pixel size, then animate with disp.scale
+        local bubScale = sc * 4 * disp.scale
+
+        -- Horizontal: left-align with the emote button
+        local bx = self.emoteButtonX
+
+        -- Vertical: P1 centred on grid bottom row, P2 centred on grid top row
+        local gridBottom = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT
+        local rowH       = Constants.CELL_SIZE
+        local by
+        if isMine then
+            -- centre of the bottom half-row = gridBottom - rowH/2, shifted with camera
+            by = math.floor(gridBottom - rowH / 2 - imgH * bubScale / 2 + (Constants.cameraShiftY or 0))
+        else
+            -- centre of the top half-row = GRID_OFFSET_Y + rowH/2
+            by = math.floor(Constants.GRID_OFFSET_Y + rowH / 2 - imgH * bubScale / 2)
+        end
+
+        -- Draw speech bubble background sprite
+        lg.setColor(1, 1, 1, disp.alpha)
+        lg.draw(sprite, bx, by, 0, bubScale, bubScale)
+
+        -- Emote animation (if a registered emote exists for this index)
+        local emote = self._emoteRegistry[disp.emoteIndex]
+        if emote and #emote.frames > 0 then
+            local frameCount  = #emote.frames
+            local frameIdx    = math.floor((disp.animTimer or 0) * emote.fps) % frameCount + 1
+            local frame       = emote.frames[frameIdx]
+            local emScale     = bubScale  -- same pixel scale as bubble
+            local emW         = frame:getWidth()  * emScale
+            local emH         = frame:getHeight() * emScale
+
+            -- Centre of bubble content area
+            local cx = bx + imgW * bubScale * 0.5
+            local cyOffset = isMine and math.floor(6 * bubScale) or 0
+            local cy = by + imgH * bubScale * 0.42 - cyOffset
+
+            -- Smooth bounce: ±6% of emH, sin wave
+            local t          = love.timer.getTime()
+            local bounceAmp  = emH * 0.06
+            local bounceY    = math.sin(t * 3.0) * bounceAmp * disp.alpha
+
+            -- Draw ellipse shadow behind emote (on top of bubble sprite)
+            local shadowW      = emW * 0.65
+            local shadowH2     = emH * 0.12
+            local shadowX      = cx
+            local shadowOffset = isMine and math.floor(4 * bubScale) or math.floor(6 * bubScale)
+            local shadowY      = cy + emH * 0.5 + emH * 0.04 - shadowOffset
+            lg.setColor(0, 0, 0, 0.28 * disp.alpha)
+            -- Approximate ellipse with a scaled circle
+            lg.push()
+            lg.translate(shadowX, shadowY)
+            lg.scale(1, shadowH2 / (shadowW * 0.5))
+            lg.circle('fill', 0, 0, shadowW * 0.5)
+            lg.pop()
+
+            -- Draw emote frame centred on cx/cy + bounce
+            lg.setColor(1, 1, 1, disp.alpha)
+            lg.draw(frame, cx, cy + bounceY, 0, emScale, emScale, emW / emScale / 2, emH / emScale / 2)
+        end
+    end
+
     function self:drawUI()
         local lg = love.graphics
+        local shOff = math.floor(2 * Constants.SCALE)
 
-        -- State and timer (positioned as percentage from top)
-        lg.setFont(Fonts.medium)
-        lg.setColor(0.9, 0.9, 0.9, 1)
-        local stateText = self.state:upper()
+        -- Player labels (proportional positioning)
+        -- In online mode the local player is always shown at the bottom right.
+        lg.setFont(Fonts.large)
+        local topMargin    = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_TOP    + 4 * Constants.SCALE)
+        local bottomMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_BOTTOM + 4 * Constants.SCALE)
+        local leftMargin   = 20 * Constants.SCALE
+        local rightMargin  = 20 * Constants.SCALE
+        local fontHeight = Fonts.large:getHeight()
+
+        -- State label: top-right, same font/Y as P2 name; timer on line below during setup
+        lg.setFont(Fonts.large)
+        local stateText = ""
+        local timerText = nil
         if self.state == "setup" then
+            stateText = "SETUP"
             if not self.isTutorial then
-                stateText = stateText .. " - " .. math.ceil(self.timer) .. "s"
+                timerText = math.ceil(self.timer) .. "s"
             end
+            lg.setColor(0.9, 0.9, 0.9, 1)
         elseif self.state == "intermission" then
             stateText = "ROUND " .. self.roundNumber
+            lg.setColor(0.9, 0.9, 0.9, 1)
         elseif self.state == "pre_battle" then
             stateText = "GO!"
             lg.setColor(0.3, 1, 0.3, 1)
+        elseif self.state == "battle" then
+            stateText = "BATTLE"
+            lg.setColor(0.9, 0.9, 0.9, 1)
         elseif self.state == "battle_ending" then
             stateText = ""
         elseif self.state == "finished" and self.winner then
@@ -861,8 +1134,22 @@ function GameScreen.new()
             stateText = didWin and "YOU WIN!" or "YOU LOSE"
             lg.setColor(didWin and {0.3, 1, 0.3, 1} or {1, 0.3, 0.3, 1})
         end
-        local stateTextY = math.max(Constants.GAME_HEIGHT * 0.025, Constants.SAFE_INSET_TOP)
-        lg.printf(stateText, 0, stateTextY, Constants.GAME_WIDTH, 'center')
+        local rightEdge = Constants.GAME_WIDTH - rightMargin
+        if stateText ~= "" then
+            local r, g, b, a = lg.getColor()
+            lg.setColor(0, 0, 0, 0.65)
+            lg.printf(stateText, shOff, topMargin + shOff, rightEdge, 'right')
+            lg.setColor(r, g, b, a)
+            lg.printf(stateText, 0, topMargin, rightEdge, 'right')
+        end
+        if timerText then
+            lg.setFont(Fonts.medium)
+            lg.setColor(0, 0, 0, 0.65)
+            lg.printf(timerText, shOff, topMargin + Fonts.large:getHeight() + shOff, rightEdge, 'right')
+            lg.setColor(0.9, 0.9, 0.9, 1)
+            lg.printf(timerText, 0, topMargin + Fonts.large:getHeight(), rightEdge, 'right')
+        end
+        local stateTextY = topMargin
 
         -- Trophy and gold changes (if in finished state and online mode)
         if self.state == "finished" and self.trophyChange and self.isOnline and not self.isSandbox then
@@ -879,13 +1166,6 @@ function GameScreen.new()
                 lg.printf("+" .. self.goldEarned .. " gold", 0, offsetY + Fonts.medium:getHeight() + 4 * sc, Constants.GAME_WIDTH, 'center')
             end
         end
-
-        -- Player labels (proportional positioning)
-        -- In online mode the local player is always shown at the bottom right.
-        lg.setFont(Fonts.large)
-        local topMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_TOP + 4 * Constants.SCALE)
-        local fontHeight = Fonts.large:getHeight()
-        local bottomMargin = math.max(15 * Constants.SCALE, Constants.SAFE_INSET_BOTTOM + 4 * Constants.SCALE)
 
         -- Determine which label goes where based on perspective
         local topLabel     = self.opponentName  -- Opponent always at top
@@ -904,6 +1184,10 @@ function GameScreen.new()
         local pipGap  = 4 * Constants.SCALE
         local function drawLives(x, y, lives, color)
             for i = 1, 3 do
+                lg.setColor(0, 0, 0, 0.5)
+                lg.rectangle('fill', x + (i - 1) * (pipSize + pipGap) + shOff, y + shOff, pipSize, pipSize)
+            end
+            for i = 1, 3 do
                 if i <= lives then
                     lg.setColor(color)
                 else
@@ -915,30 +1199,38 @@ function GameScreen.new()
         end
 
         -- Top player (opponent)
+        lg.setFont(Fonts.large)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(topLabel, leftMargin + shOff, topMargin + shOff)
         lg.setColor(topColor)
-        lg.print(topLabel, topMargin, topMargin)
+        lg.print(topLabel, leftMargin, topMargin)
         lg.setFont(Fonts.tiny)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(topTrophies .. " trophies", leftMargin + shOff, topMargin + Fonts.large:getHeight() + shOff)
         lg.setColor(0.9, 0.85, 0.3, 1)
-        lg.print(topTrophies .. " trophies", topMargin, topMargin + Fonts.large:getHeight())
-        drawLives(topMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
+        lg.print(topTrophies .. " trophies", leftMargin, topMargin + Fonts.large:getHeight())
+        drawLives(leftMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
 
         -- Bottom player (you)
         lg.setFont(Fonts.large)
-        lg.setColor(bottomColor)
         local bLabelWidth = Fonts.large:getWidth(bottomLabel)
-        local bLabelX = Constants.GAME_WIDTH - bLabelWidth - topMargin
+        local bLabelX = Constants.GAME_WIDTH - bLabelWidth - rightMargin
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(bottomLabel, bLabelX + shOff, Constants.GAME_HEIGHT - fontHeight - bottomMargin + shOff)
+        lg.setColor(bottomColor)
         lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
         lg.setFont(Fonts.tiny)
-        lg.setColor(0.9, 0.85, 0.3, 1)
         local trophyText = bottomTrophies .. " trophies"
         local trophyW = Fonts.tiny:getWidth(trophyText)
-        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - topMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - rightMargin + shOff, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight() + shOff)
+        lg.setColor(0.9, 0.85, 0.3, 1)
+        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - rightMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 
         -- Coin display in bottom left (icon + number)
         lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
         local coinStr = self.isSandbox and "999" or tostring(self.playerCoins)
         local baseY = Constants.GAME_HEIGHT - fontHeight - bottomMargin
         local iconH = math.floor(fontHeight * 0.55)
@@ -947,8 +1239,12 @@ function GameScreen.new()
         local iconGap = math.floor(4 * Constants.SCALE)
         local visH  = Fonts.large:getAscent() - Fonts.large:getDescent()
         local iconY = math.floor(baseY + (visH - iconH) / 2)
-        lg.draw(self.goldIcon, topMargin, iconY, 0, iconSc, iconSc)
-        lg.print(coinStr, topMargin + iconW + iconGap, baseY)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.draw(self.goldIcon, leftMargin + shOff, iconY + shOff, 0, iconSc, iconSc)
+        lg.print(coinStr, leftMargin + iconW + iconGap + shOff, baseY + shOff)
+        lg.setColor(1, 1, 1, 1)
+        lg.draw(self.goldIcon, leftMargin, iconY, 0, iconSc, iconSc)
+        lg.print(coinStr, leftMargin + iconW + iconGap, baseY)
 
         -- Reset font for buttons
         lg.setFont(Fonts.medium)
@@ -1124,17 +1420,18 @@ function GameScreen.new()
                 end
             end
 
-            -- Emote button (play style, left of cards, no action yet)
+            -- Emote button (drawn for setup state; also drawn for battle state below)
             do
-                local ex        = self.emoteButtonX
-                local ey        = self.emoteButtonY
-                local esz       = self.rerollButtonSize
-                local esp       = self._emoteSpring
-                local efloatOff = math.floor(maxFloat * math.max(0, (esp.scale - 0.93) / 0.07))
-                local t         = love.timer.getTime()
-                local idleBob   = math.sin(t * 1.8 + 1.0) * 2 * sc  -- offset phase from reroll
-                local idleRot   = math.sin(t * 1.3 + 1.0) * 0.012
-                local drawY     = ey - efloatOff + math.floor(idleBob)
+                local ex             = self.emoteButtonX
+                local ey             = self.emoteButtonY
+                local esz            = self.rerollButtonSize
+                local esp            = self._emoteSpring
+                local emoteDisabled  = self._emoteCooldown > 0 or self._emotePanelOpen or #self._emotePanelCards > 0
+                local efloatOff      = math.floor(maxFloat * math.max(0, (esp.scale - 0.93) / 0.07))
+                local t              = love.timer.getTime()
+                local idleBob        = math.sin(t * 1.8 + 1.0) * 2 * sc
+                local idleRot        = math.sin(t * 1.3 + 1.0) * 0.012
+                local drawY          = ey - efloatOff + math.floor(idleBob)
 
                 self._emoteBtnRect = { x = ex, y = ey - maxFloat, w = esz, h = esz + maxFloat }
 
@@ -1149,10 +1446,19 @@ function GameScreen.new()
                 lg.translate(pivX, pivY)
                 lg.rotate(idleRot)
                 lg.scale(esp.scale, esp.scale)
-                lg.setColor(0.765, 0.639, 0.541, 1)
-                roundedRect(bx, by, esz, esz, 8, sc)
-                lg.setColor(0.965, 0.839, 0.741, 1)
-                roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
+                if emoteDisabled then
+                    -- Orange style: cooldown or panel open
+                    lg.setColor(0.600, 0.350, 0.080, 1)
+                    roundedRect(bx, by, esz, esz, 8, sc)
+                    lg.setColor(0.780, 0.460, 0.100, 1)
+                    roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
+                else
+                    -- Normal play style: warm tan + cream border
+                    lg.setColor(0.765, 0.639, 0.541, 1)
+                    roundedRect(bx, by, esz, esz, 8, sc)
+                    lg.setColor(0.965, 0.839, 0.741, 1)
+                    roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
+                end
                 lg.setFont(Fonts.medium)
                 lg.setColor(1, 1, 1, 1)
                 lg.printf("@", bx, textCY(Fonts.medium, by, esz), esz, 'center')
@@ -1208,6 +1514,84 @@ function GameScreen.new()
                     else
                         print("Restart button clicked!")
                         self:init()
+                    end
+                end
+            end
+        end
+
+        -- ── Emote button (all states except setup, which draws it above, and finished) ──
+        if self.state ~= "setup" and self.state ~= "finished" then
+            local sc       = Constants.SCALE
+            local maxFloat = math.floor(4 * sc)
+            local shadowH  = math.floor(4 * sc)
+            local ex       = self.emoteButtonX
+            local ey       = self.emoteButtonY
+            local esz      = self.rerollButtonSize
+            local esp      = self._emoteSpring
+            local emoteDisabled = self._emoteCooldown > 0 or self._emotePanelOpen or #self._emotePanelCards > 0
+            local efloatOff = math.floor(maxFloat * math.max(0, (esp.scale - 0.93) / 0.07))
+            local t         = love.timer.getTime()
+            local idleBob   = math.sin(t * 1.8 + 1.0) * 2 * sc
+            local idleRot   = math.sin(t * 1.3 + 1.0) * 0.012
+            local drawY     = ey - efloatOff + math.floor(idleBob)
+
+            self._emoteBtnRect = { x = ex, y = ey - maxFloat, w = esz, h = esz + maxFloat }
+
+            lg.setColor(0.031, 0.078, 0.118, 1)
+            roundedRect(ex + math.floor(2 * sc), ey + shadowH, esz, esz, 8, sc)
+
+            local pivX = ex + esz / 2
+            local pivY = drawY + esz / 2
+            local bx   = -esz / 2
+            local by   = -esz / 2
+            lg.push()
+            lg.translate(pivX, pivY)
+            lg.rotate(idleRot)
+            lg.scale(esp.scale, esp.scale)
+            if emoteDisabled then
+                lg.setColor(0.600, 0.350, 0.080, 1)
+                roundedRect(bx, by, esz, esz, 8, sc)
+                lg.setColor(0.780, 0.460, 0.100, 1)
+                roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
+            else
+                lg.setColor(0.765, 0.639, 0.541, 1)
+                roundedRect(bx, by, esz, esz, 8, sc)
+                lg.setColor(0.965, 0.839, 0.741, 1)
+                roundedRectLine(bx, by, esz, esz, 8, sc, 2 * sc)
+            end
+            lg.setFont(Fonts.medium)
+            lg.setColor(1, 1, 1, 1)
+            lg.printf("@", bx, textCY(Fonts.medium, by, esz), esz, 'center')
+            lg.pop()
+        end
+
+        -- ── Emote panel cards (slide in from left / fly off on dismiss) ────────
+        self._emotePanelRects = {}
+        if #self._emotePanelCards > 0 then
+            local sc       = Constants.SCALE
+            local imgScale = math.max(1, math.floor(3 * sc))
+            local cardSize = math.floor(24 * imgScale)
+            for i, c in ipairs(self._emotePanelCards) do
+                if c.alpha > 0 then
+                    local pivX = c.x + cardSize / 2
+                    local pivY = c.y + cardSize / 2
+                    lg.push()
+                    lg.translate(pivX, pivY)
+                    lg.rotate(c.isExiting and c.exitRotation or 0)
+                    lg.setColor(1, 1, 1, c.alpha)
+                    lg.draw(self._emoteBoxImg, 0, 0, 0, imgScale, imgScale, 12, 12)
+                    -- Draw emote preview frame on top of box
+                    local emote = self._emoteRegistry[i]
+                    if emote and #emote.frames > 0 then
+                        local frame = emote.frames[1]
+                        lg.setColor(1, 1, 1, c.alpha)
+                        lg.draw(frame, 0, 0, 0, imgScale, imgScale, 12, 12)
+                    end
+                    lg.pop()
+
+                    -- Hit rect only while entering/settled, not exiting
+                    if not c.isExiting and c.alpha > 0.4 then
+                        self._emotePanelRects[i] = { x = c.x, y = c.y, w = cardSize, h = cardSize }
                     end
                 end
             end
@@ -1345,7 +1729,7 @@ function GameScreen.new()
             end
         end
 
-        -- Spring squish for ready + reroll buttons
+        -- Spring squish for ready + reroll buttons (setup only)
         if self.state == "setup" then
             if self._readyBtnRect then
                 local rb = self._readyBtnRect
@@ -1359,11 +1743,31 @@ function GameScreen.new()
                     self._rerollSpring.pressed = true
                 end
             end
+        end
+
+        -- Emote button spring squish (all non-finished states)
+        if self.state ~= "finished" then
             if self._emoteBtnRect then
                 local rb = self._emoteBtnRect
                 if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
                     self._emoteSpring.pressed = true
                 end
+            end
+        end
+
+        -- Close emote panel when pressing outside button + panel area
+        if self._emotePanelOpen then
+            local onBtn = self._emoteBtnRect and
+                x >= self._emoteBtnRect.x and x <= self._emoteBtnRect.x + self._emoteBtnRect.w and
+                y >= self._emoteBtnRect.y and y <= self._emoteBtnRect.y + self._emoteBtnRect.h
+            local onPanel = false
+            for _, r in ipairs(self._emotePanelRects) do
+                if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    onPanel = true; break
+                end
+            end
+            if not onBtn and not onPanel then
+                self:_closeEmotePanel()
             end
         end
     end
@@ -1427,6 +1831,37 @@ function GameScreen.new()
                         end
                     else
                         self:dealSetupCards()
+                    end
+                end
+                return
+            end
+        end
+
+        -- ── Emote panel card selection ────────────────────────────────────────
+        if self._emotePanelOpen and #self._emotePanelRects > 0 then
+            for i, rect in ipairs(self._emotePanelRects) do
+                if rect and x >= rect.x and x <= rect.x + rect.w and y >= rect.y and y <= rect.y + rect.h then
+                    AudioManager.playTap()
+                    self:_closeEmotePanel()  -- fly off remaining cards
+                    self._emoteCooldown  = 5.0
+                    self._myEmoteDisplay = { timer = 0, phase = "in", emoteIndex = i, scale = 0, alpha = 0 }
+                    self:sendMsg({ type = "emote", emoteIndex = i })
+                    return
+                end
+            end
+        end
+
+        -- ── Emote button toggle ───────────────────────────────────────────────
+        if self.state ~= "finished" and self._emoteBtnRect then
+            local rb = self._emoteBtnRect
+            if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
+                -- Allow opening only when not on cooldown; always allow closing
+                if self._emotePanelOpen or self._emoteCooldown <= 0 then
+                    AudioManager.playTap()
+                    if self._emotePanelOpen then
+                        self:_closeEmotePanel()
+                    else
+                        self:_openEmotePanel()
                     end
                 end
                 return
@@ -1722,7 +2157,7 @@ function GameScreen.new()
             end
         end
 
-        -- Spring squish for ready + reroll + emote buttons
+        -- Spring squish for ready + reroll buttons (setup only)
         if self.state == "setup" then
             if self._readyBtnRect then
                 local rb = self._readyBtnRect
@@ -1736,11 +2171,31 @@ function GameScreen.new()
                     self._rerollSpring.pressed = true
                 end
             end
+        end
+
+        -- Emote button spring squish (all non-finished states)
+        if self.state ~= "finished" then
             if self._emoteBtnRect then
                 local rb = self._emoteBtnRect
                 if x >= rb.x and x <= rb.x + rb.w and y >= rb.y and y <= rb.y + rb.h then
                     self._emoteSpring.pressed = true
                 end
+            end
+        end
+
+        -- Close emote panel when pressing outside button + panel area
+        if self._emotePanelOpen then
+            local onBtn = self._emoteBtnRect and
+                x >= self._emoteBtnRect.x and x <= self._emoteBtnRect.x + self._emoteBtnRect.w and
+                y >= self._emoteBtnRect.y and y <= self._emoteBtnRect.y + self._emoteBtnRect.h
+            local onPanel = false
+            for _, r in ipairs(self._emotePanelRects) do
+                if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    onPanel = true; break
+                end
+            end
+            if not onBtn and not onPanel then
+                self:_closeEmotePanel()
             end
         end
     end
