@@ -1097,6 +1097,7 @@ function GameScreen.new()
 
     function self:drawUI()
         local lg = love.graphics
+        local shOff = math.floor(2 * Constants.SCALE)
 
         -- Player labels (proportional positioning)
         -- In online mode the local player is always shown at the bottom right.
@@ -1135,10 +1136,16 @@ function GameScreen.new()
         end
         local rightEdge = Constants.GAME_WIDTH - rightMargin
         if stateText ~= "" then
+            local r, g, b, a = lg.getColor()
+            lg.setColor(0, 0, 0, 0.65)
+            lg.printf(stateText, shOff, topMargin + shOff, rightEdge, 'right')
+            lg.setColor(r, g, b, a)
             lg.printf(stateText, 0, topMargin, rightEdge, 'right')
         end
         if timerText then
             lg.setFont(Fonts.medium)
+            lg.setColor(0, 0, 0, 0.65)
+            lg.printf(timerText, shOff, topMargin + Fonts.large:getHeight() + shOff, rightEdge, 'right')
             lg.setColor(0.9, 0.9, 0.9, 1)
             lg.printf(timerText, 0, topMargin + Fonts.large:getHeight(), rightEdge, 'right')
         end
@@ -1177,6 +1184,10 @@ function GameScreen.new()
         local pipGap  = 4 * Constants.SCALE
         local function drawLives(x, y, lives, color)
             for i = 1, 3 do
+                lg.setColor(0, 0, 0, 0.5)
+                lg.rectangle('fill', x + (i - 1) * (pipSize + pipGap) + shOff, y + shOff, pipSize, pipSize)
+            end
+            for i = 1, 3 do
                 if i <= lives then
                     lg.setColor(color)
                 else
@@ -1189,30 +1200,37 @@ function GameScreen.new()
 
         -- Top player (opponent)
         lg.setFont(Fonts.large)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(topLabel, leftMargin + shOff, topMargin + shOff)
         lg.setColor(topColor)
         lg.print(topLabel, leftMargin, topMargin)
         lg.setFont(Fonts.tiny)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(topTrophies .. " trophies", leftMargin + shOff, topMargin + Fonts.large:getHeight() + shOff)
         lg.setColor(0.9, 0.85, 0.3, 1)
         lg.print(topTrophies .. " trophies", leftMargin, topMargin + Fonts.large:getHeight())
         drawLives(leftMargin, topMargin + Fonts.large:getHeight() + Fonts.tiny:getHeight() + 3 * Constants.SCALE, topLives, topColor)
 
         -- Bottom player (you)
         lg.setFont(Fonts.large)
-        lg.setColor(bottomColor)
         local bLabelWidth = Fonts.large:getWidth(bottomLabel)
         local bLabelX = Constants.GAME_WIDTH - bLabelWidth - rightMargin
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(bottomLabel, bLabelX + shOff, Constants.GAME_HEIGHT - fontHeight - bottomMargin + shOff)
+        lg.setColor(bottomColor)
         lg.print(bottomLabel, bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin)
         lg.setFont(Fonts.tiny)
-        lg.setColor(0.9, 0.85, 0.3, 1)
         local trophyText = bottomTrophies .. " trophies"
         local trophyW = Fonts.tiny:getWidth(trophyText)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.print(trophyText, Constants.GAME_WIDTH - trophyW - rightMargin + shOff, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight() + shOff)
+        lg.setColor(0.9, 0.85, 0.3, 1)
         lg.print(trophyText, Constants.GAME_WIDTH - trophyW - rightMargin, Constants.GAME_HEIGHT - bottomMargin - fontHeight - Fonts.tiny:getHeight())
         drawLives(bLabelX, Constants.GAME_HEIGHT - fontHeight - bottomMargin - pipSize - 5 * Constants.SCALE,
                   bottomLives, bottomColor)
 
         -- Coin display in bottom left (icon + number)
         lg.setFont(Fonts.large)
-        lg.setColor(1, 1, 1, 1)
         local coinStr = self.isSandbox and "999" or tostring(self.playerCoins)
         local baseY = Constants.GAME_HEIGHT - fontHeight - bottomMargin
         local iconH = math.floor(fontHeight * 0.55)
@@ -1221,6 +1239,10 @@ function GameScreen.new()
         local iconGap = math.floor(4 * Constants.SCALE)
         local visH  = Fonts.large:getAscent() - Fonts.large:getDescent()
         local iconY = math.floor(baseY + (visH - iconH) / 2)
+        lg.setColor(0, 0, 0, 0.65)
+        lg.draw(self.goldIcon, leftMargin + shOff, iconY + shOff, 0, iconSc, iconSc)
+        lg.print(coinStr, leftMargin + iconW + iconGap + shOff, baseY + shOff)
+        lg.setColor(1, 1, 1, 1)
         lg.draw(self.goldIcon, leftMargin, iconY, 0, iconSc, iconSc)
         lg.print(coinStr, leftMargin + iconW + iconGap, baseY)
 

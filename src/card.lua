@@ -187,6 +187,11 @@ function Card:draw()
     local borderWidth = 2 * Constants.SCALE
     local namePadding = 4 * Constants.SCALE
 
+    -- Card drop shadow
+    local shadowOff = math.floor(3 * Constants.SCALE)
+    lg.setColor(0, 0, 0, 0.45 * alpha)
+    lg.rectangle('fill', self.x + shadowOff, self.y + shadowOff, self.width, self.height, cornerRadius, cornerRadius)
+
     -- Card background
     if self.isDragging then
         lg.setColor(0.3, 0.3, 0.4, 0.9 * alpha)
@@ -238,6 +243,11 @@ function Card:draw()
         local startX = math.floor(self.x + (self.width - totalW) / 2)
         local visH  = Fonts.small:getAscent() - Fonts.small:getDescent()
         local iconY = math.floor(costY + (visH - iconH) / 2)
+        local cshOff = math.floor(1 * Constants.SCALE)
+        lg.setColor(0, 0, 0, 0.65 * alpha)
+        lg.draw(icon, startX + cshOff, iconY + cshOff, 0, iconSc, iconSc)
+        lg.print(costStr, startX + iconW + gap + cshOff, costY + cshOff)
+        lg.setColor(1, 1, 1, alpha)
         lg.draw(icon, startX, iconY, 0, iconSc, iconSc)
         lg.print(costStr, startX + iconW + gap, costY)
     end

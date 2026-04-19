@@ -138,11 +138,12 @@ function MenuScreen.new()
         self._xpBarRect       = nil
 
         -- Hit-rect caches (rebuilt each draw, stored in screen coords)
-        self._collectionCards = {}
-        self._ipFieldRect     = nil
-        self._playBtnRect     = nil
-        self._sandboxBtnRect  = nil
-        self._tabRects        = {}
+        self._collectionCards     = {}
+        self._ipFieldRect         = nil
+        self._playBtnRect         = nil
+        self._sandboxBtnRect      = nil
+        self._deckPreviewGridRect = nil
+        self._tabRects            = {}
 
         -- Shop state
         self._shopGemBtns  = {}  -- hit rects for gem purchase buttons
@@ -221,6 +222,7 @@ function MenuScreen.new()
         self._playSpring     = { scale = 1.0, vel = 0.0, pressed = false }
         self._sbtnSpring     = { scale = 1.0, vel = 0.0, pressed = false }
         self._joinSpring     = { scale = 1.0, vel = 0.0, pressed = false }
+        self._backSpring     = { scale = 1.0, vel = 0.0, pressed = false }
         self._settingsSpring = { scale = 1.0, vel = 0.0, pressed = false }
         self._tradeBtnSprings = {
             { scale = 1.0, vel = 0.0, pressed = false },
@@ -683,6 +685,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         updateSpring(self._playSpring, dt)
         updateSpring(self._sbtnSpring, dt)
         updateSpring(self._joinSpring, dt)
+        updateSpring(self._backSpring, dt)
         updateSpring(self._settingsSpring, dt)
         for i = 1, 3 do updateSpring(self._tradeBtnSprings[i], dt) end
     end
@@ -925,17 +928,44 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local textW   = W - math.floor(64 * sc)
         local textX   = ox + math.floor(32 * sc)
 
-        -- ── Back button (below ticker stripe bottom at 111*sc) ──
-        local btnH = math.floor(40 * sc)
-        local btnY = math.floor(118 * sc + Constants.MENU_CONTENT_PUSH)
-        local btnX = ox + math.floor(16 * sc)
-        lg.setFont(Fonts.small)
+        -- ── Back button ──────────────────────────────────────────────────────
+        local backW      = math.floor(48  * sc)
+        local backH      = math.floor(48  * sc)
+        local backShadH  = math.floor(4   * sc)
+        local backMaxF   = math.floor(4   * sc)
+        local backAnchorY = math.floor(111 * sc + 16 * sc + Constants.MENU_CONTENT_PUSH)
+        local _tabTotalW = 4 * math.floor(108 * sc) + 3 * math.floor(8 * sc)
+        local backX      = math.floor(ox + (W - _tabTotalW) / 2)
+
+        local _t       = love.timer.getTime()
+        local _idleBob = math.sin(_t * 1.8) * 1 * sc
+        local _idleRot = math.sin(_t * 1.3) * 0.012
+        local _bs      = self._backSpring.scale
+        local _floatOff = math.floor(backMaxF * math.max(0, (_bs - 0.93) / 0.07))
+        local _drawY   = backAnchorY - _floatOff + math.floor(_idleBob)
+
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        roundedRect(backX + math.floor(2 * sc), backAnchorY + backShadH, backW, backH, 8, sc)
+
+        local _pivX = backX + backW / 2
+        local _pivY = _drawY + backH / 2
+        lg.push()
+        lg.translate(_pivX, _pivY)
+        lg.rotate(_idleRot)
+        lg.scale(_bs, _bs)
+        lg.setColor(0.765, 0.639, 0.541, 1)
+        roundedRect(-backW / 2, -backH / 2, backW, backH, 8, sc)
         lg.setColor(0.965, 0.839, 0.741, 1)
-        lg.print("\xe2\x86\x90 Back", btnX, textCY(Fonts.small, btnY, btnH))
-        self._backButtonRect = { x = btnX + self.panelOffset, y = btnY, w = math.floor(100 * sc), h = btnH }
+        roundedRectLine(-backW / 2, -backH / 2, backW, backH, 8, sc, 2 * sc)
+        lg.setFont(Fonts.medium)
+        lg.setColor(1, 1, 1, 1)
+        lg.printf("X", -backW / 2, textCY(Fonts.medium, -backH / 2, backH), backW, 'center')
+        lg.pop()
+
+        self._backButtonRect = { x = backX + self.panelOffset, y = backAnchorY - backMaxF, w = backW, h = backH + backMaxF }
 
         -- ── Text content (top to bottom, starting below back button) ──
-        local curY = btnY + btnH + math.floor(8 * sc)
+        local curY = backAnchorY + backH + backShadH + math.floor(8 * sc)
 
         -- Unit name
         local name = utype:sub(1,1):upper() .. utype:sub(2)
@@ -1198,6 +1228,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.setColor(0.125, 0.224, 0.310, 1)
         lg.setLineWidth(math.max(1, math.floor(sc)))
         lg.rectangle('line', gridX, gridY, gridW, gridH)
+        self._deckPreviewGridRect = { x = gridX + self.panelOffset, y = gridY, w = gridW, h = gridH }
 
         -- Unit sprites (idle/attack animated; hit rects stored for tap detection)
         -- Draw back rows first so front rows overlap them (painter's algorithm)
@@ -1332,48 +1363,46 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
 
         -- ── Deck slot tabs ────────────────────────────────────────────────────
-        local tabAreaW  = W - 40 * sc
-        local tabW      = tabAreaW / 5
+        local tabCardW  = 108 * sc
+        local tabGapX   = 8   * sc
+        local tabTotalW = 4 * tabCardW + 3 * tabGapX
         local tabH      = 44 * sc
         local tabY      = 138 * sc + Constants.MENU_CONTENT_PUSH
-        local tabStartX = ox + 20 * sc
+        local tabStartX = ox + (W - tabTotalW) / 2
 
         self._deckSlotRects = {}
-        for i = 1, 5 do
-            local tx = tabStartX + (i - 1) * tabW
+        for i = 1, 4 do
+            local tx = tabStartX + (i - 1) * (tabCardW + tabGapX)
             if i == self.selectedDeckSlot then
-                lg.setColor(0.059, 0.165, 0.247, 1)
-                roundedRect(tx, tabY, tabW - 4 * sc, tabH, 5, sc)
-                lg.setColor(0.125, 0.224, 0.310, 1)
-                roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 2 * sc)
+                lg.setColor(0.765, 0.639, 0.541, 1)
+                roundedRect(tx, tabY, tabCardW, tabH, 5, sc)
+                lg.setColor(0.965, 0.839, 0.741, 1)
+                roundedRectLine(tx, tabY, tabCardW, tabH, 5, sc, 2 * sc)
             else
-                lg.setColor(0.031, 0.078, 0.118, 1)
-                roundedRect(tx, tabY, tabW - 4 * sc, tabH, 5, sc)
-                lg.setColor(0.306, 0.286, 0.373, 1)
-                roundedRectLine(tx, tabY, tabW - 4 * sc, tabH, 5, sc, 1 * sc)
+                lg.setColor(0.600, 0.459, 0.467, 1)
+                roundedRect(tx, tabY, tabCardW, tabH, 5, sc)
+                lg.setColor(0.600, 0.459, 0.467, 1)
+                roundedRectLine(tx, tabY, tabCardW, tabH, 5, sc, 1 * sc)
             end
             lg.setFont(Fonts.small)
-            lg.setColor(0.965, 0.839, 0.741, 1)
-            lg.printf("D" .. i, tx, textCY(Fonts.small, tabY, tabH), tabW - 4 * sc, 'center')
-            if DeckManager._data.activeDeckIndex == i then
-                lg.setColor(0.765, 0.639, 0.541, 1)
-                love.graphics.circle('fill', tx + tabW - 10 * sc, tabY + 8 * sc, 5 * sc)
-            end
+            lg.setColor(1, 1, 1, 1)
+            lg.printf("D" .. i, tx, textCY(Fonts.small, tabY, tabH), tabCardW, 'center')
             self._deckSlotRects[i] = {
                 x = tx + self.panelOffset,
                 y = tabY,
-                w = tabW - 4 * sc,
+                w = tabCardW,
                 h = tabH
             }
         end
 
-        -- ── Sort + Total row ───────────────────────────────────────────────────
+        -- ── Sort + Clear row ───────────────────────────────────────────────────
         local total    = DeckManager.getTotalCount(self.selectedDeckSlot)
         local barY     = tabY + tabH + 8 * sc
         local barH     = 40 * sc
-        local barX     = ox + 20 * sc
-        local barW     = W - 40 * sc
+        local barX     = tabStartX
+        local barW     = tabTotalW
         local btnW     = 90 * sc
+        local clearBtnW = 70 * sc
 
         -- SORT toggle button
         local sortX = barX
@@ -1396,16 +1425,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         end
         self._deckSortRect = { x = sortX + self.panelOffset, y = barY, w = btnW, h = barH }
 
-        -- Total counter (shrunk to leave room for Clear button)
-        local clearBtnW = 70 * sc
-        local counterX  = barX + btnW + 4 * sc
-        local counterW  = barW - btnW - 4 * sc - clearBtnW - 4 * sc
-        lg.setFont(Fonts.small)
-        lg.setColor(total >= 20 and {0.600, 0.459, 0.467, 1} or {0.765, 0.639, 0.541, 1})
-        lg.printf(total .. " / 20", counterX, textCY(Fonts.small, barY, barH), counterW, 'center')
-
-        -- CLEAR button
-        local clearX = counterX + counterW + 4 * sc
+        -- CLEAR button (right-aligned)
+        local clearX = barX + barW - clearBtnW
         lg.setColor(0.306, 0.286, 0.373, 1)
         roundedRect(clearX, barY, clearBtnW, barH, 5, sc)
         lg.setColor(0.506, 0.286, 0.286, 1)
@@ -1415,6 +1436,12 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.printf("Clear", clearX, textCY(Fonts.small, barY, barH), clearBtnW, 'center')
         self._deckClearRect = { x = clearX + self.panelOffset, y = barY, w = clearBtnW, h = barH }
 
+        -- ── Deck count banner ─────────────────────────────────────────────────
+        local bannerY = barY + barH + 8 * sc
+        local bannerH = math.floor(40 * sc)
+        local totalLabel = total >= 20 and (total .. " / 20  ") or (total .. " / 20")
+        self:drawGroupHeader(tabStartX, bannerY, tabTotalW, bannerH, totalLabel, sc)
+
         -- ── Unit card grid ────────────────────────────────────────────────────
         local cols   = 4
         local cardW  = 108 * sc
@@ -1423,7 +1450,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local gapY   = 10  * sc
         local totalW = cols * cardW + (cols - 1) * gapX
         local startX = ox + (W - totalW) / 2
-        local startY = barY + barH + 12 * sc
+        local startY = bannerY + bannerH + 8 * sc
         local stripH = 32 * sc
 
         local deck = DeckManager.getDeck(self.selectedDeckSlot)
@@ -2834,19 +2861,27 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         -- Overlays absorb all presses
         if self.showDetail or self.showSettings or self._rewardState == "revealing" then return end
 
-        -- Collection detail: start sprite rotation drag
+        -- Collection detail: start sprite rotation drag + back spring
         if self.currentPanel == 1 and self.collectionView == "detail" then
             local r = self._detailSpriteRect
             if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self._detailDragX = x
             end
+            local b = self._backButtonRect
+            if b and x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
+                self._backSpring.pressed = true
+            end
         end
 
-        -- Deck detail: start sprite rotation drag
+        -- Deck detail: start sprite rotation drag + back spring
         if self.currentPanel == 2 and self.deckView == "detail" then
             local r = self._detailSpriteRect
             if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self._detailDragX = x
+            end
+            local b = self._backButtonRect
+            if b and x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h then
+                self._backSpring.pressed = true
             end
         end
 
@@ -2978,6 +3013,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self._playSpring.pressed     = false
         self._sbtnSpring.pressed     = false
         self._joinSpring.pressed     = false
+        self._backSpring.pressed     = false
         self._settingsSpring.pressed = false
         for i = 1, 3 do self._tradeBtnSprings[i].pressed = false end
         self._detailDragX = nil
@@ -3278,16 +3314,15 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             return
         end
 
-        -- Tap: play-panel preview units → trigger attack animation
+        -- Tap: play-panel preview grid → slide to deck builder
         if self.currentPanel == 3 then
-            for _, rect in ipairs(self._previewUnitRects) do
-                if x >= rect.x and x <= rect.x + rect.w and
-                   y >= rect.y and y <= rect.y + rect.h then
-                    local atk = self.attackAnim[rect.utype]
-                    atk.active   = true
-                    atk.progress = 0
-                    return
-                end
+            local gr = self._deckPreviewGridRect
+            if gr and x >= gr.x and x <= gr.x + gr.w and
+                      y >= gr.y and y <= gr.y + gr.h then
+                AudioManager.playTap()
+                self.currentPanel = 2
+                self.targetOffset = -(2 - 1) * Constants.GAME_WIDTH
+                return
             end
         end
 
