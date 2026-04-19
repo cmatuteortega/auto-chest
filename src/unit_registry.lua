@@ -42,9 +42,30 @@ UnitRegistry.unitClasses = {
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
-    { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
-    { name = "Goblin Gang",  groupType = "goblin",   units = {"burrow"} },
+    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
+    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
+    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow"} },
+}
+
+-- Faction membership per unit type
+UnitRegistry.factions = {
+    boney     = {"undead", "brawler"},
+    marrow    = {"undead", "marksman"},
+    mend      = {"undead", "support"},
+    amalgam   = {"undead", "monster"},
+    clavicula = {"undead", "brawler"},
+    migraine  = {"undead", "marksman"},
+    humerus   = {"undead", "brawler"},
+    tomb      = {"undead"},
+    knight    = {"folk", "support"},
+    mage      = {"folk", "marksman"},
+    marc      = {"folk", "marksman"},
+    samurai   = {"folk", "brawler"},
+    bull      = {"folk", "monster"},
+    bonk      = {"folk", "brawler"},
+    sinner    = {"folk", "brawler"},
+    catapult  = {"folk"},
+    burrow    = {"monster", "brawler"},
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -565,6 +586,18 @@ function UnitRegistry.loadAllSprites()
         local img = love.graphics.newImage(catapultProjPath)
         img:setFilter('nearest', 'nearest')
         allSprites["catapult"].catapultProjectile = img
+    end
+
+    -- Load faction icons
+    UnitRegistry.factionIcons = {}
+    local factionNames = {"brawler", "folk", "marksman", "monster", "support", "undead"}
+    for _, fname in ipairs(factionNames) do
+        local path = "src/assets/factions/" .. fname .. ".png"
+        if love.filesystem.getInfo(path) then
+            local icon = love.graphics.newImage(path)
+            icon:setFilter("nearest", "nearest")
+            UnitRegistry.factionIcons[fname] = icon
+        end
     end
 
     _allSpritesCache = allSprites

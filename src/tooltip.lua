@@ -92,6 +92,10 @@ function Tooltip:draw()
     local hintHeight = Fonts.tiny:getHeight()
     local hintMargin = 6 * Constants.SCALE
 
+    local factionIconScale = math.max(2, math.floor(3 * Constants.SCALE))
+    local factionIconSize  = 8 * factionIconScale
+    local nameLineHeight   = math.max(nameHeight, factionIconSize)
+
     -- Check if unit has upgrade tree
     local hasUpgradeTree = self.unit.upgradeTree and #self.unit.upgradeTree > 0
 
@@ -122,7 +126,7 @@ function Tooltip:draw()
         end
     end
 
-    height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + statsHeight + statsMargin + upgradeButtonHeight + hintHeight + hintMargin + padding
+    height = padding + nameLineHeight + (4 * Constants.SCALE) + separatorSpace + passiveHeight + passiveMargin + statsHeight + statsMargin + upgradeButtonHeight + hintHeight + hintMargin + padding
 
     -- Get unit's screen position
     local unitX = Constants.GRID_OFFSET_X + (self.unit.col - 1) * Constants.CELL_SIZE
@@ -182,14 +186,35 @@ function Tooltip:draw()
     love.graphics.setLineWidth(borderWidth)
     love.graphics.rectangle("line", x, y, width, height, cornerRadius)
 
-    -- Draw unit name (title)
-    love.graphics.setColor(self.textColor)
+    -- Draw unit name + faction icons inline (name left, icons to its right, block centered)
+    local UnitRegistry = require("src.unit_registry")
+    local unitFactions = UnitRegistry.factions and UnitRegistry.factions[self.unit.unitType] or {}
+    local factionIcons = UnitRegistry.factionIcons or {}
+    local numFactions  = #unitFactions
     love.graphics.setFont(Fonts.small)
-    local nameY = y + padding
-    love.graphics.printf(unitName, x + padding, nameY, textWidth, "center")
+    local nameY       = y + padding
+    local iconGap     = math.floor(4 * Constants.SCALE)
+    local namePixW    = Fonts.small:getWidth(unitName)
+    local iconsBlockW = numFactions > 0 and (iconGap + numFactions * factionIconSize + (numFactions - 1) * iconGap) or 0
+    local blockW      = namePixW + iconsBlockW
+    local blockX      = x + padding + (textWidth - blockW) / 2
+    local nameDrawY   = nameY + math.floor((nameLineHeight - nameHeight) / 2)
+    local iconDrawY   = nameY + math.floor((nameLineHeight - factionIconSize) / 2)
+    love.graphics.setColor(self.textColor)
+    love.graphics.print(unitName, blockX, nameDrawY)
+    if numFactions > 0 then
+        local iconStartX = blockX + namePixW + iconGap
+        for fi, fname in ipairs(unitFactions) do
+            local icon = factionIcons[fname]
+            if icon then
+                love.graphics.setColor(1, 1, 1, 1)
+                love.graphics.draw(icon, iconStartX + (fi - 1) * (factionIconSize + iconGap), iconDrawY, 0, factionIconScale, factionIconScale)
+            end
+        end
+    end
 
     -- Draw separator line
-    local separatorY = nameY + nameHeight + (4 * Constants.SCALE)
+    local separatorY = nameY + nameLineHeight + (4 * Constants.SCALE)
     love.graphics.setColor(self.borderColor)
     love.graphics.setLineWidth(1 * Constants.SCALE)
     love.graphics.line(x + padding, separatorY, x + width - padding, separatorY)

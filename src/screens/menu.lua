@@ -967,12 +967,30 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         -- ── Text content (top to bottom, starting below back button) ──
         local curY = backAnchorY + backH + backShadH + math.floor(8 * sc)
 
-        -- Unit name
+        -- Unit name + faction icons inline
         local name = utype:sub(1,1):upper() .. utype:sub(2)
         lg.setFont(Fonts.medium)
+        local detFactions = UnitRegistry.factions and UnitRegistry.factions[utype] or {}
+        local detIcons    = UnitRegistry.factionIcons or {}
+        local detIconSc   = math.max(2, math.floor(3 * sc))
+        local detIconSz   = 8 * detIconSc
+        local detIconGap  = math.floor(4 * sc)
+        local detNameH    = Fonts.medium:getHeight()
+        local detLineH    = math.max(detNameH, detIconSz)
+        local detNameW    = Fonts.medium:getWidth(name)
+        local detIconsW   = #detFactions > 0 and (detIconGap + #detFactions * detIconSz + (#detFactions - 1) * detIconGap) or 0
+        local detBlockX   = ox + math.floor((W - detNameW - detIconsW) / 2)
         lg.setColor(1, 1, 1, 1)
-        lg.printf(name, ox, curY, W, 'center')
-        curY = curY + Fonts.medium:getHeight() + math.floor(5 * sc)
+        lg.print(name, detBlockX, curY + math.floor((detLineH - detNameH) / 2))
+        for fi, fname in ipairs(detFactions) do
+            local icon = detIcons[fname]
+            if icon then
+                lg.setColor(1, 1, 1, 1)
+                local ix = detBlockX + detNameW + detIconGap + (fi - 1) * (detIconSz + detIconGap)
+                lg.draw(icon, ix, curY + math.floor((detLineH - detIconSz) / 2), 0, detIconSc, detIconSc)
+            end
+        end
+        curY = curY + detLineH + math.floor(5 * sc)
 
         -- Stats row
         lg.setFont(Fonts.tiny)
@@ -1148,6 +1166,17 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         for _, group in ipairs(UnitRegistry.groups) do
             self:drawGroupHeader(startX, currentY, totalW, headerH, group.name, sc)
+            if group.factionIcon and UnitRegistry.factionIcons then
+                local icon = UnitRegistry.factionIcons[group.factionIcon]
+                if icon then
+                    local fIconSc = math.max(3, math.floor(3 * sc))
+                    local fIconSz = 8 * fIconSc
+                    local fIconX  = startX + totalW - fIconSz - math.floor(10 * sc)
+                    local fIconY  = currentY + math.floor((headerH - fIconSz) / 2)
+                    lg.setColor(1, 1, 1, 1)
+                    lg.draw(icon, math.floor(fIconX), math.floor(fIconY), 0, fIconSc, fIconSc)
+                end
+            end
             currentY = currentY + headerH + 6 * sc
 
             for j, utype in ipairs(group.units) do
@@ -1441,6 +1470,38 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local bannerH = math.floor(40 * sc)
         local totalLabel = total >= 20 and (total .. " / 20  ") or (total .. " / 20")
         self:drawGroupHeader(tabStartX, bannerY, tabTotalW, bannerH, totalLabel, sc)
+
+        -- Faction icons right-aligned in the banner
+        if UnitRegistry.factionIcons then
+            local deck = DeckManager.getDeck(self.selectedDeckSlot)
+            local presentFactions = {}
+            if deck and deck.counts then
+                for utype, cnt in pairs(deck.counts) do
+                    if cnt > 0 and UnitRegistry.factions and UnitRegistry.factions[utype] then
+                        for _, fname in ipairs(UnitRegistry.factions[utype]) do
+                            presentFactions[fname] = true
+                        end
+                    end
+                end
+            end
+            local factionOrder = {"brawler", "folk", "marksman", "monster", "support", "undead"}
+            local fIconSc  = math.max(3, math.floor(3 * sc))
+            local fIconSz  = 8 * fIconSc
+            local fIconGap = math.floor(3 * sc)
+            local totalIconW  = #factionOrder * fIconSz + (#factionOrder - 1) * fIconGap
+            local fIconStartX = tabStartX + tabTotalW - totalIconW - math.floor(10 * sc)
+            local fIconY      = bannerY + math.floor((bannerH - fIconSz) / 2)
+            for fi, fname in ipairs(factionOrder) do
+                local icon = UnitRegistry.factionIcons[fname]
+                if icon then
+                    local alpha = presentFactions[fname] and 1.0 or 0.25
+                    lg.setColor(1, 1, 1, alpha)
+                    local ix = fIconStartX + (fi - 1) * (fIconSz + fIconGap)
+                    lg.draw(icon, math.floor(ix), fIconY, 0, fIconSc, fIconSc)
+                end
+            end
+            lg.setColor(1, 1, 1, 1)
+        end
 
         -- ── Unit card grid ────────────────────────────────────────────────────
         local cols   = 4
