@@ -288,6 +288,97 @@ local function handleMessage(peer, eventName, msgData)
             pushLog("Failed registration: " .. tostring(username))
         end
 
+    elseif eventName == "register_device" then
+        local username = msgData.username
+        local deviceId = msgData.device_id or ""
+
+        -- Idempotent per device: if a profile already exists, reuse it
+        local player = db:findPlayerByDevice(deviceId)
+        local created = false
+        if not player then
+            local err
+            player, err = db:registerPlayerByDevice(username, deviceId)
+            if not player then
+                peer:send(encode("register_failed", {reason = err or "Registration failed"}))
+                pushLog("Failed device registration: " .. tostring(username))
+                return
+            end
+            created = true
+        end
+
+        db:deletePlayerSessions(player.id)
+        evictPlayerSession(player.id, peer)
+
+        local token = db:createSession(player.id, deviceId)
+        sessions[ck] = {
+            player_id = player.id,
+            username  = player.username,
+            token     = token
+        }
+        peerByPlayerId[player.id] = peer
+
+        local unlocks = player.unlocks
+        if not unlocks then
+            unlocks = db:migrateUnlocks(player.id)
+        end
+
+        peer:send(encode("login_success", {
+            player_id         = player.id,
+            username          = player.username,
+            trophies          = player.trophies,
+            coins             = player.coins,
+            gold              = player.gold,
+            gems              = player.gems,
+            xp                = player.xp,
+            level             = player.level,
+            active_deck_index = player.activeDeckIndex,
+            decks             = player.decks,
+            token             = token,
+            unlocks           = unlocks
+        }))
+        pushLog((created and "Device register: " or "Device reuse: ") .. player.username)
+
+    elseif eventName == "login_with_device" then
+        local deviceId = msgData.device_id or ""
+
+        local player = db:findPlayerByDevice(deviceId)
+        if not player then
+            peer:send(encode("login_failed", {reason = "no_device_profile"}))
+            return
+        end
+
+        db:deletePlayerSessions(player.id)
+        evictPlayerSession(player.id, peer)
+
+        local token = db:createSession(player.id, deviceId)
+        sessions[ck] = {
+            player_id = player.id,
+            username  = player.username,
+            token     = token
+        }
+        peerByPlayerId[player.id] = peer
+
+        local unlocks = player.unlocks
+        if not unlocks then
+            unlocks = db:migrateUnlocks(player.id)
+        end
+
+        peer:send(encode("login_success", {
+            player_id         = player.id,
+            username          = player.username,
+            trophies          = player.trophies,
+            coins             = player.coins,
+            gold              = player.gold,
+            gems              = player.gems,
+            xp                = player.xp,
+            level             = player.level,
+            active_deck_index = player.activeDeckIndex,
+            decks             = player.decks,
+            token             = token,
+            unlocks           = unlocks
+        }))
+        pushLog("Device login: " .. player.username)
+
     elseif eventName == "queue_join" then
         local session = sessions[ck]
         if not session then

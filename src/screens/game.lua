@@ -1492,7 +1492,7 @@ function GameScreen.new()
                     love.filesystem.write("tutorial_done.dat", "1")
                     Constants.PERSPECTIVE = 1
                     local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('login')
+                    ScreenManager.switch('name_entry')
                 end
             else
                 local buttonText = self.isOnline and "IR AL MENÚ" or "RESTART"

@@ -119,7 +119,6 @@ function MenuScreen.new()
         -- Settings overlay
         self.showSettings        = false
         self._settingsBtnRect    = nil
-        self._settingsLogoutRect = nil
         self._settingsMusicRect  = nil
         self._settingsSFXRect    = nil
         self._settingsGodModeRect = nil
@@ -279,7 +278,7 @@ function MenuScreen.new()
             _G.GameSocket = nil
             _G.PlayerData = nil
             local ScreenManager = require('lib.screen_manager')
-            ScreenManager.switch('login')
+            ScreenManager.switch('loading')
         end)
 
         self._cb_decksSynced = _G.GameSocket:on("decks_synced", function()
@@ -353,7 +352,7 @@ function MenuScreen.new()
                 _G.GameSocket = nil
                 _G.PlayerData = nil
                 local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('login')
+                ScreenManager.switch('loading')
             end
         )
     end
@@ -2749,26 +2748,6 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 self._settingsGodModeRect = drawToggleRow("God Mode", _G.GodMode == true, row3Y)
             end
 
-            -- Divider above logout
-            local divY = panY + offY + math.floor(self._showGodModeRow and 182 or 138) * sc
-            lg.setColor(0.306, 0.286, 0.373, 1)
-            lg.setLineWidth(math.max(1, math.floor(sc)))
-            lg.line(panX + math.floor(12 * sc), divY,
-                    panX + panW - math.floor(12 * sc), divY)
-
-            -- Logout button (full-width minus margins)
-            local lbW = panW - math.floor(32 * sc)
-            local lbH = math.floor(34 * sc)
-            local lbX = panX + math.floor(16 * sc)
-            local lbY = divY + math.floor(8 * sc)
-            lg.setColor(0.031, 0.078, 0.118, 1)
-            roundedRect(lbX, lbY, lbW, lbH, 4, sc)
-            lg.setColor(0.600, 0.459, 0.467, 1)
-            roundedRectLine(lbX, lbY, lbW, lbH, 4, sc, math.max(1, math.floor(sc)))
-            lg.setFont(Fonts.small)
-            lg.setColor(0.765, 0.639, 0.541, 1)
-            lg.printf("Logout", lbX, textCY(Fonts.small, lbY, lbH), lbW, 'center')
-            self._settingsLogoutRect = { x = lbX, y = lbY, w = lbW, h = lbH }
             self._settingsPanelRect  = { x = panX, y = panY, w = panW, h = panH }
         end
 
@@ -3168,21 +3147,6 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     return
                 end
             end
-            -- Logout button inside overlay
-            if self._settingsLogoutRect then
-                local r = self._settingsLogoutRect
-                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                    love.filesystem.remove("session.dat")
-                    if _G.GameSocket then
-                        _G.GameSocket:disconnect()
-                        _G.GameSocket = nil
-                    end
-                    _G.PlayerData = nil
-                    local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('login')
-                    return
-                end
-            end
             -- Tap outside the panel closes overlay
             if self._settingsPanelRect then
                 local r = self._settingsPanelRect
@@ -3532,10 +3496,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     -- Socket exists but dead — reconnect first
                     self:startReconnect()
                 else
-                    -- Not logged in, go to login screen
+                    -- Not logged in, go through loading which will auto-auth via device
                     self:startExitAnim(function()
                         local ScreenManager = require('lib.screen_manager')
-                        ScreenManager.switch('login')
+                        ScreenManager.switch('loading')
                     end)
                 end
                 return
