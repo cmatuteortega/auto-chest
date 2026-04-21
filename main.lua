@@ -14,6 +14,7 @@ local UnitRegistry = require('src.unit_registry')
 
 -- Load screens
 local NameEntryScreen = require('src.screens.name_entry')
+local PreloadScreen   = require('src.screens.preload')
 local LoadingScreen   = require('src.screens.loading')
 local MenuScreen      = require('src.screens.menu')
 local GameScreen      = require('src.screens.game')
@@ -103,26 +104,27 @@ function love.load()
         love.filesystem.write("device_id.dat", id)
     end
 
-    -- Preload all sprites once at startup so screen transitions are instant.
-    -- Subsequent calls in menu/lobby/game screens return from cache immediately.
-    UnitRegistry.loadAllSprites()
-
-    -- Initialize screen manager with screen table
+    -- Initialize screen manager with screen table. Sprites are loaded
+    -- incrementally by the preload screen so love.load() returns fast and
+    -- the splash can draw immediately (no black screen during PNG loading).
     local screens = {
         name_entry = NameEntryScreen,
+        preload    = PreloadScreen,
         loading    = LoadingScreen,
         menu       = MenuScreen,
         game       = GameScreen,
         lobby      = LobbyScreen,
     }
     -- First-time detection: if tutorial_done.dat doesn't exist, show tutorial before anything else.
-    -- Otherwise go straight to loading, which auto-authenticates via session token or device_id.
+    -- Tutorial needs sprites, so load them synchronously in that path.
+    -- Otherwise go to preload (async sprite load + progress bar) → loading (auth) → menu.
     local tutorialDone = love.filesystem.getInfo("tutorial_done.dat")
     if not tutorialDone then
+        UnitRegistry.loadAllSprites()
         -- Start game in tutorial mode (isOnline=false, playerRole=1, socket=nil, isSandbox=false, isTutorial=true)
         ScreenManager.init(screens, 'game', false, 1, false, false, true)
     else
-        ScreenManager.init(screens, 'loading')
+        ScreenManager.init(screens, 'preload')
     end
 
     -- Track initial size
