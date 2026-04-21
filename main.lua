@@ -13,11 +13,12 @@ AudioManager = require('src.audio_manager')
 local UnitRegistry = require('src.unit_registry')
 
 -- Load screens
-local LoginScreen   = require('src.screens.login')
-local LoadingScreen = require('src.screens.loading')
-local MenuScreen    = require('src.screens.menu')
-local GameScreen    = require('src.screens.game')
-local LobbyScreen   = require('src.screens.lobby')
+local NameEntryScreen = require('src.screens.name_entry')
+local PreloadScreen   = require('src.screens.preload')
+local LoadingScreen   = require('src.screens.loading')
+local MenuScreen      = require('src.screens.menu')
+local GameScreen      = require('src.screens.game')
+local LobbyScreen     = require('src.screens.lobby')
 
 -- Global fonts (loaded once, shared by all screens)
 Fonts = {}
@@ -90,36 +91,40 @@ function love.load()
     if storedDeviceId and #storedDeviceId == 32 then
         _G.DeviceId = storedDeviceId
     else
+        -- Use love.math.random (auto-seeded from system entropy). Plain math.random
+        -- is deterministic without an explicit seed, which would make every clean
+        -- install collide on the same DeviceId.
         local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         local id = ""
         for _ = 1, 32 do
-            id = id .. chars:sub(math.random(1, #chars), math.random(1, #chars))
+            local r = love.math.random(1, #chars)
+            id = id .. chars:sub(r, r)
         end
         _G.DeviceId = id
         love.filesystem.write("device_id.dat", id)
     end
 
-    -- Preload all sprites once at startup so screen transitions are instant.
-    -- Subsequent calls in menu/lobby/game screens return from cache immediately.
-    UnitRegistry.loadAllSprites()
-
-    -- Initialize screen manager with screen table
+    -- Initialize screen manager with screen table. Sprites are loaded
+    -- incrementally by the preload screen so love.load() returns fast and
+    -- the splash can draw immediately (no black screen during PNG loading).
     local screens = {
-        login   = LoginScreen,
-        loading = LoadingScreen,
-        menu    = MenuScreen,
-        game    = GameScreen,
-        lobby   = LobbyScreen,
+        name_entry = NameEntryScreen,
+        preload    = PreloadScreen,
+        loading    = LoadingScreen,
+        menu       = MenuScreen,
+        game       = GameScreen,
+        lobby      = LobbyScreen,
     }
-    -- First-time detection: if tutorial_done.dat doesn't exist, show tutorial before login.
+    -- First-time detection: if tutorial_done.dat doesn't exist, show tutorial before anything else.
+    -- Tutorial needs sprites, so load them synchronously in that path.
+    -- Otherwise go to preload (async sprite load + progress bar) → loading (auth) → menu.
     local tutorialDone = love.filesystem.getInfo("tutorial_done.dat")
     if not tutorialDone then
+        UnitRegistry.loadAllSprites()
         -- Start game in tutorial mode (isOnline=false, playerRole=1, socket=nil, isSandbox=false, isTutorial=true)
         ScreenManager.init(screens, 'game', false, 1, false, false, true)
     else
-        local savedToken = love.filesystem.read("session.dat")
-        local startScreen = (savedToken and #savedToken > 0) and 'loading' or 'login'
-        ScreenManager.init(screens, startScreen)
+        ScreenManager.init(screens, 'preload')
     end
 
     -- Track initial size

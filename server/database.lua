@@ -56,7 +56,7 @@ function Database:createTables()
     local schema = [[
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
             password_hash TEXT NOT NULL,
             trophies INTEGER DEFAULT 0,
             coins INTEGER DEFAULT 6,
@@ -84,11 +84,61 @@ function Database:createTables()
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN xp INTEGER DEFAULT 0") end)
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN level INTEGER DEFAULT 1") end)
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN unlocks_json TEXT") end)
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN device_id TEXT") end)
+    pcall(function() self.db:exec("CREATE INDEX IF NOT EXISTS idx_player_device ON players(device_id)") end)
 
-    -- Sessions table: always drop and recreate with device_id (no backward compat)
-    self.db:exec("DROP TABLE IF EXISTS sessions")
+    -- One-time migration: drop UNIQUE constraint on username (device_id is the real identity)
+    local sqlStmt = self.db:prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='players'")
+    local needsRebuild = false
+    if sqlStmt:step() == sqlite3.ROW then
+        local sql = sqlStmt:get_value(0) or ""
+        if sql:find("UNIQUE") then
+            needsRebuild = true
+        end
+    end
+    sqlStmt:finalize()
+
+    if needsRebuild then
+        self.db:exec([[
+            BEGIN TRANSACTION;
+            CREATE TABLE players_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                trophies INTEGER DEFAULT 0,
+                coins INTEGER DEFAULT 6,
+                active_deck_index INTEGER,
+                deck1_json TEXT,
+                deck2_json TEXT,
+                deck3_json TEXT,
+                deck4_json TEXT,
+                deck5_json TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                last_login INTEGER,
+                gold INTEGER DEFAULT 0,
+                gems INTEGER DEFAULT 0,
+                xp INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1,
+                unlocks_json TEXT,
+                device_id TEXT
+            );
+            INSERT INTO players_new (id, username, password_hash, trophies, coins, active_deck_index,
+                deck1_json, deck2_json, deck3_json, deck4_json, deck5_json, created_at, last_login,
+                gold, gems, xp, level, unlocks_json, device_id)
+                SELECT id, username, password_hash, trophies, coins, active_deck_index,
+                    deck1_json, deck2_json, deck3_json, deck4_json, deck5_json, created_at, last_login,
+                    gold, gems, xp, level, unlocks_json, device_id FROM players;
+            DROP TABLE players;
+            ALTER TABLE players_new RENAME TO players;
+            CREATE INDEX idx_username ON players(username);
+            CREATE INDEX idx_player_device ON players(device_id);
+            COMMIT;
+        ]])
+        print("[DB] Migrated players table: dropped UNIQUE constraint on username")
+    end
+
     local sessionSchema = [[
-        CREATE TABLE sessions (
+        CREATE TABLE IF NOT EXISTS sessions (
             token      TEXT PRIMARY KEY,
             player_id  INTEGER NOT NULL,
             device_id  TEXT NOT NULL DEFAULT '',
@@ -168,6 +218,80 @@ function Database:registerPlayer(username, password)
         },
         unlocks = json.decode(starterUnlocks)
     }
+end
+
+-- Register a player bound to a device (no password, duplicate names allowed)
+function Database:registerPlayerByDevice(username, deviceId)
+    local starterDeck = '{"name":"Deck 1","counts":{"boney":2,"marrow":2,"knight":2,"marc":2}}'
+    local emptyDeck   = '{"name":"Deck %d","counts":{"boney":1}}'
+
+    local starterUnlocks = json.encode({
+        cards = { boney = 2, marrow = 2, knight = 2, marc = 2 },
+        pending_rewards = STARTER_REWARDS
+    })
+
+    local stmt = self.db:prepare([[
+        INSERT INTO players (username, password_hash, trophies, coins, active_deck_index,
+                           deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
+                           unlocks_json, device_id)
+        VALUES (?, '', 0, 6, 1, ?, ?, ?, ?, ?, ?, ?)
+    ]])
+    stmt:bind_values(username,
+        starterDeck,
+        string.format(emptyDeck, 2),
+        string.format(emptyDeck, 3),
+        string.format(emptyDeck, 4),
+        string.format(emptyDeck, 5),
+        starterUnlocks,
+        deviceId or "")
+
+    local result = stmt:step()
+    stmt:finalize()
+
+    if result ~= sqlite3.DONE then
+        return nil, "Failed to create player"
+    end
+
+    local playerId = self.db:last_insert_rowid()
+
+    return {
+        id = playerId,
+        username = username,
+        trophies = 0,
+        coins = 6,
+        gold = 0,
+        gems = 0,
+        xp = 0,
+        level = 1,
+        activeDeckIndex = 1,
+        decks = {
+            json.decode(starterDeck),
+            json.decode(string.format(emptyDeck, 2)),
+            json.decode(string.format(emptyDeck, 3)),
+            json.decode(string.format(emptyDeck, 4)),
+            json.decode(string.format(emptyDeck, 5))
+        },
+        unlocks = json.decode(starterUnlocks)
+    }
+end
+
+-- Find the most-recently-active player bound to a device_id, if any
+function Database:findPlayerByDevice(deviceId)
+    if not deviceId or deviceId == "" then return nil end
+    local stmt = self.db:prepare([[
+        SELECT id FROM players
+        WHERE device_id = ?
+        ORDER BY COALESCE(last_login, created_at) DESC
+        LIMIT 1
+    ]])
+    stmt:bind_values(deviceId)
+    if stmt:step() ~= sqlite3.ROW then
+        stmt:finalize()
+        return nil
+    end
+    local playerId = stmt:get_value(0)
+    stmt:finalize()
+    return self:getPlayer(playerId)
 end
 
 -- Authenticate a player
@@ -252,12 +376,13 @@ function Database:createSession(playerId, deviceId)
         playerId, os.time() - 30 * 24 * 3600
     ))
 
-    -- Generate random token
+    -- Generate random token (love.math.random is auto-seeded; plain math.random
+    -- is deterministic and would produce repeatable token sequences each restart)
     local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     local token = ""
-    for i = 1, 32 do
-        local rand = math.random(1, #chars)
-        token = token .. chars:sub(rand, rand)
+    for _ = 1, 32 do
+        local r = love.math.random(1, #chars)
+        token = token .. chars:sub(r, r)
     end
 
     -- Store session with device_id

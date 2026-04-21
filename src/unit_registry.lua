@@ -42,9 +42,30 @@ UnitRegistry.unitClasses = {
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
-    { name = "Castle Crew",  groupType = "castle",   units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
-    { name = "Goblin Gang",  groupType = "goblin",   units = {"burrow"} },
+    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
+    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
+    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow"} },
+}
+
+-- Faction membership per unit type
+UnitRegistry.factions = {
+    boney     = {"undead", "brawler"},
+    marrow    = {"undead", "marksman"},
+    mend      = {"undead", "support"},
+    amalgam   = {"undead", "monster"},
+    clavicula = {"undead", "brawler"},
+    migraine  = {"undead", "marksman"},
+    humerus   = {"undead", "brawler"},
+    tomb      = {"undead"},
+    knight    = {"folk", "support"},
+    mage      = {"folk", "marksman"},
+    marc      = {"folk", "marksman"},
+    samurai   = {"folk", "brawler"},
+    bull      = {"folk", "monster"},
+    bonk      = {"folk", "brawler"},
+    sinner    = {"folk", "brawler"},
+    catapult  = {"folk"},
+    burrow    = {"monster", "brawler"},
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -433,142 +454,222 @@ function UnitRegistry.loadSprites(unitType)
     }
 end
 
--- Load all sprites for all unit types.
--- Results are cached so the full sprite load only happens once per session.
-function UnitRegistry.loadAllSprites()
-    if _allSpritesCache then
-        return _allSpritesCache
-    end
-    local allSprites = {}
-    for unitType, _ in pairs(UnitRegistry.unitClasses) do
-        allSprites[unitType] = UnitRegistry.loadDirectionalSprites(unitType)
-    end
-    -- Attach sinner's free-form sprites so the unit can swap at form-change time
-    allSprites["sinner"].freeForm = UnitRegistry.loadSprites("sinner-free")
+-- Incremental sprite loader. `getLoadSteps()` returns a list of closures that
+-- can be executed one per frame while a splash screen draws a progress bar.
+-- After running all steps, call `finalizeSprites()` to wire up the cross-unit
+-- shared sprites (particles, projectiles, faction icons). `loadAllSprites()`
+-- stays as a convenience wrapper for tests/desktop offline paths.
 
-    -- Load marrow lance particle sprite
-    local lancePath = "src/assets/particles/lance.png"
-    if love.filesystem.getInfo(lancePath) then
-        local lanceImg = love.graphics.newImage(lancePath)
-        lanceImg:setFilter('nearest', 'nearest')
-        allSprites["marrow"].lance = lanceImg
-    end
+local _loadingAllSprites = nil  -- built progressively by getLoadSteps()
 
-    -- Load stun animation frames (shared across all units)
-    local stunFrames = {}
+local function loadSharedStunFrames()
+    local frames = {}
     for i = 1, 3 do
         local path = "src/assets/particles/stun-" .. i .. ".png"
         if love.filesystem.getInfo(path) then
             local img = love.graphics.newImage(path)
             img:setFilter('nearest', 'nearest')
-            table.insert(stunFrames, img)
+            table.insert(frames, img)
         end
     end
+    return frames
+end
 
-    -- Load taunt particle sprite (shared across all units)
-    local tauntImg
-    local tauntPath = "src/assets/particles/taunt.png"
-    if love.filesystem.getInfo(tauntPath) then
-        tauntImg = love.graphics.newImage(tauntPath)
-        tauntImg:setFilter('nearest', 'nearest')
+local function loadSharedTauntImg()
+    local path = "src/assets/particles/taunt.png"
+    if love.filesystem.getInfo(path) then
+        local img = love.graphics.newImage(path)
+        img:setFilter('nearest', 'nearest')
+        return img
     end
+end
 
-    -- Load buff "up" animation frames (shared across all units)
-    local upFrames = {}
+local function loadSharedUpFrames()
+    local frames = {}
     for i = 1, 6 do
         local path = "src/assets/particles/up-" .. i .. ".png"
         if love.filesystem.getInfo(path) then
             local img = love.graphics.newImage(path)
             img:setFilter('nearest', 'nearest')
-            table.insert(upFrames, img)
+            table.insert(frames, img)
         end
     end
+    return frames
+end
 
-    if #stunFrames > 0 or tauntImg or #upFrames > 0 then
-        for _, sprites in pairs(allSprites) do
-            if #stunFrames > 0 then sprites.stunFrames = stunFrames end
-            if tauntImg        then sprites.tauntImg   = tauntImg   end
-            if #upFrames > 0   then sprites.upFrames   = upFrames   end
-        end
-    end
-
-    -- Load projectile sprites for ranged units
-    local arrowImg, magicImg
-    local arrowPath = "src/assets/particles/arrow.png"
-    local magicPath = "src/assets/particles/magic-projectile.png"
-    if love.filesystem.getInfo(arrowPath) then
-        arrowImg = love.graphics.newImage(arrowPath)
-        arrowImg:setFilter('nearest', 'nearest')
-    end
-    if love.filesystem.getInfo(magicPath) then
-        magicImg = love.graphics.newImage(magicPath)
-        magicImg:setFilter('nearest', 'nearest')
-    end
-    for _, unitType in ipairs({"marc", "marrow", "mend"}) do
-        if arrowImg then allSprites[unitType].projectile = arrowImg end
-    end
-    for _, unitType in ipairs({"migraine", "mage"}) do
-        if magicImg then
-            allSprites[unitType].projectile = magicImg
-            allSprites[unitType].projectileAngleOffset = math.pi / 2  -- sprite points up, arrow points right
-        end
-    end
-
-    -- Load mage fireball animation frames
-    local fireballFrames = {}
-    for i = 1, 4 do
-        local path = "src/assets/particles/fireball-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
-            table.insert(fireballFrames, img)
-        end
-    end
-    if #fireballFrames > 0 then
-        allSprites["mage"].fireballFrames = fireballFrames
-    end
-
-    -- Load mage fire patch animation frames
-    local fireFrames = {}
-    for i = 1, 5 do
-        local path = "src/assets/particles/fire-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
-            table.insert(fireFrames, img)
-        end
-    end
-    if #fireFrames > 0 then
-        allSprites["mage"].fireFrames      = fireFrames
-        allSprites["catapult"].fireFrames  = fireFrames
-        allSprites["migraine"].fireFrames  = fireFrames
-        allSprites["bull"].fireFrames      = fireFrames
-    end
-
-    -- Load migraine background fire animation frames
-    local clavBgFrames = {}
-    for i = 1, 8 do
-        local path = "src/assets/migraine/background-anim/background-" .. i .. ".png"
-        if love.filesystem.getInfo(path) then
-            local img = love.graphics.newImage(path)
-            img:setFilter('nearest', 'nearest')
-            table.insert(clavBgFrames, img)
-        end
-    end
-    if #clavBgFrames > 0 then
-        allSprites["migraine"].bgAnimFrames = clavBgFrames
-    end
-
-    -- Load catapult projectile sprite
-    local catapultProjPath = "src/assets/particles/catapult-projectile.png"
-    if love.filesystem.getInfo(catapultProjPath) then
-        local img = love.graphics.newImage(catapultProjPath)
+local function loadProjectileImg(path)
+    if love.filesystem.getInfo(path) then
+        local img = love.graphics.newImage(path)
         img:setFilter('nearest', 'nearest')
-        allSprites["catapult"].catapultProjectile = img
+        return img
+    end
+end
+
+local function loadFrameSequence(pattern, maxFrames)
+    local frames = {}
+    for i = 1, maxFrames do
+        local path = pattern:format(i)
+        if love.filesystem.getInfo(path) then
+            local img = love.graphics.newImage(path)
+            img:setFilter('nearest', 'nearest')
+            table.insert(frames, img)
+        end
+    end
+    return frames
+end
+
+-- Shared buffers populated during steps, consumed by finalizeSprites().
+local _shared = nil
+
+local function resetShared()
+    _shared = {
+        stunFrames       = nil,
+        tauntImg         = nil,
+        upFrames         = nil,
+        arrowImg         = nil,
+        magicImg         = nil,
+        fireballFrames   = nil,
+        fireFrames       = nil,
+        migraineBgFrames = nil,
+        catapultProjImg  = nil,
+    }
+end
+
+-- Returns an ordered list of closures. Executing all of them in sequence
+-- populates `_loadingAllSprites` and the `_shared` buffers. Call finalizeSprites()
+-- afterwards to commit to the cache and wire up shared assets.
+function UnitRegistry.getLoadSteps()
+    if _allSpritesCache then
+        -- Already loaded; return a single no-op step so callers don't crash.
+        return { function() end }
+    end
+
+    _loadingAllSprites = {}
+    resetShared()
+
+    local steps = {}
+
+    -- One step per unit type (the heavy bulk — sprite PNGs + pixel trim scans)
+    for unitType, _ in pairs(UnitRegistry.unitClasses) do
+        table.insert(steps, function()
+            _loadingAllSprites[unitType] = UnitRegistry.loadDirectionalSprites(unitType)
+        end)
+    end
+
+    -- Sinner free-form + marrow lance (both small, single-sprite bundles)
+    table.insert(steps, function()
+        if _loadingAllSprites["sinner"] then
+            _loadingAllSprites["sinner"].freeForm = UnitRegistry.loadSprites("sinner-free")
+        end
+        local lancePath = "src/assets/particles/lance.png"
+        if love.filesystem.getInfo(lancePath) and _loadingAllSprites["marrow"] then
+            local lanceImg = love.graphics.newImage(lancePath)
+            lanceImg:setFilter('nearest', 'nearest')
+            _loadingAllSprites["marrow"].lance = lanceImg
+        end
+    end)
+
+    -- Shared particle frames
+    table.insert(steps, function()
+        _shared.stunFrames = loadSharedStunFrames()
+        _shared.tauntImg   = loadSharedTauntImg()
+        _shared.upFrames   = loadSharedUpFrames()
+    end)
+
+    -- Projectiles + fireball/fire shared frames
+    table.insert(steps, function()
+        _shared.arrowImg = loadProjectileImg("src/assets/particles/arrow.png")
+        _shared.magicImg = loadProjectileImg("src/assets/particles/magic-projectile.png")
+        _shared.fireballFrames = loadFrameSequence("src/assets/particles/fireball-%d.png", 4)
+        _shared.fireFrames     = loadFrameSequence("src/assets/particles/fire-%d.png", 5)
+    end)
+
+    -- Migraine background animation + catapult projectile
+    table.insert(steps, function()
+        _shared.migraineBgFrames = loadFrameSequence("src/assets/migraine/background-anim/background-%d.png", 8)
+        _shared.catapultProjImg  = loadProjectileImg("src/assets/particles/catapult-projectile.png")
+    end)
+
+    -- Faction icons
+    table.insert(steps, function()
+        UnitRegistry.factionIcons = {}
+        local factionNames = {"brawler", "folk", "marksman", "monster", "support", "undead"}
+        for _, fname in ipairs(factionNames) do
+            local path = "src/assets/factions/" .. fname .. ".png"
+            if love.filesystem.getInfo(path) then
+                local icon = love.graphics.newImage(path)
+                icon:setFilter("nearest", "nearest")
+                UnitRegistry.factionIcons[fname] = icon
+            end
+        end
+    end)
+
+    return steps
+end
+
+-- Wire up the shared assets onto the unit sprite tables and commit the cache.
+-- Must be called after all getLoadSteps() closures have been executed.
+function UnitRegistry.finalizeSprites()
+    if _allSpritesCache then return _allSpritesCache end
+    local allSprites = _loadingAllSprites or {}
+
+    if _shared then
+        if (_shared.stunFrames and #_shared.stunFrames > 0) or _shared.tauntImg or (_shared.upFrames and #_shared.upFrames > 0) then
+            for _, sprites in pairs(allSprites) do
+                if _shared.stunFrames and #_shared.stunFrames > 0 then sprites.stunFrames = _shared.stunFrames end
+                if _shared.tauntImg                              then sprites.tauntImg   = _shared.tauntImg   end
+                if _shared.upFrames and #_shared.upFrames > 0    then sprites.upFrames   = _shared.upFrames   end
+            end
+        end
+
+        for _, unitType in ipairs({"marc", "marrow", "mend"}) do
+            if _shared.arrowImg and allSprites[unitType] then
+                allSprites[unitType].projectile = _shared.arrowImg
+            end
+        end
+        for _, unitType in ipairs({"migraine", "mage"}) do
+            if _shared.magicImg and allSprites[unitType] then
+                allSprites[unitType].projectile = _shared.magicImg
+                allSprites[unitType].projectileAngleOffset = math.pi / 2
+            end
+        end
+
+        if _shared.fireballFrames and #_shared.fireballFrames > 0 and allSprites["mage"] then
+            allSprites["mage"].fireballFrames = _shared.fireballFrames
+        end
+
+        if _shared.fireFrames and #_shared.fireFrames > 0 then
+            for _, unitType in ipairs({"mage", "catapult", "migraine", "bull"}) do
+                if allSprites[unitType] then
+                    allSprites[unitType].fireFrames = _shared.fireFrames
+                end
+            end
+        end
+
+        if _shared.migraineBgFrames and #_shared.migraineBgFrames > 0 and allSprites["migraine"] then
+            allSprites["migraine"].bgAnimFrames = _shared.migraineBgFrames
+        end
+
+        if _shared.catapultProjImg and allSprites["catapult"] then
+            allSprites["catapult"].catapultProjectile = _shared.catapultProjImg
+        end
     end
 
     _allSpritesCache = allSprites
+    _loadingAllSprites = nil
+    _shared = nil
     return allSprites
+end
+
+-- Convenience wrapper: executes all load steps serially then finalizes.
+-- Used by desktop offline paths / tests that don't need the splash UI.
+function UnitRegistry.loadAllSprites()
+    if _allSpritesCache then
+        return _allSpritesCache
+    end
+    local steps = UnitRegistry.getLoadSteps()
+    for _, step in ipairs(steps) do step() end
+    return UnitRegistry.finalizeSprites()
 end
 
 -- Create a unit of the specified type

@@ -302,7 +302,7 @@ function LobbyScreen.new()
                 self.client = nil
                 _G.GameSocket = nil
                 local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('login')
+                ScreenManager.switch('loading')
             end
         end
 

@@ -1,7 +1,9 @@
 -- AutoChest – Loading / Auto-Auth Screen
--- Reads saved session token, connects to server, and auto-authenticates.
--- On success: sets globals and switches to menu.
--- On failure/timeout: deletes token and falls back to login screen.
+-- Always auto-authenticates. Two paths:
+--   1. session.dat has a token → send `reconnect_with_token`
+--   2. No token → send `login_with_device` (server looks up player by device_id)
+-- If the device has no profile yet → switch to name_entry.
+-- On any other failure/timeout → also switch to name_entry as a last resort.
 
 local Screen    = require('lib.screen')
 local Constants = require('src.constants')
@@ -15,7 +17,6 @@ function LoadingScreen.new()
     local self = Screen.new()
 
     function self:init()
-        -- Always initialize state first (update/draw may fire before screen switch completes)
         self.status    = "connecting"
         self.statusMsg = "Connecting..."
         self.client    = nil
@@ -23,22 +24,20 @@ function LoadingScreen.new()
         self.TIMEOUT   = 5
         self.dotTimer  = 0
         self.dotCount  = 0
-        self._switchRect = nil
         self.token          = nil
-        self.storedUsername  = nil
+        self.storedUsername = nil
+        self.authMode       = "device"  -- "token" or "device"
 
-        -- Parse session.dat as JSON {token, username}
+        -- Parse session.dat as JSON {token, username}; fall through to device login if missing/invalid
         local raw = love.filesystem.read("session.dat") or ""
         local ok, parsed = pcall(json.decode, raw)
         if ok and parsed and parsed.token then
             self.token          = parsed.token
-            self.storedUsername  = parsed.username
+            self.storedUsername = parsed.username
+            self.authMode       = "token"
         else
-            -- Invalid or old-format session file — force re-login
             love.filesystem.remove("session.dat")
-            local ScreenManager = require('lib.screen_manager')
-            ScreenManager.switch('login')
-            return
+            self.authMode = "device"
         end
 
         self:connectToServer()
@@ -57,15 +56,21 @@ function LoadingScreen.new()
         self.client:on("connect", function()
             self.status    = "authing"
             self.statusMsg = "Authenticating..."
-            self.client:send("reconnect_with_token", {
-                token     = self.token,
-                device_id = _G.DeviceId or ""
-            })
+            if self.authMode == "token" then
+                self.client:send("reconnect_with_token", {
+                    token     = self.token,
+                    device_id = _G.DeviceId or ""
+                })
+            else
+                self.client:send("login_with_device", {
+                    device_id = _G.DeviceId or ""
+                })
+            end
         end)
 
         self.client:on("disconnect", function()
             if self.status ~= "success" then
-                self:fallbackToLogin("Disconnected from server")
+                self:fallbackToNameEntry("Disconnected from server")
             end
         end)
 
@@ -88,25 +93,57 @@ function LoadingScreen.new()
             }
             _G.GameSocket = self.client
 
+            -- Refresh session.dat with the fresh token (device-login issues a new one too)
+            if data.token and data.token ~= "" then
+                love.filesystem.write("session.dat", json.encode({
+                    token    = data.token,
+                    username = data.username,
+                }))
+            end
+
             local ScreenManager = require('lib.screen_manager')
             ScreenManager.switch('menu')
         end)
 
         self.client:on("login_failed", function(data)
+            local reason = (data and data.reason) or "Login failed"
             love.filesystem.remove("session.dat")
-            self:fallbackToLogin(data.reason or "Session expired")
+
+            if reason == "no_device_profile" then
+                -- First-time device: go collect a name
+                self:gotoNameEntry()
+            elseif self.authMode == "token" then
+                -- Token was bad; retry with device login before giving up
+                self.authMode = "device"
+                self.status   = "authing"
+                self.statusMsg = "Authenticating..."
+                self.elapsed  = 0
+                self.client:send("login_with_device", {
+                    device_id = _G.DeviceId or ""
+                })
+            else
+                self:fallbackToNameEntry(reason)
+            end
         end)
 
         self.client:connect()
         self.client:setTimeout(32, 5000, 60000)
     end
 
-    function self:fallbackToLogin(reason)
+    function self:gotoNameEntry()
+        self.status = "name_entry"
+        if self.client then
+            pcall(function() self.client:disconnect() end)
+        end
+        local ScreenManager = require('lib.screen_manager')
+        ScreenManager.switch('name_entry')
+    end
+
+    function self:fallbackToNameEntry(reason)
         self.status    = "failed"
         self.statusMsg = reason
         love.timer.sleep(1.0)
-        local ScreenManager = require('lib.screen_manager')
-        ScreenManager.switch('login')
+        self:gotoNameEntry()
     end
 
     function self:update(dt)
@@ -118,7 +155,7 @@ function LoadingScreen.new()
             self.elapsed = self.elapsed + dt
             if self.elapsed >= self.TIMEOUT then
                 love.filesystem.remove("session.dat")
-                self:fallbackToLogin("Connection timed out")
+                self:fallbackToNameEntry("Connection timed out")
                 return
             end
         end
@@ -129,30 +166,6 @@ function LoadingScreen.new()
             self.dotCount = (self.dotCount + 1) % 4
         end
     end
-
-    -- Touch/click handling for "Switch Account" button
-    function self:mousepressed(x, y)
-        self._pressX = x
-        self._pressY = y
-    end
-
-    function self:mousereleased(x, y)
-        if self._switchRect then
-            local r = self._switchRect
-            if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
-                love.filesystem.remove("session.dat")
-                if self.client then
-                    pcall(function() self.client:disconnect() end)
-                end
-                local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('login')
-                return
-            end
-        end
-    end
-
-    function self:touchpressed(_, x, y)  self:mousepressed(x, y) end
-    function self:touchreleased(_, x, y) self:mousereleased(x, y) end
 
     function self:draw()
         local lg = love.graphics
@@ -180,24 +193,11 @@ function LoadingScreen.new()
             lg.pop()
         end
 
-        -- "Continuing as [username]" label
-        if self.storedUsername and (self.status == "connecting" or self.status == "authing") then
+        if self.storedUsername and self.authMode == "token"
+           and (self.status == "connecting" or self.status == "authing") then
             lg.setFont(Fonts.small)
             lg.setColor(0.7, 0.7, 0.75, 1)
             lg.printf("Continuing as " .. self.storedUsername, 0, H * 0.34, W, 'center')
-
-            -- "Not you? Switch Account" tappable text
-            lg.setFont(Fonts.tiny)
-            lg.setColor(0.5, 0.65, 1, 1)
-            local switchText = "Not you? Switch Account"
-            local tw = Fonts.tiny:getWidth(switchText)
-            local th = Fonts.tiny:getHeight()
-            local tx = math.floor((W - tw) / 2)
-            local ty = math.floor(H * 0.38)
-            lg.print(switchText, tx, ty)
-            self._switchRect = {x = tx, y = ty, w = tw, h = th}
-        else
-            self._switchRect = nil
         end
 
         local dots = string.rep(".", self.dotCount)
