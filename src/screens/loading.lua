@@ -146,16 +146,36 @@ function LoadingScreen.new()
         self:gotoNameEntry()
     end
 
+    function self:enterNoNetwork()
+        self.status    = "failed"
+        self.statusMsg = "Sin conexión a internet"
+        if self.client then
+            pcall(function() self.client:disconnect() end)
+            self.client = nil
+        end
+    end
+
+    function self:manualRetry()
+        if self.status ~= "failed" then return end
+        self.status    = "connecting"
+        self.statusMsg = "Connecting..."
+        self.elapsed   = 0
+        self:connectToServer()
+    end
+
     function self:update(dt)
         if self.client then
-            self.client:update()
+            local ok, err = pcall(function() self.client:update() end)
+            if not ok then
+                print("[LOADING] socket error: " .. tostring(err))
+                self:enterNoNetwork()
+            end
         end
 
         if self.status == "connecting" or self.status == "authing" then
             self.elapsed = self.elapsed + dt
             if self.elapsed >= self.TIMEOUT then
-                love.filesystem.remove("session.dat")
-                self:fallbackToNameEntry("Connection timed out")
+                self:enterNoNetwork()
                 return
             end
         end
@@ -164,6 +184,20 @@ function LoadingScreen.new()
         if self.dotTimer >= 0.4 then
             self.dotTimer = 0
             self.dotCount = (self.dotCount + 1) % 4
+        end
+    end
+
+    function self:mousereleased(_, _, button)
+        if button == 1 then self:manualRetry() end
+    end
+
+    function self:touchreleased()
+        self:manualRetry()
+    end
+
+    function self:keypressed(key)
+        if key == "return" or key == "space" then
+            self:manualRetry()
         end
     end
 
@@ -204,10 +238,15 @@ function LoadingScreen.new()
         lg.setFont(Fonts.medium)
         if self.status == "failed" then
             lg.setColor(1, 0.4, 0.4, 1)
+            lg.printf(self.statusMsg, 0, H * 0.56, W, 'center')
+            lg.setFont(Fonts.small)
+            lg.setColor(0.85, 0.85, 0.9, 1)
+            lg.printf("Toca para reintentar",
+                      0, H * 0.56 + Fonts.medium:getHeight() + 6 * sc, W, 'center')
         else
             lg.setColor(0.8, 0.8, 0.85, 1)
+            lg.printf(self.statusMsg .. dots, 0, H * 0.56, W, 'center')
         end
-        lg.printf(self.statusMsg .. dots, 0, H * 0.56, W, 'center')
     end
 
     return self

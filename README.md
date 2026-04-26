@@ -1,10 +1,10 @@
-# AutoChest
+# Tiny Tilts
 
 A 1v1 online autobattler (Clash Mini-style) built with Love2D/Lua.
 
 ## Game Overview
 
-AutoChest is a competitive autobattler where players draft cards during a 30-second setup phase to place and upgrade units on their side of the grid. Once both players are ready (or the timer expires), units battle automatically until one side is eliminated. The first player to lose 3 lives loses the match.
+Tiny Tilts is a competitive autobattler where players draft cards during a 30-second setup phase to place and upgrade units on their side of the grid. Once both players are ready (or the timer expires), units battle automatically until one side is eliminated. The first player to lose 3 lives loses the match.
 
 **Key Features**:
 - **Online multiplayer**: Cloud-hosted matchmaking server with authentication
@@ -190,7 +190,7 @@ autochest/
 
 ## Determinism & Fair Play
 
-AutoChest uses several techniques to ensure both players see identical battles:
+Tiny Tilts uses several techniques to ensure both players see identical battles:
 
 1. **Fixed timestep loop**: Battle advances in discrete 1/60s steps (independent of frame rate)
 2. **Deterministic pathfinding**: A* tie-breaks by row → col for reproducible paths

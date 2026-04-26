@@ -10,8 +10,6 @@ require('lib.audio')  -- overrides love.audio.play/stop with source-tracking wra
 -- Global audio manager (music + SFX)
 AudioManager = require('src.audio_manager')
 
-local UnitRegistry = require('src.unit_registry')
-
 -- Load screens
 local NameEntryScreen = require('src.screens.name_entry')
 local PreloadScreen   = require('src.screens.preload')
@@ -115,17 +113,7 @@ function love.load()
         game       = GameScreen,
         lobby      = LobbyScreen,
     }
-    -- First-time detection: if tutorial_done.dat doesn't exist, show tutorial before anything else.
-    -- Tutorial needs sprites, so load them synchronously in that path.
-    -- Otherwise go to preload (async sprite load + progress bar) → loading (auth) → menu.
-    local tutorialDone = love.filesystem.getInfo("tutorial_done.dat")
-    if not tutorialDone then
-        UnitRegistry.loadAllSprites()
-        -- Start game in tutorial mode (isOnline=false, playerRole=1, socket=nil, isSandbox=false, isTutorial=true)
-        ScreenManager.init(screens, 'game', false, 1, false, false, true)
-    else
-        ScreenManager.init(screens, 'preload')
-    end
+    ScreenManager.init(screens, 'preload')
 
     -- Track initial size
     lastWidth = windowWidth

@@ -299,10 +299,11 @@ function LobbyScreen.new()
             local ok, err = pcall(function() self.client:update() end)
             if not ok then
                 print("[LOBBY] Socket error: " .. tostring(err))
+                pcall(function() self.client:disconnect() end)
                 self.client = nil
                 _G.GameSocket = nil
-                local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('loading')
+                self.status    = "error"
+                self.statusMsg = "Sin conexión a internet"
             end
         end
 
@@ -553,7 +554,7 @@ function LobbyScreen.new()
         end
 
         -- ── Cancel button (matches JOIN button in ranking panel) ────────────
-        if self.status == "queueing" then
+        if self.status == "queueing" or self.status == "error" then
             local btnW     = math.floor(200 * sc)
             local sbtnH    = math.floor(72  * sc)
             local maxFloat = math.floor(6   * sc)
