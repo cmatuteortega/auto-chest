@@ -384,12 +384,12 @@ local DEATH_FPS = 12
 -- occludes farther units. The sprite vanishes once the one-shot completes; the corpse
 -- stays in grid.corpses for game-state queries (Tomb heal cells, Samurai vengeance).
 function Grid:drawCorpsesInRow(row, hideOwner)
-    local frames = self.deathFrames
-    if not frames or #frames == 0 then return end
+    local enemyFrames = self.deathFrames
+    local allyFrames  = self.deathAllyFrames or enemyFrames
+    if not enemyFrames or #enemyFrames == 0 then return end
 
     local lg      = love.graphics
-    local nFrames = #frames
-    local sample  = frames[1]
+    local sample  = enemyFrames[1]
     local sw, sh  = sample:getWidth(), sample:getHeight()
     local scale   = math.max(1, math.floor(Constants.CELL_SIZE / 16))
     local drawW   = sw * scale
@@ -400,6 +400,10 @@ function Grid:drawCorpsesInRow(row, hideOwner)
     for _, corpse in ipairs(self.corpses) do
         local cRow = corpse.deathRow or corpse.row
         if cRow == row and not (hideOwner and corpse.owner == hideOwner) then
+            -- Ally vs enemy is local-perspective: PERSPECTIVE matches the local player's owner id
+            local isAlly  = (corpse.owner == Constants.PERSPECTIVE)
+            local frames  = (isAlly and allyFrames and #allyFrames > 0) and allyFrames or enemyFrames
+            local nFrames = #frames
             local frameIdx = math.floor((corpse.deathAnimTime or 0) * DEATH_FPS) + 1
             if frameIdx <= nFrames then
                 local img  = frames[frameIdx]

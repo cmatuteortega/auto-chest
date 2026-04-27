@@ -64,7 +64,8 @@ function GameScreen.new()
 
         -- Create grid
         self.grid = Grid()
-        self.grid.deathFrames = UnitRegistry.deathFrames
+        self.grid.deathFrames     = UnitRegistry.deathFrames
+        self.grid.deathAllyFrames = UnitRegistry.deathAllyFrames
 
         -- Initialize SUIT
         self.suit = suit.new()
