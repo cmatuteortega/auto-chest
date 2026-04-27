@@ -129,8 +129,7 @@ function Catapult:explodeShot(grid)
                     unit:takeDamage(dmg)
                     AudioManager.playSFX("fireball.mp3")
                     if unit.isDead then
-                        local cell = grid:getCell(unit.col, unit.row)
-                        if cell then cell.occupied = false end
+                        grid:killUnit(unit)
                         self:onKill(unit)
                     end
                 end
@@ -245,8 +244,7 @@ function Catapult:update(dt, grid)
                         unit.hitCounter = math.max(0, unit.hitCounter - 1)
                     end
                     if unit.isDead then
-                        local cell = grid:getCell(unit.col, unit.row)
-                        if cell then cell.occupied = false end
+                        grid:killUnit(unit)
                         self:onKill(unit)
                     end
                 end

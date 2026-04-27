@@ -208,16 +208,7 @@ function BaseUnitRanged:onProjectileHit(projectile, grid)
         projectile.target:takeDamage(projectile.damage)
 
         if projectile.target.isDead then
-            local cell = grid:getCell(projectile.target.col, projectile.target.row)
-            if cell then cell.occupied = false end
-            local t = projectile.target
-            if t.isMoving and t.targetCol and t.targetRow then
-                grid:freeReservation(t.targetCol, t.targetRow)
-            end
-            local allUnits = grid:getAllUnits()
-            for _, u in ipairs(allUnits) do
-                if not u.isDead then u.path = nil end
-            end
+            grid:killUnit(projectile.target)
             if projectile.shooter then
                 projectile.shooter:onKill(projectile.target)
             end

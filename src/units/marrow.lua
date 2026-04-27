@@ -144,11 +144,7 @@ function Marrow:update(dt, grid)
             if not target.isDead then
                 target:takeDamage(lance.damage)
                 if target.isDead then
-                    local cell = grid:getCell(target.col, target.row)
-                    if cell then cell.occupied = false end
-                    for _, u in ipairs(grid:getAllUnits()) do
-                        if not u.isDead then u.path = nil end
-                    end
+                    grid:killUnit(target)
                     self:onKill(target)
                 end
             end

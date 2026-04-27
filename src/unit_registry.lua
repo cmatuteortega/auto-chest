@@ -590,6 +590,25 @@ function UnitRegistry.getLoadSteps()
         _shared.catapultProjImg  = loadProjectileImg("src/assets/particles/catapult-projectile.png")
     end)
 
+    -- Generic death animations (played by Grid:drawCorpsesInRow for any fallen unit, 0-indexed).
+    -- Two variants: enemy-perspective frames (death/) and ally-perspective frames (death-ally/).
+    table.insert(steps, function()
+        local function loadDeathSequence(pattern)
+            local frames = {}
+            for i = 0, 16 do
+                local path = string.format(pattern, i)
+                if love.filesystem.getInfo(path) then
+                    local img = love.graphics.newImage(path)
+                    img:setFilter('nearest', 'nearest')
+                    table.insert(frames, img)
+                end
+            end
+            return frames
+        end
+        _shared.deathFrames     = loadDeathSequence("src/assets/death/death-anim%d.png")
+        _shared.deathAllyFrames = loadDeathSequence("src/assets/death-ally/death-ally%d.png")
+    end)
+
     -- Faction icons
     table.insert(steps, function()
         UnitRegistry.factionIcons = {}
@@ -652,6 +671,13 @@ function UnitRegistry.finalizeSprites()
 
         if _shared.catapultProjImg and allSprites["catapult"] then
             allSprites["catapult"].catapultProjectile = _shared.catapultProjImg
+        end
+
+        if _shared.deathFrames then
+            UnitRegistry.deathFrames = _shared.deathFrames
+        end
+        if _shared.deathAllyFrames then
+            UnitRegistry.deathAllyFrames = _shared.deathAllyFrames
         end
     end
 

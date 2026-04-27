@@ -64,6 +64,8 @@ function GameScreen.new()
 
         -- Create grid
         self.grid = Grid()
+        self.grid.deathFrames     = UnitRegistry.deathFrames
+        self.grid.deathAllyFrames = UnitRegistry.deathAllyFrames
 
         -- Initialize SUIT
         self.suit = suit.new()
@@ -406,6 +408,10 @@ function GameScreen.new()
             end
         end
 
+        -- Drop the corpse list and any lingering ground effects (Migraine fire patches).
+        self.grid.corpses     = {}
+        self.grid.firePatches = {}
+
         -- Re-place all units at their pre-battle home positions
         for _, unit in ipairs(allUnits) do
             if unit.homeCol and unit.homeRow then
@@ -632,6 +638,7 @@ function GameScreen.new()
         -- Intermission countdown (bodies stay on board during this period)
         if self.state == "intermission" then
             self.intermissionTimer = self.intermissionTimer - dt
+            self.grid:tickDeathAnims(dt)
             if self.intermissionTimer <= 0 then
                 if self.isTutorial then
                     -- Tutorial ends after the first round regardless of who won
@@ -732,6 +739,10 @@ function GameScreen.new()
                     unit:update(FIXED_DT, self.grid)
                 end
 
+                -- Tick grid-owned ground effects (Migraine fire patches outlive their source)
+                self.grid:tickFirePatches(FIXED_DT)
+                self.grid:tickDeathAnims(FIXED_DT)
+
                 -- Check victory condition after each simulation step
                 local p1Alive = 0
                 local p2Alive = 0
@@ -757,6 +768,8 @@ function GameScreen.new()
             for _, unit in ipairs(allUnits) do
                 unit:update(dt, self.grid)
             end
+            self.grid:tickFirePatches(dt)
+            self.grid:tickDeathAnims(dt)
 
             -- Once animations finish, sync with opponent then handle lives
             if self:areAllAnimationsComplete() then

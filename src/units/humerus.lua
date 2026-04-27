@@ -94,8 +94,7 @@ function Humerus:attack(target, grid)
     self.hitCounter = self.hitCounter + 1
 
     if target.isDead then
-        local cell = grid:getCell(target.col, target.row)
-        if cell then cell.occupied = false end
+        grid:killUnit(target)
         self:onKill(target)
     end
 
@@ -116,8 +115,7 @@ function Humerus:attack(target, grid)
                     unit:takeDamage(cleaveDmg)
                     AudioManager.playSFX("big-hit.mp3")
                     if unit.isDead then
-                        local deadCell = grid:getCell(unit.col, unit.row)
-                        if deadCell then deadCell.occupied = false end
+                        grid:killUnit(unit)
                         self:onKill(unit)
                     end
                 end

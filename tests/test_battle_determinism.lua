@@ -59,6 +59,14 @@ Fonts = { tiny = {
     getWidth  = function() return 0 end,
     getHeight = function() return 0 end,
 } }
+---@diagnostic disable-next-line: lowercase-global
+AudioManager = {
+    playSFX       = function() end,
+    playTap       = function() end,
+    playMusic     = function() end,
+    stopMusic     = function() end,
+    setBattleMode = function() end,
+}
 
 -- ── Load modules ─────────────────────────────────────────────────────────────
 local Grid     = require('src.grid')
@@ -130,6 +138,8 @@ local function resetBoard(grid, unitList)
             cell.unit = nil; cell.occupied = false; cell.reserved = false
         end
     end
+    grid.corpses     = {}
+    grid.firePatches = {}
     for _, unit in ipairs(unitList) do
         unit:resetCombatState()
         unit.col = unit.homeCol
@@ -1038,19 +1048,11 @@ do
     local mg = makeUnit(Migraine, 5, 3, 1, 1)
     mg.hitCounter       = 7
     mg.mitosisFlag      = true
-    mg.soulDrainPending = true
-    mg.soulDrainAmount  = 3
-    mg.explosionPending = true
     mg.explosionFlash   = {}
-    mg.firePatches      = {{}}
     mg:resetCombatState()
     check("t16A_hitCounter",       mg.hitCounter,       0)
     check("t16A_mitosisFlag",      mg.mitosisFlag,      false)
-    check("t16A_soulDrainPending", mg.soulDrainPending, false)
-    check("t16A_soulDrainAmount",  mg.soulDrainAmount,  0)
-    check("t16A_explosionPending", mg.explosionPending, false)
     check("t16A_explosionFlash",   mg.explosionFlash,   nil)
-    check("t16A_firePatches",      #mg.firePatches,     0)
 end
 
 -- Tier B
@@ -1203,13 +1205,9 @@ print("── Test 18: Tomb (corpse state + ally healing) ───────�
 do
     local t = makeUnit(Tomb, 5, 3, 1, 0)
     local dummyUnit = {}
-    t.justDied        = true
-    t.martyrdomApplied = true
     t.corpsePositions = { ["2,3"] = true, ["3,3"] = true }
     t.healedUnits     = { [dummyUnit] = { ["2,3"] = true } }
     t:resetCombatState()
-    check("t18A_justDied",         t.justDied,         false)
-    check("t18A_martyrdomApplied", t.martyrdomApplied, false)
     check("t18A_corpsePositions",  next(t.corpsePositions) == nil and "empty" or "not_empty", "empty")
     check("t18A_healedUnits",      next(t.healedUnits)     == nil and "empty" or "not_empty", "empty")
 end

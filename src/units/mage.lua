@@ -163,8 +163,7 @@ function Mage:onProjectileHit(projectile, grid)
             if dist <= radius then
                 unit:takeDamage(dmg)
                 if unit.isDead then
-                    local cell = grid:getCell(unit.col, unit.row)
-                    if cell then cell.occupied = false end
+                    grid:killUnit(unit)
                     self:onKill(unit)
                 end
             end
@@ -218,8 +217,7 @@ function Mage:update(dt, grid)
                    and unit.col == patch.col and unit.row == patch.row then
                     unit:takeDamage(1)
                     if unit.isDead then
-                        local cell = grid:getCell(unit.col, unit.row)
-                        if cell then cell.occupied = false end
+                        grid:killUnit(unit)
                         self:onKill(unit)
                     end
                 end
