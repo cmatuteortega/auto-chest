@@ -88,8 +88,10 @@ function NameEntryScreen.new()
             _G.GameSocket = self.client
 
             love.timer.sleep(0.4)
-            local ScreenManager = require('lib.screen_manager')
-            ScreenManager.switch('menu')
+            TransitionManager.cloudCurtain(function()
+                local ScreenManager = require('lib.screen_manager')
+                ScreenManager.switch('menu')
+            end)
         end)
 
         self.client:on("register_failed", function(data)

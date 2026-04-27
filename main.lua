@@ -10,6 +10,9 @@ require('lib.audio')  -- overrides love.audio.play/stop with source-tracking wra
 -- Global audio manager (music + SFX)
 AudioManager = require('src.audio_manager')
 
+-- Global transition manager (cloud curtain between screens)
+TransitionManager = require('src.transition_manager')
+
 -- Load screens
 local NameEntryScreen = require('src.screens.name_entry')
 local PreloadScreen   = require('src.screens.preload')
@@ -60,6 +63,9 @@ function love.load()
 
     -- Initialize audio (loads sources, reads settings.json)
     AudioManager.init()
+
+    -- Load cloud curtain sprites used for inter-screen transitions
+    TransitionManager.init()
 
     -- Render to the full window (edge-to-edge); safe insets used only for UI margins
     local isMobile = love.system.getOS() == "Android" or love.system.getOS() == "iOS"
@@ -147,6 +153,7 @@ function love.update(dt)
 
     love.audio.update()
     ScreenManager.update(dt)
+    TransitionManager.update(dt)
 end
 
 function love.draw()
@@ -158,6 +165,9 @@ function love.draw()
 
     -- Draw current screen
     ScreenManager.draw()
+
+    -- Cloud curtain on top of everything (still inside Push virtual coords)
+    TransitionManager.draw()
 
     -- Finish rendering
     Push:finish()

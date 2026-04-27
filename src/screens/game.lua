@@ -1487,8 +1487,10 @@ function GameScreen.new()
                 if menuBtn.hit then
                     AudioManager.playTap()
                     Constants.PERSPECTIVE = 1
-                    local ScreenManager = require('lib.screen_manager')
-                    ScreenManager.switch('menu')
+                    TransitionManager.cloudCurtain(function()
+                        local ScreenManager = require('lib.screen_manager')
+                        ScreenManager.switch('menu')
+                    end)
                 end
             end
         elseif self.state == "finished" then
@@ -1522,8 +1524,10 @@ function GameScreen.new()
                         -- Keep socket alive so player can re-queue without re-logging in
                         _G.GameSocket = self.socket
                         Constants.PERSPECTIVE = 1
-                        local ScreenManager = require('lib.screen_manager')
-                        ScreenManager.switch('menu')
+                        TransitionManager.cloudCurtain(function()
+                            local ScreenManager = require('lib.screen_manager')
+                            ScreenManager.switch('menu')
+                        end)
                     else
                         print("Restart button clicked!")
                         self:init()

@@ -325,8 +325,12 @@ function LobbyScreen.new()
                 -- Update perspective constant
                 Constants.PERSPECTIVE = self.playerRole
 
-                local ScreenManager = require('lib.screen_manager')
-                ScreenManager.switch('game', true, self.playerRole, self.client)
+                local role   = self.playerRole
+                local client = self.client
+                TransitionManager.cloudCurtain(function()
+                    local ScreenManager = require('lib.screen_manager')
+                    ScreenManager.switch('game', true, role, client)
+                end)
             end
         end
 

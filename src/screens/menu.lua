@@ -3508,7 +3508,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             if sbtn and x >= sbtn.x and x <= sbtn.x + sbtn.w and
                         y >= sbtn.y and y <= sbtn.y + sbtn.h then
                 AudioManager.playTap()
-                self:startExitAnim(function()
+                TransitionManager.cloudCurtain(function()
                     local ScreenManager = require('lib.screen_manager')
                     ScreenManager.switch('game', false, 1, false, true)
                 end)
