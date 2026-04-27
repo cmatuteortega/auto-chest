@@ -692,6 +692,11 @@ function BaseUnit:onBattleStart(grid)
     -- Override in subclasses for battle start abilities
 end
 
+-- Hook: Called by Grid:killUnit while the dying unit is still on the grid.
+-- Override for synchronous death-triggered abilities (Migraine explosion, Tomb Martyrdom).
+function BaseUnit:onDeath(_grid)
+end
+
 -- Upgrade unit with specific upgrade choice (Clash Mini style)
 -- upgradeIndex: 1, 2, or 3 (which upgrade to apply)
 function BaseUnit:upgrade(upgradeIndex)
@@ -781,6 +786,7 @@ end
 function BaseUnit:resetCombatState()
     self.health             = self.maxHealth
     self.isDead             = false
+    self._deathProcessed    = false
     self.state              = "idle"
     self.target             = nil
     self.path               = nil
@@ -1129,20 +1135,7 @@ function BaseUnit:attack(target, grid)
     target:takeDamage(self:getDamage(grid))
     if self.hitSound then AudioManager.playSFX(self.hitSound) end
     if target.isDead then
-        local cell = grid:getCell(target.col, target.row)
-        if cell then
-            cell.occupied = false
-            cell.unit = nil
-        end
-        -- Free reservation if target died mid-movement (stale reserved flag would block pathfinding)
-        if target.isMoving and target.targetCol and target.targetRow then
-            grid:freeReservation(target.targetCol, target.targetRow)
-        end
-        -- Invalidate all cached paths so units recompute around the freed cell next frame
-        local allUnits = grid:getAllUnits()
-        for _, u in ipairs(allUnits) do
-            if not u.isDead then u.path = nil end
-        end
+        grid:killUnit(target)
         self:onKill(target)
     end
 end

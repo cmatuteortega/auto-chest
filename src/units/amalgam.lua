@@ -131,8 +131,7 @@ function Amalgam:doCorpseExplosion(grid)
             if dist <= radius then
                 unit:takeDamage(dmg)
                 if unit.isDead then
-                    local cell = grid:getCell(unit.col, unit.row)
-                    if cell then cell.occupied = false end
+                    grid:killUnit(unit)
                     self:onKill(unit)
                 end
             end

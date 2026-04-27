@@ -94,8 +94,7 @@ function Clavicula:doSpin(grid)
                 unit:takeDamage(dmg)
                 AudioManager.playSFX("slice.mp3")
                 if unit.isDead then
-                    local cell = grid:getCell(unit.col, unit.row)
-                    if cell then cell.occupied = false end
+                    grid:killUnit(unit)
                     self:onKill(unit)
                 end
                 healTotal = healTotal + dmg

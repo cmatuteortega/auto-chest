@@ -181,8 +181,7 @@ function Marc:update(dt, grid)
                     if not pierceTarget.isDead then
                         pierceTarget:takeDamage(projectile.damage)
                         if pierceTarget.isDead then
-                            local cell = grid:getCell(pierceTarget.col, pierceTarget.row)
-                            if cell then cell.occupied = false end
+                            grid:killUnit(pierceTarget)
                             self:onKill(pierceTarget)
                         end
                     end
@@ -191,8 +190,7 @@ function Marc:update(dt, grid)
                 if projectile.target and not projectile.target.isDead then
                     projectile.target:takeDamage(projectile.damage)
                     if projectile.target.isDead then
-                        local cell = grid:getCell(projectile.target.col, projectile.target.row)
-                        if cell then cell.occupied = false end
+                        grid:killUnit(projectile.target)
                         self:onKill(projectile.target)
                     end
                 end

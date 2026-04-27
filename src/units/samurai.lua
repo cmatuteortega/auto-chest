@@ -90,9 +90,8 @@ end
 function Samurai:update(dt, grid)
     -- Check for dead allies within 2-cell radius (Vengeance upgrade)
     if self:hasUpgrade(2) and grid then
-        local allUnits = grid:getAllUnits()
-        for _, unit in ipairs(allUnits) do
-            if unit ~= self and unit.owner == self.owner and unit.isDead then
+        for _, unit in ipairs(grid.corpses) do
+            if unit ~= self and unit.owner == self.owner then
                 local distance = math.sqrt((unit.col - self.col)^2 + (unit.row - self.row)^2)
                 if distance <= 2 then
                     -- Check if we've already counted this death

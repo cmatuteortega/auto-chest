@@ -1,5 +1,6 @@
 local Class = require('lib.classic')
 local Constants = require('src.constants')
+local BaseUnit = require('src.base_unit')
 
 local Grid = Class:extend()
 
@@ -24,6 +25,12 @@ function Grid:new()
 
     -- Highlighted cell (for touch/mouse input)
     self.highlightedCell = nil
+
+    -- Death registry: dead units by death order. Tomb / Samurai / future death anim read this.
+    self.corpses = {}
+
+    -- Ground effects (e.g. Migraine fire patches). Owned by Grid so they outlive their source unit.
+    self.firePatches = {}
 end
 
 -- Refresh grid dimensions from Constants (called on resize)
@@ -178,6 +185,70 @@ function Grid:isCellAvailable(col, row)
     return not cell.occupied and not cell.reserved
 end
 
+-- Centralized death: removes a unit from the grid, fires its onDeath hook,
+-- frees movement reservations, records the corpse, and invalidates cached paths.
+-- Idempotent — safe to call multiple times for the same unit.
+function Grid:killUnit(unit)
+    if unit._deathProcessed then return end
+    unit._deathProcessed = true
+
+    if unit.onDeath then unit:onDeath(self) end
+
+    local cell = self:getCell(unit.col, unit.row)
+    if cell and cell.unit == unit then
+        cell.occupied = false
+        cell.unit = nil
+    end
+
+    if unit.isMoving and unit.targetCol and unit.targetRow then
+        self:freeReservation(unit.targetCol, unit.targetRow)
+    end
+
+    -- Snapshot the death position so the corpse animation plays at the cell where the unit
+    -- fell, not wherever the (still-referenced) unit object happens to be later.
+    unit.deathCol      = unit.col
+    unit.deathRow      = unit.row
+    unit.deathAnimTime = 0
+
+    table.insert(self.corpses, unit)
+
+    for _, u in ipairs(self:getAllUnits()) do u.path = nil end
+end
+
+-- Advance death-animation timers on every corpse. Cosmetic only; uses real dt.
+function Grid:tickDeathAnims(dt)
+    for _, corpse in ipairs(self.corpses) do
+        corpse.deathAnimTime = (corpse.deathAnimTime or 0) + dt
+    end
+end
+
+-- Tick fire patches (Migraine Cursed Ground residue). Called from the battle update loop
+-- after the live-unit pass so freshly-emitted patches don't tick twice on their first frame.
+function Grid:tickFirePatches(dt)
+    for i = #self.firePatches, 1, -1 do
+        local patch = self.firePatches[i]
+        patch.timer       = patch.timer - dt
+        patch.damageTimer = patch.damageTimer - dt
+
+        if patch.damageTimer <= 0 then
+            patch.damageTimer = patch.damageTimer + 1
+            for _, unit in ipairs(self:getAllUnits()) do
+                if unit.owner ~= patch.owner and not unit.isDead
+                   and unit.col == patch.col and unit.row == patch.row then
+                    unit:takeDamage(1)
+                    if unit.isDead then
+                        self:killUnit(unit)
+                    end
+                end
+            end
+        end
+
+        if patch.timer <= 0 then
+            table.remove(self.firePatches, i)
+        end
+    end
+end
+
 function Grid:getAllUnits()
     local units = {}
     for row = 1, self.rows do
@@ -274,20 +345,14 @@ function Grid:draw(draggedUnit, hideOwner)
         end
     end
 
-    -- Draw dead units first so alive units render on top
-    for row = rowStart, rowEnd, rowStep do
-        for col = 1, self.cols do
-            local cell = self.cells[row][col]
-            if cell.unit and cell.unit ~= draggedUnit and cell.unit.isDead then
-                if not (hideOwner and cell.unit.owner == hideOwner) then
-                    cell.unit:draw()
-                end
-            end
-        end
-    end
+    -- Grid-owned ground effects (Migraine fire patches): top portion clipped above units
+    self:drawFirePatches("top")
 
-    -- Draw alive units on top
+    -- Interleave death animations with alive units row by row (far → near). Each row's
+    -- corpse anims are drawn before its alive units, so a near-row death animation that
+    -- extends upward correctly occludes units in farther rows from the camera POV.
     for row = rowStart, rowEnd, rowStep do
+        self:drawCorpsesInRow(row, hideOwner)
         for col = 1, self.cols do
             local cell = self.cells[row][col]
             if cell.unit and cell.unit ~= draggedUnit and not cell.unit.isDead then
@@ -298,6 +363,54 @@ function Grid:draw(draggedUnit, hideOwner)
         end
     end
 
+    -- Grid-owned ground effects: bottom portion clipped over units' feet
+    self:drawFirePatches("bottom")
+end
+
+-- Render fire patches owned by Grid. Called twice per frame: once with "top" before units
+-- (covers upper 3/4 of cell, behind units stepping through) and once with "bottom" after
+-- units (lower 1/4 overlays unit feet, matching the original Migraine-owned look).
+function Grid:drawFirePatches(clipMode)
+    for _, patch in ipairs(self.firePatches) do
+        if patch.draw then patch:draw(clipMode) end
+    end
+end
+
+local DEATH_FPS = 12
+
+-- Draw the generic death animation for any corpse on the given canonical row.
+-- Called from the row-by-row alive-unit loop so corpses inherit the same depth ordering
+-- (far rows drawn first, near rows on top) and a near-row death animation properly
+-- occludes farther units. The sprite vanishes once the one-shot completes; the corpse
+-- stays in grid.corpses for game-state queries (Tomb heal cells, Samurai vengeance).
+function Grid:drawCorpsesInRow(row, hideOwner)
+    local frames = self.deathFrames
+    if not frames or #frames == 0 then return end
+
+    local lg      = love.graphics
+    local nFrames = #frames
+    local sample  = frames[1]
+    local sw, sh  = sample:getWidth(), sample:getHeight()
+    local scale   = math.max(1, math.floor(Constants.CELL_SIZE / 16))
+    local drawW   = sw * scale
+    local drawH   = sh * scale
+    local offsetX = math.floor((Constants.CELL_SIZE - drawW) / 2)
+    local offsetY = math.floor(Constants.CELL_SIZE - drawH)
+
+    for _, corpse in ipairs(self.corpses) do
+        local cRow = corpse.deathRow or corpse.row
+        if cRow == row and not (hideOwner and corpse.owner == hideOwner) then
+            local frameIdx = math.floor((corpse.deathAnimTime or 0) * DEATH_FPS) + 1
+            if frameIdx <= nFrames then
+                local img  = frames[frameIdx]
+                local x, y = self:gridToWorld(corpse.deathCol or corpse.col, cRow)
+                lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
+                lg.draw(img, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
+                lg.setShader()
+            end
+        end
+    end
 end
 
 return Grid

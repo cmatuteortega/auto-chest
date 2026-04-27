@@ -16,10 +16,8 @@ function Tomb:new(row, col, owner, sprites)
     Tomb.super.new(self, row, col, owner, sprites, stats)
 
     -- Per-round state
-    self.justDied          = false   -- set in takeDamage, consumed in update
-    self.martyrdomApplied  = false
     -- corpsePositions: set of "col,row" strings for cells that held a corpse
-    -- We populate this each frame by scanning dead enemy+friendly units.
+    -- We populate this each frame by scanning grid.corpses.
     self.corpsePositions   = {}
     -- Track which units have already received the burst heal for a given corpse key
     -- healedUnits[unitRef][corpseKey] = true
@@ -52,11 +50,14 @@ function Tomb:new(row, col, owner, sprites)
     }
 end
 
--- Flag death so Martyrdom can fire in update() where grid is available.
-function Tomb:takeDamage(amount)
-    Tomb.super.takeDamage(self, amount)
-    if self.isDead and not self.martyrdomApplied then
-        self.justDied = true
+-- Martyrdom: apply ally ATK SPD buff synchronously while the dying Tomb is still on the grid.
+function Tomb:onDeath(grid)
+    if not self:hasUpgrade(2) then return end
+    for _, u in ipairs(grid:getAllUnits()) do
+        if u.owner == self.owner and not u.isDead and u ~= self then
+            u.tombMartyrdombuffTimer = 4.0
+            u:triggerBuffAnim()
+        end
     end
 end
 
@@ -80,34 +81,16 @@ function Tomb:update(dt, grid)
 
     if self.isDead then
         self.state = "dead"
-        -- Martyrdom: apply buff to allies on first update after death
-        if self.justDied and not self.martyrdomApplied then
-            self.martyrdomApplied = true
-            self.justDied = false
-            if self:hasUpgrade(2) then
-                local allUnits = grid:getAllUnits()
-                for _, u in ipairs(allUnits) do
-                    if u.owner == self.owner and not u.isDead then
-                        u.tombMartyrdombuffTimer = 4.0
-                        u:triggerBuffAnim()
-                    end
-                end
-            end
-        end
         return
     end
 
     local allUnits = grid:getAllUnits()
 
-    -- Step 1: Rebuild corpse position set from all dead units on the board.
-    -- We use "col,row" string keys so live units occupying the same cell
-    -- (after moveUnit overwrites cell.unit) don't erase the knowledge.
+    -- Step 1: Rebuild corpse position set from grid.corpses (fallen units, in death order).
     self.corpsePositions = {}
-    for _, u in ipairs(allUnits) do
-        if u.isDead then
-            local key = u.col .. "," .. u.row
-            self.corpsePositions[key] = true
-        end
+    for _, u in ipairs(grid.corpses) do
+        local key = u.col .. "," .. u.row
+        self.corpsePositions[key] = true
     end
 
     -- Step 2: Heal friendly units standing on a corpse cell.
@@ -143,8 +126,6 @@ end
 
 function Tomb:resetCombatState()
     Tomb.super.resetCombatState(self)
-    self.justDied         = false
-    self.martyrdomApplied = false
     self.corpsePositions  = {}
     self.healedUnits      = {}
 end

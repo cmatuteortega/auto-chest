@@ -195,8 +195,7 @@ function Bull:update(dt, grid)
                 enemy:takeDamage(chargeDmg)
 
                 if enemy.isDead then
-                    local cell = grid:getCell(enemy.col, enemy.row)
-                    if cell then cell.occupied = false end
+                    grid:killUnit(enemy)
                     self:onKill(enemy)
                 end
 
@@ -249,8 +248,7 @@ function Bull:update(dt, grid)
                    and unit.col == patch.col and unit.row == patch.row then
                     unit:takeDamage(1)
                     if unit.isDead then
-                        local cell = grid:getCell(unit.col, unit.row)
-                        if cell then cell.occupied = false end
+                        grid:killUnit(unit)
                         self:onKill(unit)
                     end
                 end
