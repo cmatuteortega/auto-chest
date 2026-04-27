@@ -212,7 +212,7 @@ function Grid:killUnit(unit)
 
     table.insert(self.corpses, unit)
 
-    for _, u in ipairs(self:getAllUnits()) do u.path = nil end
+    for _, u in ipairs(self:getAllUnits()) do u:invalidatePath() end
 end
 
 -- Advance death-animation timers on every corpse. Cosmetic only; uses real dt.
