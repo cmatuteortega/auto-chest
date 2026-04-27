@@ -924,13 +924,13 @@ function BaseUnit:update(dt, grid)
     if self.tauntedBy and not self.tauntedBy.isDead and self.tauntTimer > 0 then
         if self.target ~= self.tauntedBy then
             self.target = self.tauntedBy
-            self.path = nil  -- Recalculate path to taunter
+            self:invalidatePath()  -- Recalculate path to taunter (safe mid-tween)
         end
     else
         -- Find or validate target (normal behavior)
         if not self.target or self.target.isDead then
             self.target = self:findNearestEnemy(grid)
-            self.path = nil
+            self:invalidatePath()
         end
     end
 
@@ -1159,6 +1159,20 @@ function BaseUnit:startMeleeAnimation(target, grid)
     self.pendingAttackGrid   = grid
     local totalTicks        = math.floor(self.attackAnimDuration / _FIXED_DT + 0.5)
     self.pendingAttackDelay = math.max(1, math.floor(totalTicks * 2 / 3 + 0.5))
+end
+
+-- Invalidate the path safely. If a tween is in flight, preserve the in-flight
+-- waypoint so the unit finishes its current cell-step before re-pathing.
+-- Without this, regenerating the path mid-tween causes pathfinding to start
+-- from the stale self.col/self.row, leaving a stale waypoint that the unit
+-- consumes after committing to the original target — producing visible jumps
+-- to non-adjacent cells.
+function BaseUnit:invalidatePath()
+    if self.isMoving then
+        self.path = { { col = self.targetCol, row = self.targetRow } }
+    else
+        self.path = nil
+    end
 end
 
 -- Move along the current path (with tween animation)
