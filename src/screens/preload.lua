@@ -218,7 +218,9 @@ function PreloadScreen.new()
 
         if self.authStatus == "success" then
             self.advanced = true
-            ScreenManager.switch('menu')
+            TransitionManager.cloudCurtain(function()
+                ScreenManager.switch('menu')
+            end)
         end
     end
 
