@@ -1,9 +1,18 @@
 -- DeckManager – Persistent deck storage and runtime draw-pile management
 
-local json         = require('lib.json')
-local UnitRegistry = require('src.unit_registry')
+local json          = require('lib.json')
+local UnitRegistry  = require('src.unit_registry')
+local SpellRegistry = require('src.spell_registry')
 
 local DeckManager = {}
+
+-- Returns array of every card type that can appear in a deck (units + spells).
+local function getAllCardTypes()
+    local out = {}
+    for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do table.insert(out, u) end
+    for _, s in ipairs(SpellRegistry.getAllSpellTypes()) do table.insert(out, s) end
+    return out
+end
 
 local SAVE_FILE = "decks.json"
 local MAX_CARDS = 20
@@ -19,7 +28,7 @@ DeckManager._drawPile = {}
 
 local function emptyDeck(i)
     local counts = {}
-    for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do counts[u] = 0 end
+    for _, u in ipairs(getAllCardTypes()) do counts[u] = 0 end
     counts["boney"] = 1
     return { name = "Deck " .. i, counts = counts }
 end
@@ -65,7 +74,7 @@ function DeckManager.load()
             if not DeckManager._data.decks[i] then
                 DeckManager._data.decks[i] = emptyDeck(i)
             end
-            for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do
+            for _, u in ipairs(getAllCardTypes()) do
                 if not DeckManager._data.decks[i].counts[u] then
                     DeckManager._data.decks[i].counts[u] = 0
                 end
@@ -81,7 +90,7 @@ function DeckManager.load()
         if ok and data and data.decks and #data.decks == NUM_SLOTS then
             -- Ensure all unit type keys exist in each deck (forward-compat)
             for i = 1, NUM_SLOTS do
-                for _, u in ipairs(UnitRegistry.getAllUnitTypes()) do
+                for _, u in ipairs(getAllCardTypes()) do
                     if not data.decks[i].counts[u] then
                         data.decks[i].counts[u] = 0
                     end

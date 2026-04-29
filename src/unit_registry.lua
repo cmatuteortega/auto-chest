@@ -17,6 +17,8 @@ local Burrow    = require('src.units.burrow')
 local Catapult  = require('src.units.catapult')
 local Mend      = require('src.units.mend')
 
+local SpellRegistry = require('src.spell_registry')
+
 local UnitRegistry = {}
 
 -- Map of unit type names to their classes
@@ -42,7 +44,7 @@ UnitRegistry.unitClasses = {
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
+    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "arrows"} },
     { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
     { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow"} },
 }
@@ -66,6 +68,8 @@ UnitRegistry.factions = {
     sinner    = {"folk", "brawler"},
     catapult  = {"folk"},
     burrow    = {"monster", "brawler"},
+    -- Spells
+    arrows    = {"undead"},
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -90,6 +94,8 @@ UnitRegistry.rarity = {
     bonk      = "rare",
     sinner    = "epic",
     catapult  = "epic",
+    -- Spells
+    arrows    = "common",
 }
 
 -- Map of unit type names to their sprite paths
@@ -220,6 +226,17 @@ function UnitRegistry.getUnitDisplayInfo(unitType)
         return _displayInfoCache[unitType]
     end
 
+    if SpellRegistry.isSpell(unitType) then
+        local info = {
+            isSpell     = true,
+            description = SpellRegistry.descriptions[unitType],
+            displayName = SpellRegistry.displayNames[unitType],
+            upgrades    = {},
+        }
+        _displayInfoCache[unitType] = info
+        return info
+    end
+
     local UnitClass = UnitRegistry.unitClasses[unitType]
     local dummy = UnitClass(1, 1, 1, {})
 
@@ -260,6 +277,8 @@ UnitRegistry.unitCosts = {
     burrow   = 3,
     catapult = 2,
     mend   = 3,
+    -- Spells
+    arrows = 2,
 }
 
 -- Count fully-transparent rows at the top of a sprite file.
@@ -700,6 +719,9 @@ end
 
 -- Create a unit of the specified type
 function UnitRegistry.createUnit(unitType, row, col, owner, sprites)
+    if SpellRegistry.isSpell(unitType) then
+        error("createUnit called for spell type: " .. tostring(unitType))
+    end
     local UnitClass = UnitRegistry.unitClasses[unitType]
     if not UnitClass then
         error("Unknown unit type: " .. tostring(unitType))
@@ -735,7 +757,7 @@ UnitRegistry.MAX_CARD_COPIES = 4
 -- Rarity tiers for milestone unlock ordering (commons exhausted first, then rares, then epics)
 UnitRegistry.rarityTiers = {
     { tier = "common", units = { "mend", "amalgam", "mage", "bull" } },
-    { tier = "common", units = { "burrow" } },
+    { tier = "common", units = { "burrow", "arrows" } },
     { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
     { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }
