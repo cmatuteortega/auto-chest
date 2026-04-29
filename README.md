@@ -1,4 +1,4 @@
-# Tiny Tilts
+# Tiny Tilt: Tile Tactics
 
 A 1v1 online autobattler (Clash Mini-style) built with Love2D/Lua.
 
