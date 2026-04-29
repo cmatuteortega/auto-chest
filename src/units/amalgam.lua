@@ -1,5 +1,6 @@
-local BaseUnit  = require('src.base_unit')
-local Constants = require('src.constants')
+local BaseUnit      = require('src.base_unit')
+local Constants     = require('src.constants')
+local ExplosionAnim = require('src.explosion_anim')
 
 -- Sprite-pixel burst: 12 particles fly outward, sized to one sprite pixel (CELL_SIZE/16)
 local function drawPixelBurst(col, row, timer, duration, r, g, b)
@@ -50,6 +51,7 @@ function Amalgam:new(row, col, owner, sprites)
 
     -- Corpse Explosion: flag consumed in update() (no grid in takeDamage)
     self.corpseExplosionPending = false
+    self.explosions             = {}
 
     self.upgradeTree = {
         {
@@ -75,6 +77,7 @@ function Amalgam:resetCombatState()
     self.invulnTimer            = 0
     self.invulnCooldown         = 0
     self.corpseExplosionPending = false
+    self.explosions             = {}
 end
 
 function Amalgam:takeDamage(amount)
@@ -123,6 +126,9 @@ function Amalgam:doCorpseExplosion(grid)
     local dmg      = math.max(1, math.floor(self.damage * 2))
     local allUnits = grid:getAllUnits()
 
+    -- Visual: explosion plays at amalgam's cell.
+    table.insert(self.explosions, ExplosionAnim.new(self.col, self.row))
+
     for _, unit in ipairs(allUnits) do
         if unit.owner ~= self.owner and not unit.isDead then
             local dx   = unit.col - self.col
@@ -158,12 +164,16 @@ function Amalgam:update(dt, grid)
         self:doCorpseExplosion(grid)
     end
 
+    ExplosionAnim.tick(self.explosions, dt)
+
     Amalgam.super.update(self, dt, grid)
 end
 
 function Amalgam:drawAttackVisuals()
-    if not (self.invulnTimer > 0) then return end
-    drawPixelBurst(self.col, self.row, self.invulnTimer, INVULN_DURATION, 0.6, 0.9, 1)
+    if self.invulnTimer > 0 then
+        drawPixelBurst(self.col, self.row, self.invulnTimer, INVULN_DURATION, 0.6, 0.9, 1)
+    end
+    ExplosionAnim.drawAll(self.explosions, self.sprites)
 end
 
 return Amalgam

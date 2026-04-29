@@ -6,32 +6,45 @@ local SpellRegistry = {}
 
 -- Set membership: SpellRegistry.spellTypes[t] is truthy if t is a spell.
 SpellRegistry.spellTypes = {
-    arrows = true,
+    arrows   = true,
+    fireball = true,
 }
 
 -- Cost in coins per spell type (mirrors UnitRegistry.unitCosts shape).
 SpellRegistry.spellCosts = {
-    arrows = 2,
+    arrows   = 2,
+    fireball = 4,
 }
 
 SpellRegistry.rarity = {
-    arrows = "common",
+    arrows   = "common",
+    fireball = "common",
 }
 
 SpellRegistry.factions = {
-    arrows = {"undead"},
+    arrows   = {"undead"},
+    fireball = {"folk"},
 }
 
 SpellRegistry.spritePaths = {
-    arrows = { front = "src/assets/arrows/arrows.png" },
+    arrows   = { front = "src/assets/arrows/arrows.png" },
+    fireball = { front = "src/assets/fireball/fireball.png" },
 }
 
 SpellRegistry.descriptions = {
-    arrows = "Arrows fall from the sky in a 3x3 area, dealing 2 damage to each enemy in range.",
+    arrows   = "Arrows fall from the sky in a 3x3 area, dealing 2 damage to each enemy in range.",
+    fireball = "Hurls a fireball at one cell, dealing 5 damage and leaving a fire patch for 4 seconds.",
+}
+
+-- Area-of-effect footprint per spell (cols x rows centered on the target cell).
+SpellRegistry.aoeSize = {
+    arrows   = { cols = 3, rows = 3 },
+    fireball = { cols = 1, rows = 1 },
 }
 
 SpellRegistry.displayNames = {
-    arrows = "Arrows",
+    arrows   = "Arrows",
+    fireball = "Fireball",
 }
 
 local _spriteCache = nil
@@ -55,12 +68,26 @@ local function loadImage(path)
     return img
 end
 
+local function loadFrameSequence(pattern, indices)
+    local frames = {}
+    for _, i in ipairs(indices) do
+        local img = loadImage(pattern:format(i))
+        if img then table.insert(frames, img) end
+    end
+    if #frames == 0 then return nil end
+    return frames
+end
+
 function SpellRegistry.loadSprites()
     if _spriteCache then return _spriteCache end
     _spriteCache = {}
     for spellType, paths in pairs(SpellRegistry.spritePaths) do
         local front = loadImage(paths.front)
         _spriteCache[spellType] = { front = front }
+    end
+    -- Fireball flight frames (explosion frames now live in UnitRegistry's shared loader)
+    if _spriteCache.fireball then
+        _spriteCache.fireball.flightFrames = loadFrameSequence("src/assets/fireball/fireball%d.png", {1,2,3,4})
     end
     return _spriteCache
 end

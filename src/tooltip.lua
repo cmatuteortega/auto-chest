@@ -370,8 +370,12 @@ function Tooltip:drawCardTooltip()
     local cornerRadius = self.baseCornerRadius * Constants.SCALE
 
     -- Prepare text content
+    local SpellRegistry = require("src.spell_registry")
+    local isSpell = SpellRegistry.isSpell(self.card.unitType)
     local unitName = self:capitalize(self.card.unitType)
-    local passiveDescription = self:getPassiveDescription(self.card.unitType)
+    local passiveDescription = isSpell
+        and (SpellRegistry.descriptions[self.card.unitType] or "")
+        or  self:getPassiveDescription(self.card.unitType)
 
     -- Calculate text dimensions
     local textWidth = width - padding * 2
@@ -386,8 +390,9 @@ function Tooltip:drawCardTooltip()
     local passiveHeight = #passiveLines * Fonts.tiny:getHeight()
     local passiveMargin = 6 * Constants.SCALE
 
-    local statsHeight = Fonts.tiny:getHeight()
-    local statsMargin = 4 * Constants.SCALE
+    -- Spells have no stats row; collapse its height contribution.
+    local statsHeight = isSpell and 0 or Fonts.tiny:getHeight()
+    local statsMargin = isSpell and 0 or (4 * Constants.SCALE)
 
     -- Calculate total height
     local height = padding + nameHeight + separatorSpace + passiveHeight + passiveMargin + statsHeight + statsMargin + hintHeight + hintMargin + padding
@@ -449,12 +454,14 @@ function Tooltip:drawCardTooltip()
     love.graphics.printf(passiveDescription, x + padding, contentY, textWidth, "left")
     contentY = contentY + passiveHeight + passiveMargin
 
-    -- Draw base stats row
-    local info = self:getUnitBaseStats(self.card.unitType)
-    local statsText = "HP " .. info.hp .. "  ATK " .. info.atk .. "  SPD " .. string.format("%.1f", info.spd)
-    love.graphics.setColor(0.75, 0.85, 1, 1)
-    love.graphics.setFont(Fonts.tiny)
-    love.graphics.printf(statsText, x + padding, contentY, textWidth, "left")
+    -- Draw base stats row (units only — spells have no stats)
+    if not isSpell then
+        local info = self:getUnitBaseStats(self.card.unitType)
+        local statsText = "HP " .. info.hp .. "  ATK " .. info.atk .. "  SPD " .. string.format("%.1f", info.spd)
+        love.graphics.setColor(0.75, 0.85, 1, 1)
+        love.graphics.setFont(Fonts.tiny)
+        love.graphics.printf(statsText, x + padding, contentY, textWidth, "left")
+    end
 
     -- Draw placement hint at bottom
     love.graphics.setFont(Fonts.tiny)
