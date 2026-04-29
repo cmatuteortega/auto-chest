@@ -31,6 +31,9 @@ function Grid:new()
 
     -- Ground effects (e.g. Migraine fire patches). Owned by Grid so they outlive their source unit.
     self.firePatches = {}
+
+    -- Per-cell spawn/despawn animations queued whenever the board changes between phases.
+    self.cellEffects = {}
 end
 
 -- Refresh grid dimensions from Constants (called on resize)
@@ -357,7 +360,11 @@ function Grid:draw(draggedUnit, hideOwner)
             local cell = self.cells[row][col]
             if cell.unit and cell.unit ~= draggedUnit and not cell.unit.isDead then
                 if not (hideOwner and cell.unit.owner == hideOwner) then
-                    cell.unit:draw()
+                    -- Hide the unit while its spawn animation hasn't reached frame 4 yet,
+                    -- so the effect "uncovers" the unit instead of revealing it instantly.
+                    if not self:isUnitHiddenBySpawn(col, row) then
+                        cell.unit:draw()
+                    end
                 end
             end
         end
@@ -365,6 +372,66 @@ function Grid:draw(draggedUnit, hideOwner)
 
     -- Grid-owned ground effects: bottom portion clipped over units' feet
     self:drawFirePatches("bottom")
+end
+
+local CELL_EFFECT_FPS = 16
+local SPAWN_REVEAL_FRAME = 4  -- 1-indexed; unit becomes visible starting at this frame
+
+function Grid:addCellEffect(col, row, kind)
+    table.insert(self.cellEffects, { col = col, row = row, type = kind, time = 0 })
+end
+
+function Grid:isUnitHiddenBySpawn(col, row)
+    for _, fx in ipairs(self.cellEffects) do
+        if fx.type == "spawn" and fx.col == col and fx.row == row then
+            local idx = math.floor(fx.time * CELL_EFFECT_FPS) + 1
+            if idx < SPAWN_REVEAL_FRAME then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function Grid:tickCellEffects(dt)
+    for i = #self.cellEffects, 1, -1 do
+        local fx = self.cellEffects[i]
+        fx.time = fx.time + dt
+        local frames = (fx.type == "spawn") and self.spawnFrames or self.despawnFrames
+        local nFrames = (frames and #frames) or 0
+        if nFrames == 0 or math.floor(fx.time * CELL_EFFECT_FPS) >= nFrames then
+            table.remove(self.cellEffects, i)
+        end
+    end
+end
+
+function Grid:drawCellEffects()
+    if #self.cellEffects == 0 then return end
+    local lg = love.graphics
+    local scale = math.max(1, math.floor(Constants.CELL_SIZE / 16))
+    lg.setColor(1, 1, 1, 1)
+    lg.setShader(BaseUnit.getPaletteShader())
+    for _, fx in ipairs(self.cellEffects) do
+        local frames = (fx.type == "spawn") and self.spawnFrames or self.despawnFrames
+        if frames and #frames > 0 then
+            local idx = math.floor(fx.time * CELL_EFFECT_FPS) + 1
+            if idx <= #frames then
+                local img = frames[idx]
+                local sw, sh = img:getWidth(), img:getHeight()
+                local x, y = self:gridToWorld(fx.col, fx.row)
+                -- Match BaseUnit:draw() anchoring: horizontally centered, visual bottom
+                -- 3 sprite-pixels above the tile floor so the effect lines up with units.
+                -- Despawn frames carry ~14 transparent pixels of bottom padding; trim so
+                -- the visible baseline (not the canvas edge) anchors to the tile floor.
+                local BOTTOM_MARGIN = 3
+                local trimBottom = (fx.type == "despawn") and 14 or 0
+                local offsetX = math.floor((Constants.CELL_SIZE - sw * scale) / 2)
+                local offsetY = math.floor(Constants.CELL_SIZE - (sh - trimBottom + BOTTOM_MARGIN) * scale)
+                lg.draw(img, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
+            end
+        end
+    end
+    lg.setShader()
 end
 
 -- Render fire patches owned by Grid. Called twice per frame: once with "top" before units

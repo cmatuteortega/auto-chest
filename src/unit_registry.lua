@@ -648,6 +648,24 @@ function UnitRegistry.getLoadSteps()
         _shared.deathAllyFrames = loadDeathSequence("src/assets/death-ally/death-ally%d.png")
     end)
 
+    -- Cell spawn / despawn effects (played when a board cell changes between setup and battle).
+    table.insert(steps, function()
+        local function loadAnimSequence(pattern)
+            local frames = {}
+            for i = 0, 31 do
+                local path = string.format(pattern, i)
+                if love.filesystem.getInfo(path) then
+                    local img = love.graphics.newImage(path)
+                    img:setFilter('nearest', 'nearest')
+                    table.insert(frames, img)
+                end
+            end
+            return frames
+        end
+        _shared.spawnFrames   = loadAnimSequence("src/assets/spawn/spawn%d.png")
+        _shared.despawnFrames = loadAnimSequence("src/assets/despawn/despawn%d.png")
+    end)
+
     -- Faction icons
     table.insert(steps, function()
         UnitRegistry.factionIcons = {}
@@ -718,6 +736,12 @@ function UnitRegistry.finalizeSprites()
         end
         if _shared.deathAllyFrames then
             UnitRegistry.deathAllyFrames = _shared.deathAllyFrames
+        end
+        if _shared.spawnFrames then
+            UnitRegistry.spawnFrames = _shared.spawnFrames
+        end
+        if _shared.despawnFrames then
+            UnitRegistry.despawnFrames = _shared.despawnFrames
         end
     end
 

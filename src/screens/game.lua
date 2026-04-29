@@ -83,6 +83,8 @@ function GameScreen.new()
         self.grid = Grid()
         self.grid.deathFrames     = UnitRegistry.deathFrames
         self.grid.deathAllyFrames = UnitRegistry.deathAllyFrames
+        self.grid.spawnFrames     = UnitRegistry.spawnFrames
+        self.grid.despawnFrames   = UnitRegistry.despawnFrames
 
         -- Initialize SUIT
         self.suit = suit.new()
@@ -447,11 +449,40 @@ function GameScreen.new()
         self.battleAccumulator = 0
         self.battleStepCount   = 0
 
+        -- Snapshot the visible board so we can diff after opponent placements are applied
+        -- and queue per-cell spawn / despawn animations for any cell that changed.
+        local boardSnapshot = {}
+        for row = 1, self.grid.rows do
+            boardSnapshot[row] = {}
+            for col = 1, self.grid.cols do
+                local u = self.grid.cells[row][col].unit
+                if u then
+                    boardSnapshot[row][col] = { unitType = u.unitType, owner = u.owner }
+                end
+            end
+        end
+
         -- Apply all buffered opponent moves now that battle is starting
         for _, msg in ipairs(self.pendingOpponentMsgs) do
             self:applyOpponentMsg(msg)
         end
         self.pendingOpponentMsgs = {}
+
+        for row = 1, self.grid.rows do
+            for col = 1, self.grid.cols do
+                local before = boardSnapshot[row][col]
+                local after  = self.grid.cells[row][col].unit
+                if not before and after then
+                    self.grid:addCellEffect(col, row, "spawn")
+                elseif before and not after then
+                    self.grid:addCellEffect(col, row, "despawn")
+                elseif before and after then
+                    if before.unitType ~= after.unitType or before.owner ~= after.owner then
+                        self.grid:addCellEffect(col, row, "spawn")
+                    end
+                end
+            end
+        end
 
         -- Validate board sync with opponent (both clients compute the same hash if in sync)
         if self.isOnline then
@@ -527,6 +558,19 @@ function GameScreen.new()
         -- Use the snapshot taken at battle start (reliable even if units left the grid mid-battle)
         local allUnits = self.battleUnitsSnapshot
 
+        -- Snapshot end-of-battle board (live units in their final positions) so we can
+        -- diff against the post-reset board and queue spawn/despawn cell animations.
+        local boardSnapshot = {}
+        for row = 1, self.grid.rows do
+            boardSnapshot[row] = {}
+            for col = 1, self.grid.cols do
+                local u = self.grid.cells[row][col].unit
+                if u then
+                    boardSnapshot[row][col] = { unitType = u.unitType, owner = u.owner }
+                end
+            end
+        end
+
         -- Clear the grid entirely
         for row = 1, self.grid.rows do
             for col = 1, self.grid.cols do
@@ -540,6 +584,7 @@ function GameScreen.new()
         -- Drop the corpse list and any lingering ground effects (Migraine fire patches).
         self.grid.corpses     = {}
         self.grid.firePatches = {}
+        self.grid.cellEffects = {}
 
         -- Spells never persist between rounds.
         self.spellPlacements    = {}
@@ -552,6 +597,23 @@ function GameScreen.new()
                 unit.row = unit.homeRow
                 unit:resetCombatState()
                 self.grid:placeUnit(unit.homeCol, unit.homeRow, unit)
+            end
+        end
+
+        -- Diff end-of-battle vs. start-of-setup boards and queue cell effects.
+        for row = 1, self.grid.rows do
+            for col = 1, self.grid.cols do
+                local before = boardSnapshot[row][col]
+                local after  = self.grid.cells[row][col].unit
+                if not before and after then
+                    self.grid:addCellEffect(col, row, "spawn")
+                elseif before and not after then
+                    self.grid:addCellEffect(col, row, "despawn")
+                elseif before and after then
+                    if before.unitType ~= after.unitType or before.owner ~= after.owner then
+                        self.grid:addCellEffect(col, row, "spawn")
+                    end
+                end
             end
         end
 
@@ -748,6 +810,9 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- Cosmetic per-cell spawn/despawn animations advance in real dt across every state.
+        self.grid:tickCellEffects(dt)
+
         -- Camera shift: grid slides to vertical center during battle, returns for setup UI
         local gridCenterY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
         local cameraShiftTarget = 0
@@ -1089,6 +1154,7 @@ function GameScreen.new()
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
+        self.grid:drawCellEffects()
 
         -- Draw own spell markers during setup/pre-battle (opponent markers stay hidden).
         if (self.state == "setup" or self.state == "pre_battle")
