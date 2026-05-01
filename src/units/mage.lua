@@ -34,6 +34,9 @@ end
 
 local Mage = BaseUnitRanged:extend()
 
+-- Fireball flight speed in cells/sec — heavier and slower than a regular arrow.
+local FIREBALL_SPEED = 6
+
 function Mage:new(row, col, owner, sprites)
     local stats = {
         health          = 9,
@@ -42,7 +45,7 @@ function Mage:new(row, col, owner, sprites)
         attackSpeed     = 0.55,
         moveSpeed       = 1,
         attackRange     = 3,
-        projectileSpeed = 0.25,
+        projectileSpeed = 12,  -- cells/second
         unitType        = "mage"
     }
 
@@ -130,7 +133,10 @@ function Mage:attack(target, grid)
         local arrow = self.arrows[#self.arrows]
         arrow.isFireball = true
         arrow.damage     = math.max(1, math.floor(self.damage * 2))
-        arrow.duration   = 0.5
+        local dCol = arrow.targetCol - arrow.startCol
+        local dRow = arrow.targetRow - arrow.startRow
+        local dist = math.sqrt(dCol * dCol + dRow * dRow)
+        arrow.duration   = math.max(0.01, dist / FIREBALL_SPEED)
         arrow.progress   = 0  -- restart flight with fireball duration
         arrow.animTime   = 0
         arrow.rotation   = 0

@@ -13,7 +13,7 @@ function Marrow:new(row, col, owner, sprites)
         attackSpeed = 1.05,      -- 1 attack per second
         moveSpeed = 1,        -- 1 cell per second
         attackRange = 3,      -- 3 cells range
-        projectileSpeed = 0.2, -- Arrow flight time
+        projectileSpeed = 12, -- Arrow flight speed (cells/second)
         unitType = "marrow"
     }
 

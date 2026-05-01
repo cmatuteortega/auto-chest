@@ -20,14 +20,16 @@ RANGED-SPECIFIC FEATURES:
 RANGED STATS:
 -------------
 - attackRange: Manhattan distance for attacks (default 3 for most ranged units)
-- projectileSpeed: Flight time in seconds (default 0.2)
+- projectileSpeed: Flight speed in cells/second (default 12). Per-projectile
+  duration is computed at fire time as Euclidean distance / projectileSpeed.
 - baseProjectileSpeed: Stored for upgrades that modify projectile speed
 
 UPGRADE CONSIDERATIONS FOR RANGED UNITS:
 ----------------------------------------
 When implementing upgrades for ranged units, consider:
 
-1. PROJECTILE SPEED: Modify self.projectileSpeed in update() based on hasUpgrade()
+1. PROJECTILE SPEED: Modify self.projectileSpeed (cells/sec) in update()
+   based on hasUpgrade(). Higher = faster.
 2. ATTACK RANGE: Can be modified via onApply or checked dynamically
 3. DAMAGE: Override getDamage() - projectile captures damage at fire time
 4. ON-HIT EFFECTS: Projectile stores shooter reference, onKill() is called properly
@@ -76,8 +78,8 @@ function BaseUnitRanged:new(row, col, owner, sprites, stats)
 
     -- Ranged unit specific properties
     self.arrows = {}  -- Array of active projectiles
-    self.projectileSpeed = stats.projectileSpeed or 0.2  -- Flight time in seconds
-    self.baseProjectileSpeed = stats.projectileSpeed or 0.2  -- Store base for upgrades
+    self.projectileSpeed = stats.projectileSpeed or 12  -- Flight speed in cells/second
+    self.baseProjectileSpeed = stats.projectileSpeed or 12  -- Store base for upgrades
     self.projectileSprite      = sprites and sprites.projectile or nil
     self.projectileAngleOffset = sprites and sprites.projectileAngleOffset or 0
 end
@@ -167,14 +169,21 @@ end
 
 -- Create a projectile (can be overridden for custom projectile properties)
 function BaseUnitRanged:createProjectile(target, grid)
-    -- Units only attack when stationary, so use current position
+    -- Units only attack when stationary, so use current position.
+    -- Duration is distance-based: closer targets are hit sooner than far ones.
+    local dCol = target.col - self.col
+    local dRow = target.row - self.row
+    local dist = math.sqrt(dCol * dCol + dRow * dRow)
+    local duration = (self.projectileSpeed > 0) and (dist / self.projectileSpeed) or 0.01
+    if duration < 0.01 then duration = 0.01 end
+
     return {
         startCol = self.col,
         startRow = self.row,
         targetCol = target.col,
         targetRow = target.row,
         progress = 0,
-        duration = self.projectileSpeed,
+        duration = duration,
         target = target,
         damage = self:getDamage(grid),  -- Use getDamage() for passive abilities
         shooter = self  -- Reference to unit that shot this projectile (for onKill callback)

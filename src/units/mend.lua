@@ -16,7 +16,7 @@ function Mend:new(row, col, owner, sprites)
         attackSpeed     = 0.8,
         moveSpeed       = 1,
         attackRange     = 3,
-        projectileSpeed = 0.2,
+        projectileSpeed = 12,  -- cells/second
         unitType        = "mend"
     }
 
