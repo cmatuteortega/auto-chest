@@ -8,6 +8,9 @@ local Tooltip = require('src.tooltip')
 local json = require('lib.json')
 local DeckManager = require('src.deck_manager')
 local BaseUnit = require('src.base_unit')
+local SpellRegistry = require('src.spell_registry')
+local ArrowsSpell = require('src.spells.arrows')
+local FireballSpell = require('src.spells.fireball')
 
 local GameScreen = {}
 
@@ -55,6 +58,20 @@ function GameScreen.new()
         -- Load sprites for all unit types
         self.sprites = UnitRegistry.loadAllSprites()
 
+        -- Load spell sprites (parallel registry; markers + projectile shared)
+        self.spellSprites = SpellRegistry.loadSprites()
+        -- Hand the shared arrow particle to the spell so its draw call has it
+        self.arrowParticleSprite = self.sprites.marrow and self.sprites.marrow.projectile
+                                or self.sprites.marc   and self.sprites.marc.projectile
+
+        -- Corner indicator sprites (AOE preview + unit snap-cell hint)
+        self.cornerSprites = {}
+        for _, k in ipairs({"topleft", "topright", "bottomleft", "bottomright"}) do
+            local img = love.graphics.newImage("src/assets/ui/" .. k .. ".png")
+            img:setFilter('nearest', 'nearest')
+            self.cornerSprites[k] = img
+        end
+
         -- Load battle background sprite
         self.bgSprite = love.graphics.newImage('src/assets/background_battle.png')
         self.bgOffsetY = 273 -- adjust to shift the background up (negative) or down (positive)
@@ -66,6 +83,8 @@ function GameScreen.new()
         self.grid = Grid()
         self.grid.deathFrames     = UnitRegistry.deathFrames
         self.grid.deathAllyFrames = UnitRegistry.deathAllyFrames
+        self.grid.spawnFrames     = UnitRegistry.spawnFrames
+        self.grid.despawnFrames   = UnitRegistry.despawnFrames
 
         -- Initialize SUIT
         self.suit = suit.new()
@@ -159,6 +178,17 @@ function GameScreen.new()
         self.exitingCards = {}
         self.draggedCard = nil
 
+        -- Spells: setup-phase placements + battle-time active effects
+        self.spellPlacements    = {}   -- array of {placementId, spellType, col, row, owner}
+        self.activeSpellEffects = {}   -- array of in-flight spell effect objects
+        self._spellPlacementCounter = 0
+        self.draggedSpell           = nil
+        self.draggedSpellOriginalCol = nil
+        self.draggedSpellOriginalRow = nil
+        self.draggedSpellOffsetX    = 0
+        self.draggedSpellOffsetY    = 0
+        self.pressedSpell           = nil
+
         -- Deck draw pile (populated from DeckManager; false = fallback to random)
         self.usingDeck      = DeckManager.initDrawPile()
         self.drawnCardTypes = {}
@@ -204,6 +234,64 @@ function GameScreen.new()
         if self.isOnline and self.socket then
             self.socket:send("relay", data)
         end
+    end
+
+    -- Draw corner-bracket indicators around a (cols x rows) footprint centered on (col, row).
+    -- Used for spell AOE previews and unit snap-cell hints. Footprint may extend off-grid
+    -- (the corners are clamped against the grid bounds so they always fall on visible cells).
+    function self:drawCellIndicator(col, row, footprintCols, footprintRows)
+        local lg = love.graphics
+        if not self.cornerSprites then return end
+        footprintCols = footprintCols or 1
+        footprintRows = footprintRows or 1
+
+        local halfC0 = math.floor((footprintCols - 1) / 2)
+        local halfC1 = math.ceil((footprintCols - 1) / 2)
+        local halfR0 = math.floor((footprintRows - 1) / 2)
+        local halfR1 = math.ceil((footprintRows - 1) / 2)
+        local leftCol   = math.max(1, col - halfC0)
+        local rightCol  = math.min(self.grid.cols, col + halfC1)
+        local topRow    = math.max(1, row - halfR0)
+        local bottomRow = math.min(self.grid.rows, row + halfR1)
+
+        -- Each cell's top-left in screen space; perspective flip is folded in.
+        local cs = Constants.CELL_SIZE
+        local x1, y1 = self.grid:gridToWorld(leftCol,  topRow)
+        local x2, y2 = self.grid:gridToWorld(rightCol, bottomRow)
+        local minX = math.min(x1, x2)
+        local maxX = math.max(x1, x2) + cs
+        local minY = math.min(y1, y2)
+        local maxY = math.max(y1, y2) + cs
+
+        local scale = cs / 16
+        local tl = self.cornerSprites.topleft
+        local tr = self.cornerSprites.topright
+        local bl = self.cornerSprites.bottomleft
+        local br = self.cornerSprites.bottomright
+        if not (tl and tr and bl and br) then return end
+
+        lg.setColor(1, 1, 1, 1)
+        local sw, sh = tl:getWidth(), tl:getHeight()
+        lg.draw(tl, minX, minY, 0, scale, scale, 0, 0)
+        lg.draw(tr, maxX, minY, 0, scale, scale, sw, 0)
+        lg.draw(bl, minX, maxY, 0, scale, scale, 0, sh)
+        lg.draw(br, maxX, maxY, 0, scale, scale, sw, sh)
+    end
+
+    -- Find this player's own spell placement at (col, row), or nil.
+    function self:findOwnSpellAt(col, row)
+        for i, p in ipairs(self.spellPlacements) do
+            if p.owner == self.playerRole and p.col == col and p.row == row then
+                return p, i
+            end
+        end
+        return nil, nil
+    end
+
+    function self:nextSpellPlacementId()
+        self._spellPlacementCounter = self._spellPlacementCounter + 1
+        -- Tag with playerRole so IDs from both clients never collide.
+        return self.playerRole * 1000000 + self._spellPlacementCounter
     end
 
     function self:registerNetworkCallbacks()
@@ -275,13 +363,30 @@ function GameScreen.new()
         elseif t == "upgrade_unit" then
             local unit = self.grid:getUnitAtCell(msg.col, msg.row)
             if unit then unit:upgrade(msg.upgradeIndex) end
+        elseif t == "place_spell" then
+            table.insert(self.spellPlacements, {
+                placementId = msg.placementId,
+                spellType   = msg.spellType,
+                col         = msg.col,
+                row         = msg.row,
+                owner       = msg.owner,
+            })
+        elseif t == "move_spell" then
+            for _, p in ipairs(self.spellPlacements) do
+                if p.placementId == msg.placementId then
+                    p.col = msg.toCol
+                    p.row = msg.toRow
+                    break
+                end
+            end
         end
     end
 
     function self:handleNetworkMessage(msg)
         local t = msg.type
 
-        if t == "place_unit" or t == "remove_unit" or t == "upgrade_unit" then
+        if t == "place_unit" or t == "remove_unit" or t == "upgrade_unit"
+           or t == "place_spell" or t == "move_spell" then
             -- During setup/intermission/pre_battle, buffer opponent moves so their
             -- positions stay frozen at last-round home spots until battle starts.
             local inSetup = self.state == "setup" or self.state == "intermission"
@@ -344,11 +449,40 @@ function GameScreen.new()
         self.battleAccumulator = 0
         self.battleStepCount   = 0
 
+        -- Snapshot the visible board so we can diff after opponent placements are applied
+        -- and queue per-cell spawn / despawn animations for any cell that changed.
+        local boardSnapshot = {}
+        for row = 1, self.grid.rows do
+            boardSnapshot[row] = {}
+            for col = 1, self.grid.cols do
+                local u = self.grid.cells[row][col].unit
+                if u then
+                    boardSnapshot[row][col] = { unitType = u.unitType, owner = u.owner }
+                end
+            end
+        end
+
         -- Apply all buffered opponent moves now that battle is starting
         for _, msg in ipairs(self.pendingOpponentMsgs) do
             self:applyOpponentMsg(msg)
         end
         self.pendingOpponentMsgs = {}
+
+        for row = 1, self.grid.rows do
+            for col = 1, self.grid.cols do
+                local before = boardSnapshot[row][col]
+                local after  = self.grid.cells[row][col].unit
+                if not before and after then
+                    self.grid:addCellEffect(col, row, "spawn")
+                elseif before and not after then
+                    self.grid:addCellEffect(col, row, "despawn")
+                elseif before and after then
+                    if before.unitType ~= after.unitType or before.owner ~= after.owner then
+                        self.grid:addCellEffect(col, row, "spawn")
+                    end
+                end
+            end
+        end
 
         -- Validate board sync with opponent (both clients compute the same hash if in sync)
         if self.isOnline then
@@ -392,11 +526,50 @@ function GameScreen.new()
                 end
             end
         end
+
+        -- Spawn spell effects from setup-phase placements (deterministic order via placementId).
+        if #self.spellPlacements > 0 then
+            table.sort(self.spellPlacements, function(a, b)
+                return (a.placementId or 0) < (b.placementId or 0)
+            end)
+            self.activeSpellEffects = {}
+            for _, p in ipairs(self.spellPlacements) do
+                if p.spellType == "arrows" then
+                    local sprites = { arrow = self.arrowParticleSprite }
+                    local fx = ArrowsSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
+                elseif p.spellType == "fireball" then
+                    local fbSprites = self.spellSprites and self.spellSprites.fireball
+                    local catSprites = self.sprites.catapult
+                    local sprites = {
+                        flightFrames    = fbSprites and fbSprites.flightFrames,
+                        explosionFrames = catSprites and catSprites.explosionFrames,
+                        fireFrames      = catSprites and catSprites.fireFrames,
+                    }
+                    local fx = FireballSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
+                end
+            end
+            self.spellPlacements = {}
+        end
     end
 
     function self:resetRound()
         -- Use the snapshot taken at battle start (reliable even if units left the grid mid-battle)
         local allUnits = self.battleUnitsSnapshot
+
+        -- Snapshot end-of-battle board (live units in their final positions) so we can
+        -- diff against the post-reset board and queue spawn/despawn cell animations.
+        local boardSnapshot = {}
+        for row = 1, self.grid.rows do
+            boardSnapshot[row] = {}
+            for col = 1, self.grid.cols do
+                local u = self.grid.cells[row][col].unit
+                if u then
+                    boardSnapshot[row][col] = { unitType = u.unitType, owner = u.owner }
+                end
+            end
+        end
 
         -- Clear the grid entirely
         for row = 1, self.grid.rows do
@@ -411,6 +584,11 @@ function GameScreen.new()
         -- Drop the corpse list and any lingering ground effects (Migraine fire patches).
         self.grid.corpses     = {}
         self.grid.firePatches = {}
+        self.grid.cellEffects = {}
+
+        -- Spells never persist between rounds.
+        self.spellPlacements    = {}
+        self.activeSpellEffects = {}
 
         -- Re-place all units at their pre-battle home positions
         for _, unit in ipairs(allUnits) do
@@ -419,6 +597,23 @@ function GameScreen.new()
                 unit.row = unit.homeRow
                 unit:resetCombatState()
                 self.grid:placeUnit(unit.homeCol, unit.homeRow, unit)
+            end
+        end
+
+        -- Diff end-of-battle vs. start-of-setup boards and queue cell effects.
+        for row = 1, self.grid.rows do
+            for col = 1, self.grid.cols do
+                local before = boardSnapshot[row][col]
+                local after  = self.grid.cells[row][col].unit
+                if not before and after then
+                    self.grid:addCellEffect(col, row, "spawn")
+                elseif before and not after then
+                    self.grid:addCellEffect(col, row, "despawn")
+                elseif before and after then
+                    if before.unitType ~= after.unitType or before.owner ~= after.owner then
+                        self.grid:addCellEffect(col, row, "spawn")
+                    end
+                end
             end
         end
 
@@ -489,11 +684,20 @@ function GameScreen.new()
         local cardY = self.cardY
 
         for i, unitType in ipairs(unitTypes) do
-            local x      = startX + (i - 1) * (cardWidth + cardSpacing)
-            local sprite     = self.sprites[unitType].front
-            local trimBottom = self.sprites[unitType].frontTrimBottom or 0
-            local card       = Card(x, cardY, sprite, i, unitType, trimBottom)
-            card.upFrames    = self.sprites[unitType] and self.sprites[unitType].upFrames
+            local x = startX + (i - 1) * (cardWidth + cardSpacing)
+            local sprite, trimBottom, upFrames
+            if SpellRegistry.isSpell(unitType) then
+                local sp = self.spellSprites[unitType]
+                sprite     = sp and sp.front
+                trimBottom = 0
+                upFrames   = nil
+            else
+                sprite     = self.sprites[unitType].front
+                trimBottom = self.sprites[unitType].frontTrimBottom or 0
+                upFrames   = self.sprites[unitType] and self.sprites[unitType].upFrames
+            end
+            local card    = Card(x, cardY, sprite, i, unitType, trimBottom)
+            card.upFrames = upFrames
             table.insert(self.cards, card)
         end
 
@@ -606,6 +810,9 @@ function GameScreen.new()
     end
 
     function self:update(dt)
+        -- Cosmetic per-cell spawn/despawn animations advance in real dt across every state.
+        self.grid:tickCellEffects(dt)
+
         -- Camera shift: grid slides to vertical center during battle, returns for setup UI
         local gridCenterY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
         local cameraShiftTarget = 0
@@ -739,6 +946,15 @@ function GameScreen.new()
                     unit:update(FIXED_DT, self.grid)
                 end
 
+                -- Tick active spell effects (deterministic, fixed-DT step)
+                for i = #self.activeSpellEffects, 1, -1 do
+                    local fx = self.activeSpellEffects[i]
+                    fx:update(FIXED_DT, self.grid)
+                    if fx.complete then
+                        table.remove(self.activeSpellEffects, i)
+                    end
+                end
+
                 -- Tick grid-owned ground effects (Migraine fire patches outlive their source)
                 self.grid:tickFirePatches(FIXED_DT)
                 self.grid:tickDeathAnims(FIXED_DT)
@@ -767,6 +983,13 @@ function GameScreen.new()
             local allUnits = self.grid:getAllUnits()
             for _, unit in ipairs(allUnits) do
                 unit:update(dt, self.grid)
+            end
+            for i = #self.activeSpellEffects, 1, -1 do
+                local fx = self.activeSpellEffects[i]
+                fx:update(dt, self.grid)
+                if fx.complete then
+                    table.remove(self.activeSpellEffects, i)
+                end
             end
             self.grid:tickFirePatches(dt)
             self.grid:tickDeathAnims(dt)
@@ -931,6 +1154,83 @@ function GameScreen.new()
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
         self.grid:draw(self.draggedUnit, hideOwner)
+        self.grid:drawCellEffects()
+
+        -- Draw own spell markers during setup/pre-battle (opponent markers stay hidden).
+        if (self.state == "setup" or self.state == "pre_battle")
+           and self.spellPlacements and #self.spellPlacements > 0 then
+            local markerScale = Constants.CELL_SIZE / 16
+            for _, p in ipairs(self.spellPlacements) do
+                if p.owner == self.playerRole and p ~= self.draggedSpell then
+                    -- AOE indicator stays drawn for placed spells until they fire.
+                    local size = SpellRegistry.aoeSize and SpellRegistry.aoeSize[p.spellType]
+                    local fpC = (size and size.cols) or 1
+                    local fpR = (size and size.rows) or 1
+                    self:drawCellIndicator(p.col, p.row, fpC, fpR)
+
+                    local sp = self.spellSprites and self.spellSprites[p.spellType]
+                    local img = sp and sp.front
+                    if img then
+                        local cx, cy = self.grid:getCellCenter(p.col, p.row)
+                        local sw, sh = img:getWidth(), img:getHeight()
+                        lg.setColor(1, 1, 1, 0.9)
+                        lg.draw(img, cx, cy, 0, markerScale, markerScale, sw / 2, sh / 2)
+                    end
+                end
+            end
+            lg.setColor(1, 1, 1, 1)
+        end
+
+        -- AOE / snap-cell indicator beneath dragged sprites.
+        do
+            local indCol, indRow, fpC, fpR
+            if self.draggedSpell then
+                indCol, indRow = self.grid:worldToGrid(self.mouseX, self.mouseY)
+                local size = SpellRegistry.aoeSize and SpellRegistry.aoeSize[self.draggedSpell.spellType]
+                fpC, fpR = (size and size.cols) or 1, (size and size.rows) or 1
+            elseif self.draggedCard and SpellRegistry.isSpell(self.draggedCard.unitType) then
+                indCol, indRow = self.grid:worldToGrid(self.mouseX, self.mouseY)
+                local size = SpellRegistry.aoeSize and SpellRegistry.aoeSize[self.draggedCard.unitType]
+                fpC, fpR = (size and size.cols) or 1, (size and size.rows) or 1
+            elseif self.draggedUnit then
+                indCol, indRow = self.grid:worldToGrid(self.mouseX, self.mouseY)
+                fpC, fpR = 1, 1
+            elseif self.draggedCard then
+                -- Unit card drag: 1x1 snap target (only inside the player's own zone).
+                local col, row = self.grid:worldToGrid(self.mouseX, self.mouseY)
+                if col and row then
+                    local owner = self.grid:getOwner(row)
+                    if (not self.isOnline) or owner == self.playerRole then
+                        indCol, indRow, fpC, fpR = col, row, 1, 1
+                    end
+                end
+            end
+            if indCol and indRow and self.grid:isValidCell(indCol, indRow) then
+                self:drawCellIndicator(indCol, indRow, fpC, fpR)
+            end
+        end
+
+        -- Draw the spell marker currently being dragged at cursor position.
+        if self.draggedSpell then
+            local sp = self.spellSprites and self.spellSprites[self.draggedSpell.spellType]
+            local img = sp and sp.front
+            if img then
+                local mx = self.draggedSpell.dragX or 0
+                local my = self.draggedSpell.dragY or 0
+                local sw, sh = img:getWidth(), img:getHeight()
+                local markerScale = Constants.CELL_SIZE / 16
+                lg.setColor(1, 1, 1, 0.85)
+                lg.draw(img, mx, my, 0, markerScale, markerScale, sw / 2, sh / 2)
+                lg.setColor(1, 1, 1, 1)
+            end
+        end
+
+        -- Draw active spell effects (arrow rain etc.) during battle.
+        if self.activeSpellEffects and #self.activeSpellEffects > 0 then
+            for _, fx in ipairs(self.activeSpellEffects) do
+                fx:draw()
+            end
+        end
 
         lg.pop()
 
@@ -1623,7 +1923,8 @@ function GameScreen.new()
         self.suit:updateMouse(x, y)
 
         -- Track if user has moved significantly (for tap vs drag detection)
-        if self.pressedUnit or self.draggedUnit or self.draggedCard or self.pressedCard then
+        if self.pressedUnit or self.draggedUnit or self.draggedCard or self.pressedCard
+           or self.pressedSpell or self.draggedSpell then
             local distMoved = math.sqrt((x - self.pressX)^2 + (y - self.pressY)^2)
             if distMoved > 10 then  -- Increased threshold for mobile
                 self.hasMoved = true
@@ -1674,6 +1975,21 @@ function GameScreen.new()
             self.pressedUnitRow = nil
         end
 
+        -- Promote a pressed spell marker into an active drag once movement passes the threshold.
+        if self.pressedSpell and not self.draggedSpell and self.state == "setup" and self.hasMoved then
+            self.tooltip:hide()
+            self.draggedSpell           = self.pressedSpell
+            self.draggedSpellOriginalCol = self.pressedSpell.col
+            self.draggedSpellOriginalRow = self.pressedSpell.row
+            -- Use the cell's CENTER so the sprite stays centered on the dragged cursor.
+            local sx, sy = self.grid:getCellCenter(self.pressedSpell.col, self.pressedSpell.row)
+            self.draggedSpellOffsetX = self.pressX - sx
+            self.draggedSpellOffsetY = self.pressY - sy
+            self.draggedSpell.dragX  = sx
+            self.draggedSpell.dragY  = sy
+            self.pressedSpell        = nil
+        end
+
         -- Update dragged card position
         if self.draggedCard then
             self.draggedCard:updateDrag(x, y)
@@ -1684,6 +2000,12 @@ function GameScreen.new()
             -- Store the screen position for rendering
             self.draggedUnit.dragX = x - self.draggedUnitOffsetX
             self.draggedUnit.dragY = y - self.draggedUnitOffsetY
+        end
+
+        -- Update dragged spell marker position
+        if self.draggedSpell then
+            self.draggedSpell.dragX = x - self.draggedSpellOffsetX
+            self.draggedSpell.dragY = y - self.draggedSpellOffsetY
         end
     end
 
@@ -1712,6 +2034,17 @@ function GameScreen.new()
             -- Check if clicking on a unit (in any game state)
             local col, row = self.grid:worldToGrid(x, y)
             if col and row then
+                -- Spell markers take precedence so a placed marker remains repositionable
+                -- even if a unit later occupies its cell.
+                if self.state == "setup" then
+                    local placement = self:findOwnSpellAt(col, row)
+                    if placement then
+                        self.tooltip:hide()
+                        self.pressedSpell = placement
+                        self.pressedUnit = nil
+                        return
+                    end
+                end
                 local unit = self.grid:getUnitAtCell(col, row)
                 if unit then
                     -- Store the unit but don't start dragging yet
@@ -1964,6 +2297,49 @@ function GameScreen.new()
             return
         end
 
+        -- ── Spell marker repositioning drag ───────────────────────────────────
+        if self.draggedSpell then
+            local col, row = self.grid:worldToGrid(x, y)
+            local origCol  = self.draggedSpellOriginalCol
+            local origRow  = self.draggedSpellOriginalRow
+            local cellTaken = false
+            if col and row then
+                for _, p in ipairs(self.spellPlacements) do
+                    if p ~= self.draggedSpell and p.owner == self.playerRole
+                       and p.col == col and p.row == row then
+                        cellTaken = true; break
+                    end
+                end
+            end
+            if col and row and self.grid:isValidCell(col, row) and not cellTaken then
+                self.draggedSpell.col = col
+                self.draggedSpell.row = row
+                AudioManager.playSFX("place.mp3")
+                self:sendMsg({type = "move_spell",
+                              placementId = self.draggedSpell.placementId,
+                              fromCol = origCol, fromRow = origRow,
+                              toCol = col, toRow = row,
+                              owner = self.draggedSpell.owner})
+                print(string.format("Repositioned spell to [%d, %d]", col, row))
+            else
+                self.draggedSpell.col = origCol
+                self.draggedSpell.row = origRow
+                if cellTaken then print("Another spell already placed on this cell") end
+            end
+            self.draggedSpell.dragX = nil
+            self.draggedSpell.dragY = nil
+            self.draggedSpell           = nil
+            self.draggedSpellOriginalCol = nil
+            self.draggedSpellOriginalRow = nil
+            return
+        end
+
+        -- ── Tap on spell marker → no-op (no tooltip yet for spells) ──────────
+        if self.pressedSpell and not self.draggedSpell then
+            self.pressedSpell = nil
+            return
+        end
+
         -- ── Unit repositioning drag ───────────────────────────────────────────
         if self.draggedUnit then
             local col, row = self.grid:worldToGrid(x, y)
@@ -1971,7 +2347,39 @@ function GameScreen.new()
             local origRow = self.draggedUnitOriginalRow
             -- In online mode only allow repositioning within own zone
             local zoneOwner = self.isOnline and self.playerRole or nil
-            if col and row and self.grid:canPlaceUnit(col, row, zoneOwner) then
+            local targetUnit = (col and row) and self.grid:getUnitAtCell(col, row) or nil
+            local zoneOK = (col and row) and (zoneOwner == nil or self.grid:getOwner(row) == zoneOwner) or false
+            local canSwap = targetUnit and not targetUnit.isDead
+                            and targetUnit.owner == self.draggedUnit.owner
+                            and zoneOK
+            if canSwap then
+                -- Swap: relocate the existing unit to the dragged unit's origin cell.
+                self.grid:removeUnit(col, row)
+                targetUnit.col = origCol
+                targetUnit.row = origRow
+                self.grid:placeUnit(origCol, origRow, targetUnit)
+                self.draggedUnit.col = col
+                self.draggedUnit.row = row
+                self.grid:placeUnit(col, row, self.draggedUnit)
+                AudioManager.playSFX("place.mp3")
+                -- Sync: mirror both moves on the opponent client.
+                self:sendMsg({type = "remove_unit", col = origCol, row = origRow})
+                self:sendMsg({type = "remove_unit", col = col, row = row})
+                self:sendMsg({type = "place_unit",
+                              unitType = targetUnit.unitType,
+                              col = origCol, row = origRow,
+                              owner = targetUnit.owner,
+                              level = targetUnit.level,
+                              activeUpgrades = targetUnit.activeUpgrades})
+                self:sendMsg({type = "place_unit",
+                              unitType = self.draggedUnit.unitType,
+                              col = col, row = row,
+                              owner = self.draggedUnit.owner,
+                              level = self.draggedUnit.level,
+                              activeUpgrades = self.draggedUnit.activeUpgrades})
+                print(string.format("Swapped units between [%d, %d] and [%d, %d]",
+                                    origCol, origRow, col, row))
+            elseif col and row and self.grid:canPlaceUnit(col, row, zoneOwner) then
                 self.draggedUnit.col = col
                 self.draggedUnit.row = row
                 self.grid:placeUnit(col, row, self.draggedUnit)
@@ -2002,6 +2410,61 @@ function GameScreen.new()
         -- ── Card placement drag ───────────────────────────────────────────────
         if self.draggedCard then
             local col, row = self.grid:worldToGrid(x, y)
+            -- Spell card: no zone restriction, no occupancy check; just charge cost and place a marker.
+            if SpellRegistry.isSpell(self.draggedCard.unitType) then
+                local spellType = self.draggedCard.unitType
+                local cost      = UnitRegistry.unitCosts[spellType] or 0
+                local alreadyPlaced = false
+                local cellTaken     = false
+                for _, p in ipairs(self.spellPlacements) do
+                    if p.owner == self.playerRole then
+                        if p.spellType == spellType then alreadyPlaced = true end
+                        if col and row and p.col == col and p.row == row then cellTaken = true end
+                    end
+                end
+                if not col or not row or not self.grid:isValidCell(col, row) then
+                    self.draggedCard:snapBack()
+                elseif alreadyPlaced then
+                    print("Spell " .. spellType .. " already placed this round")
+                    self.draggedCard:snapBack()
+                elseif cellTaken then
+                    print("Another spell already placed on this cell")
+                    self.draggedCard:snapBack()
+                elseif not self.isSandbox and self.playerCoins < cost then
+                    print("Not enough coins for spell")
+                    self.draggedCard:snapBack()
+                else
+                    if not self.isSandbox then self.playerCoins = self.playerCoins - cost end
+                    local placementId = self:nextSpellPlacementId()
+                    table.insert(self.spellPlacements, {
+                        placementId = placementId,
+                        spellType   = spellType,
+                        col         = col,
+                        row         = row,
+                        owner       = self.playerRole,
+                    })
+                    AudioManager.playSFX("place.mp3")
+                    for i, card in ipairs(self.cards) do
+                        if card == self.draggedCard then
+                            table.remove(self.cards, i); break
+                        end
+                    end
+                    for j, u in ipairs(self.drawnCardTypes) do
+                        if u == spellType then
+                            table.remove(self.drawnCardTypes, j); break
+                        end
+                    end
+                    self:sendMsg({type = "place_spell",
+                                  placementId = placementId,
+                                  spellType   = spellType,
+                                  col = col, row = row,
+                                  owner = self.playerRole})
+                    print(string.format("Placed spell %s at [%d, %d]", spellType, col, row))
+                end
+                self.draggedCard:stopDrag()
+                self.draggedCard = nil
+                return
+            end
             if col and row then
                 local owner    = self.grid:getOwner(row)
                 local unitType = self.draggedCard.unitType
@@ -2141,6 +2604,15 @@ function GameScreen.new()
         -- Check if clicking on a unit (in any game state)
         local col, row = self.grid:worldToGrid(x, y)
         if col and row then
+            if self.state == "setup" then
+                local placement = self:findOwnSpellAt(col, row)
+                if placement then
+                    self.tooltip:hide()
+                    self.pressedSpell = placement
+                    self.pressedUnit = nil
+                    return
+                end
+            end
             local unit = self.grid:getUnitAtCell(col, row)
             if unit then
                 -- Store the unit but don't start dragging yet

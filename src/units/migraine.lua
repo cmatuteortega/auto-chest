@@ -78,7 +78,7 @@ function Migraine:new(row, col, owner, sprites)
         attackSpeed     = 0.65,        -- 1 attack per ~1.54s
         moveSpeed       = 1,
         attackRange     = 3,
-        projectileSpeed = 0.22,
+        projectileSpeed = 12,  -- cells/second
         unitType        = "migraine"
     }
 

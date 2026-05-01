@@ -17,6 +17,8 @@ local Burrow    = require('src.units.burrow')
 local Catapult  = require('src.units.catapult')
 local Mend      = require('src.units.mend')
 
+local SpellRegistry = require('src.spell_registry')
+
 local UnitRegistry = {}
 
 -- Map of unit type names to their classes
@@ -42,8 +44,8 @@ UnitRegistry.unitClasses = {
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb"} },
-    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult"} },
+    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "arrows"} },
+    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult", "fireball"} },
     { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow"} },
 }
 
@@ -66,6 +68,9 @@ UnitRegistry.factions = {
     sinner    = {"folk", "brawler"},
     catapult  = {"folk"},
     burrow    = {"monster", "brawler"},
+    -- Spells
+    arrows    = {"undead"},
+    fireball  = {"folk"},
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -90,6 +95,9 @@ UnitRegistry.rarity = {
     bonk      = "rare",
     sinner    = "epic",
     catapult  = "epic",
+    -- Spells
+    arrows    = "common",
+    fireball  = "common",
 }
 
 -- Map of unit type names to their sprite paths
@@ -220,6 +228,17 @@ function UnitRegistry.getUnitDisplayInfo(unitType)
         return _displayInfoCache[unitType]
     end
 
+    if SpellRegistry.isSpell(unitType) then
+        local info = {
+            isSpell     = true,
+            description = SpellRegistry.descriptions[unitType],
+            displayName = SpellRegistry.displayNames[unitType],
+            upgrades    = {},
+        }
+        _displayInfoCache[unitType] = info
+        return info
+    end
+
     local UnitClass = UnitRegistry.unitClasses[unitType]
     local dummy = UnitClass(1, 1, 1, {})
 
@@ -260,6 +279,9 @@ UnitRegistry.unitCosts = {
     burrow   = 3,
     catapult = 2,
     mend   = 3,
+    -- Spells
+    arrows   = 2,
+    fireball = 4,
 }
 
 -- Count fully-transparent rows at the top of a sprite file.
@@ -530,9 +552,25 @@ local function resetShared()
         magicImg         = nil,
         fireballFrames   = nil,
         fireFrames       = nil,
+        explosionFrames  = nil,
         migraineBgFrames = nil,
         catapultProjImg  = nil,
     }
+end
+
+-- Load a sequence of frames whose suffix indices come from a table (e.g. {0,1,2,...}).
+-- Different from loadFrameSequence (which is 1..maxFrames) — needed for explosion0..6.
+local function loadFrameIndices(pattern, indices)
+    local frames = {}
+    for _, i in ipairs(indices) do
+        local path = pattern:format(i)
+        if love.filesystem.getInfo(path) then
+            local img = love.graphics.newImage(path)
+            img:setFilter('nearest', 'nearest')
+            table.insert(frames, img)
+        end
+    end
+    return frames
 end
 
 -- Returns an ordered list of closures. Executing all of them in sequence
@@ -588,6 +626,7 @@ function UnitRegistry.getLoadSteps()
     table.insert(steps, function()
         _shared.migraineBgFrames = loadFrameSequence("src/assets/migraine/background-anim/background-%d.png", 8)
         _shared.catapultProjImg  = loadProjectileImg("src/assets/particles/catapult-projectile.png")
+        _shared.explosionFrames  = loadFrameIndices("src/assets/particles/explosion/explosion%d.png", {0,1,2,3,4,5,6})
     end)
 
     -- Generic death animations (played by Grid:drawCorpsesInRow for any fallen unit, 0-indexed).
@@ -607,6 +646,24 @@ function UnitRegistry.getLoadSteps()
         end
         _shared.deathFrames     = loadDeathSequence("src/assets/death/death-anim%d.png")
         _shared.deathAllyFrames = loadDeathSequence("src/assets/death-ally/death-ally%d.png")
+    end)
+
+    -- Cell spawn / despawn effects (played when a board cell changes between setup and battle).
+    table.insert(steps, function()
+        local function loadAnimSequence(pattern)
+            local frames = {}
+            for i = 0, 31 do
+                local path = string.format(pattern, i)
+                if love.filesystem.getInfo(path) then
+                    local img = love.graphics.newImage(path)
+                    img:setFilter('nearest', 'nearest')
+                    table.insert(frames, img)
+                end
+            end
+            return frames
+        end
+        _shared.spawnFrames   = loadAnimSequence("src/assets/spawn/spawn%d.png")
+        _shared.despawnFrames = loadAnimSequence("src/assets/despawn/despawn%d.png")
     end)
 
     -- Faction icons
@@ -633,11 +690,12 @@ function UnitRegistry.finalizeSprites()
     local allSprites = _loadingAllSprites or {}
 
     if _shared then
-        if (_shared.stunFrames and #_shared.stunFrames > 0) or _shared.tauntImg or (_shared.upFrames and #_shared.upFrames > 0) then
+        if (_shared.stunFrames and #_shared.stunFrames > 0) or _shared.tauntImg or (_shared.upFrames and #_shared.upFrames > 0) or (_shared.explosionFrames and #_shared.explosionFrames > 0) then
             for _, sprites in pairs(allSprites) do
                 if _shared.stunFrames and #_shared.stunFrames > 0 then sprites.stunFrames = _shared.stunFrames end
                 if _shared.tauntImg                              then sprites.tauntImg   = _shared.tauntImg   end
                 if _shared.upFrames and #_shared.upFrames > 0    then sprites.upFrames   = _shared.upFrames   end
+                if _shared.explosionFrames and #_shared.explosionFrames > 0 then sprites.explosionFrames = _shared.explosionFrames end
             end
         end
 
@@ -679,6 +737,12 @@ function UnitRegistry.finalizeSprites()
         if _shared.deathAllyFrames then
             UnitRegistry.deathAllyFrames = _shared.deathAllyFrames
         end
+        if _shared.spawnFrames then
+            UnitRegistry.spawnFrames = _shared.spawnFrames
+        end
+        if _shared.despawnFrames then
+            UnitRegistry.despawnFrames = _shared.despawnFrames
+        end
     end
 
     _allSpritesCache = allSprites
@@ -700,6 +764,9 @@ end
 
 -- Create a unit of the specified type
 function UnitRegistry.createUnit(unitType, row, col, owner, sprites)
+    if SpellRegistry.isSpell(unitType) then
+        error("createUnit called for spell type: " .. tostring(unitType))
+    end
     local UnitClass = UnitRegistry.unitClasses[unitType]
     if not UnitClass then
         error("Unknown unit type: " .. tostring(unitType))
@@ -735,7 +802,7 @@ UnitRegistry.MAX_CARD_COPIES = 4
 -- Rarity tiers for milestone unlock ordering (commons exhausted first, then rares, then epics)
 UnitRegistry.rarityTiers = {
     { tier = "common", units = { "mend", "amalgam", "mage", "bull" } },
-    { tier = "common", units = { "burrow" } },
+    { tier = "common", units = { "burrow", "arrows", "fireball" } },
     { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
     { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }

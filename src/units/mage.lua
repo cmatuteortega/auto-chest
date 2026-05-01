@@ -1,6 +1,7 @@
 local BaseUnit        = require('src.base_unit')
 local BaseUnitRanged  = require('src.base_unit_ranged')
 local Constants       = require('src.constants')
+local ExplosionAnim   = require('src.explosion_anim')
 
 -- Draws one fire patch clipped to [clipTop, clipTop+clipH] in screen Y
 local function drawFirePatch(patch, sprites, clipTop, clipH)
@@ -33,6 +34,9 @@ end
 
 local Mage = BaseUnitRanged:extend()
 
+-- Fireball flight speed in cells/sec — heavier and slower than a regular arrow.
+local FIREBALL_SPEED = 6
+
 function Mage:new(row, col, owner, sprites)
     local stats = {
         health          = 9,
@@ -41,7 +45,7 @@ function Mage:new(row, col, owner, sprites)
         attackSpeed     = 0.55,
         moveSpeed       = 1,
         attackRange     = 3,
-        projectileSpeed = 0.25,
+        projectileSpeed = 12,  -- cells/second
         unitType        = "mage"
     }
 
@@ -58,6 +62,7 @@ function Mage:new(row, col, owner, sprites)
 
     -- Fire patches for Burning Ground upgrade: { col, row, timer, damageTimer }
     self.firePatches = {}
+    self.explosions  = {}
 
     -- Arcane Surge upgrade state
     self.arcaneTimer    = 0
@@ -93,6 +98,7 @@ function Mage:resetCombatState()
     self.fireballReady = false
     self.fireball      = nil
     self.firePatches     = {}
+    self.explosions      = {}
     self.arcaneTimer     = 0
     self.arcaneActive    = false
     self.preArcaneSpeed  = nil
@@ -127,7 +133,10 @@ function Mage:attack(target, grid)
         local arrow = self.arrows[#self.arrows]
         arrow.isFireball = true
         arrow.damage     = math.max(1, math.floor(self.damage * 2))
-        arrow.duration   = 0.5
+        local dCol = arrow.targetCol - arrow.startCol
+        local dRow = arrow.targetRow - arrow.startRow
+        local dist = math.sqrt(dCol * dCol + dRow * dRow)
+        arrow.duration   = math.max(0.01, dist / FIREBALL_SPEED)
         arrow.progress   = 0  -- restart flight with fireball duration
         arrow.animTime   = 0
         arrow.rotation   = 0
@@ -154,6 +163,9 @@ function Mage:onProjectileHit(projectile, grid)
     local cx, cy   = projectile.targetCol, projectile.targetRow
     local dmg      = projectile.damage
     local allUnits = grid:getAllUnits()
+
+    -- Visual: explosion plays at the impact cell.
+    table.insert(self.explosions, ExplosionAnim.new(cx, cy))
 
     for _, unit in ipairs(allUnits) do
         if unit.owner ~= self.owner and not unit.isDead then
@@ -229,6 +241,8 @@ function Mage:update(dt, grid)
         end
     end
 
+    ExplosionAnim.tick(self.explosions, dt)
+
     -- Call parent: handles regular arrows + movement + attacking
     Mage.super.update(self, dt, grid)
 end
@@ -292,6 +306,8 @@ function Mage:drawAttackVisuals()
         local bottomY = cy + Constants.CELL_SIZE / 4
         drawFirePatch(patch, self.sprites, bottomY, Constants.CELL_SIZE / 4)
     end
+
+    ExplosionAnim.drawAll(self.explosions, self.sprites)
 
     love.graphics.setColor(1, 1, 1, 1)
 end

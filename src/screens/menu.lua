@@ -7,6 +7,7 @@ local BaseUnit       = require('src.base_unit')
 local UnitRegistry   = require('src.unit_registry')
 local DeckManager    = require('src.deck_manager')
 local SocketManager  = require('src.socket_manager')
+local SpellRegistry  = require('src.spell_registry')
 local json           = require('lib.json')
 
 local MenuScreen = {}
@@ -98,6 +99,16 @@ function MenuScreen.new()
             self.idleAnim[utype]          = { frameIndex = 1, timer = 0 }
             self.attackAnim[utype]        = { active = false, progress = 0, duration = 0.45 }
         end
+
+        -- Spell sprites (no directional/back/dead — just a single front image).
+        self.spellSprites = SpellRegistry.loadSprites()
+        for stype, sp in pairs(self.spellSprites) do
+            if sp and sp.front then
+                self.sprites[stype]           = sp.front
+                self.spriteTrimBottoms[stype] = 0
+            end
+        end
+
         self:buildPreviewLayout()
 
         -- Bottom tab bar icons (order matches panel indices)
@@ -817,17 +828,23 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.printf(costStr, badgeX, badgeY + (badgeH - Fonts.tiny:getHeight()) / 2, badgeW, 'center')
 
         -- Front sprite (integer scale, bottom-anchored to card baseline)
-        -- Action units: use action/idle override sprite instead of default front
+        -- Action units: use action/idle override sprite instead of default front.
+        -- Spells: just use their single front sprite.
         local img, trimBottom
-        local _d = self.dirSprites[utype]
-        local _aio = _d and _d.directional and _d.directional.actionIdleOverride
-        if _aio and (_aio[0] or _aio[180]) then
-            local _ad = _aio[0] or _aio[180]
-            img        = _ad.frames[1]
-            trimBottom = _ad.trimBottom[1] or 0
-        else
+        if SpellRegistry.isSpell(utype) then
             img        = self.sprites[utype]
-            trimBottom = self.spriteTrimBottoms[utype] or 0
+            trimBottom = 0
+        else
+            local _d = self.dirSprites[utype]
+            local _aio = _d and _d.directional and _d.directional.actionIdleOverride
+            if _aio and (_aio[0] or _aio[180]) then
+                local _ad = _aio[0] or _aio[180]
+                img        = _ad.frames[1]
+                trimBottom = _ad.trimBottom[1] or 0
+            else
+                img        = self.sprites[utype]
+                trimBottom = self.spriteTrimBottoms[utype] or 0
+            end
         end
         local iw, ih = img:getDimensions()
         local sprSc      = math.max(1, math.floor(4 * sc))
@@ -962,6 +979,51 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.pop()
 
         self._backButtonRect = { x = backX + self.panelOffset, y = backAnchorY - backMaxF, w = backW, h = backH + backMaxF }
+
+        -- ── Spell detail: simplified panel ────────────────────────────────────
+        if SpellRegistry.isSpell(utype) then
+            local curY = backAnchorY + backH + backShadH + math.floor(8 * sc)
+            local displayName = SpellRegistry.displayNames[utype]
+                              or (utype:sub(1,1):upper() .. utype:sub(2))
+            lg.setFont(Fonts.medium)
+            lg.setColor(1, 1, 1, 1)
+            lg.printf(displayName, textX, curY, textW, 'center')
+            curY = curY + Fonts.medium:getHeight() + math.floor(4 * sc)
+
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.765, 0.639, 0.541, 1)
+            lg.printf("SPELL", textX, curY, textW, 'center')
+            curY = curY + Fonts.tiny:getHeight() + math.floor(8 * sc)
+
+            lg.setColor(0.306, 0.286, 0.373, 1)
+            lg.setLineWidth(math.max(1, math.floor(sc)))
+            lg.line(textX, curY, ox + W - math.floor(32 * sc), curY)
+            curY = curY + math.floor(8 * sc)
+
+            local desc = SpellRegistry.descriptions[utype] or ""
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.965, 0.839, 0.741, 1)
+            lg.printf(desc, textX, curY, textW, 'left')
+
+            -- Bottom sprite zone: front sprite only, no rotation, no back sprite.
+            local barH        = math.floor(90 * sc)
+            local spriteZoneH = math.floor(160 * sc)
+            local spriteZoneY = H - barH - spriteZoneH
+            local sprSc       = math.max(1, math.floor(12 * sc))
+            local img         = self.sprites[utype]
+            if img then
+                local iw, ih    = img:getDimensions()
+                local baselineY = spriteZoneY + spriteZoneH - math.floor(24 * sc)
+                local imgX      = math.floor(ox + (W - iw * sprSc) / 2)
+                local imgY      = math.floor(baselineY - ih * sprSc)
+                lg.setColor(1, 1, 1, 1)
+                lg.setShader(BaseUnit.getPaletteShader())
+                lg.draw(img, imgX, imgY, 0, sprSc, sprSc)
+                lg.setShader()
+            end
+            self._detailSpriteRect = nil
+            return
+        end
 
         -- ── Text content (top to bottom, starting below back button) ──
         local curY = backAnchorY + backH + backShadH + math.floor(8 * sc)
@@ -1591,18 +1653,24 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             lg.setColor(0.965, 0.839, 0.741, 1)
             lg.printf(costStr, badgeX, badgeY + (badgeH - Fonts.tiny:getHeight()) / 2, badgeW, 'center')
 
-            -- Sprite (bottom-anchored above bottom strip)
-            -- Action units: use action/idle override sprite instead of default front
-            local _d2 = self.dirSprites[utype]
-            local _aio2 = _d2 and _d2.directional and _d2.directional.actionIdleOverride
+            -- Sprite (bottom-anchored above bottom strip).
+            -- Action units: use action/idle override sprite instead of default front.
+            -- Spells: just their single front sprite.
             local img, _deckTrimBottom
-            if _aio2 and (_aio2[0] or _aio2[180]) then
-                local _ad2 = _aio2[0] or _aio2[180]
-                img            = _ad2.frames[1]
-                _deckTrimBottom = _ad2.trimBottom[1] or 0
-            else
+            if SpellRegistry.isSpell(utype) then
                 img            = self.sprites[utype]
-                _deckTrimBottom = self.spriteTrimBottoms[utype] or 0
+                _deckTrimBottom = 0
+            else
+                local _d2 = self.dirSprites[utype]
+                local _aio2 = _d2 and _d2.directional and _d2.directional.actionIdleOverride
+                if _aio2 and (_aio2[0] or _aio2[180]) then
+                    local _ad2 = _aio2[0] or _aio2[180]
+                    img            = _ad2.frames[1]
+                    _deckTrimBottom = _ad2.trimBottom[1] or 0
+                else
+                    img            = self.sprites[utype]
+                    _deckTrimBottom = self.spriteTrimBottoms[utype] or 0
+                end
             end
             if img then
                 local iw, ih     = img:getDimensions()

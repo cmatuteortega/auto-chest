@@ -1123,7 +1123,6 @@ do
     s.hitCounter        = 14
     s.isFree            = true
     s.formChangePending = true
-    s.burstFlash        = {}
     s.attackSpeed       = 1.3   -- free-form speed
     -- Simulate that form change happened and sprites were swapped
     s.sprites           = s.freeSprites or {}
@@ -1131,7 +1130,6 @@ do
     check("t17A_hitCounter",        s.hitCounter,        0)
     check("t17A_isFree",            s.isFree,            false)
     check("t17A_formChangePending", s.formChangePending, false)
-    check("t17A_burstFlash",        s.burstFlash,        nil)
     check("t17A_attackSpeed",       s.attackSpeed,       s.baseAttackSpeed)
     check("t17A_sprites",           s.sprites,           s.chainedSprites)
 end

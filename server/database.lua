@@ -757,7 +757,7 @@ local MAX_COPIES     = 4
 -- Rarity tiers: commons exhausted first, then rares, then epics.
 -- Within a tier, milestone rewards pick randomly.
 local RARITY_TIERS = {
-    { tier = "common", units = { "burrow", "amalgam", "mage", "bull" } },
+    { tier = "common", units = { "burrow", "amalgam", "mage", "bull", "arrows", "fireball" } },
     { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
     { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }

@@ -12,7 +12,7 @@ function Marc:new(row, col, owner, sprites)
         attackSpeed     = 0.75,
         moveSpeed       = 1,
         attackRange     = 6,
-        projectileSpeed = 0.3,
+        projectileSpeed = 10,  -- cells/second (slower for sniper feel at range 6)
         unitType        = "marc"
     }
 

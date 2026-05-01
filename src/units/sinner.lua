@@ -1,27 +1,5 @@
-local BaseUnit  = require('src.base_unit')
-local Constants = require('src.constants')
-
--- Sprite-pixel burst: 12 particles fly outward, sized to one sprite pixel (CELL_SIZE/16)
-local function drawPixelBurst(col, row, timer, duration, r, g, b)
-    local lg      = love.graphics
-    local t       = timer / duration
-    local vr      = Constants.toVisualRow(row)
-    local cx      = Constants.GRID_OFFSET_X + (col - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local cy      = Constants.GRID_OFFSET_Y + (vr   - 1) * Constants.CELL_SIZE + Constants.CELL_SIZE / 2
-    local ps      = math.max(1, math.floor(Constants.CELL_SIZE / 16))
-    local maxDist = Constants.CELL_SIZE * 1.2
-    local expand  = 1 - t
-    for i = 0, 11 do
-        local angle   = (i / 12) * math.pi * 2
-        local isOuter = (i % 2 == 0)
-        local dist    = maxDist * expand * (isOuter and 1.0 or 0.55)
-        local px      = math.floor(cx + math.cos(angle) * dist - ps / 2)
-        local py      = math.floor(cy + math.sin(angle) * dist - ps / 2)
-        lg.setColor(r, g, b, t * (isOuter and 1.0 or 0.7))
-        lg.rectangle('fill', px, py, ps, ps)
-    end
-    lg.setColor(1, 1, 1, 1)
-end
+local BaseUnit      = require('src.base_unit')
+local ExplosionAnim = require('src.explosion_anim')
 
 local Sinner = BaseUnit:extend()
 
@@ -50,7 +28,7 @@ function Sinner:new(row, col, owner, sprites)
     self.formChangePending = false
     self.chainedSprites    = sprites
     self.freeSprites       = sprites and sprites.freeForm
-    self.burstFlash        = nil
+    self.explosions        = {}
 
     self.upgradeTree = {
         {
@@ -131,7 +109,7 @@ function Sinner:doFormChange(grid)
         end
     end
 
-    self.burstFlash = { col = self.col, row = self.row, timer = 0.5 }
+    table.insert(self.explosions, ExplosionAnim.new(self.col, self.row))
 end
 
 function Sinner:update(dt, grid)
@@ -143,10 +121,7 @@ function Sinner:update(dt, grid)
     -- In free form, stun immunity: cancel any stun applied externally
     if self.isFree then self.stunTimer = 0 end
 
-    if self.burstFlash then
-        self.burstFlash.timer = self.burstFlash.timer - dt
-        if self.burstFlash.timer <= 0 then self.burstFlash = nil end
-    end
+    ExplosionAnim.tick(self.explosions, dt)
 
     Sinner.super.update(self, dt, grid)
 end
@@ -156,18 +131,14 @@ function Sinner:resetCombatState()
     self.hitCounter        = 0
     self.isFree            = false
     self.formChangePending = false
-    self.burstFlash        = nil
+    self.explosions        = {}
     self.attackSpeed       = self.baseAttackSpeed
     if self.chainedSprites then self.sprites = self.chainedSprites end
 end
 
 function Sinner:drawAttackVisuals()
     Sinner.super.drawAttackVisuals(self)
-
-    if self.burstFlash then
-        local flash = self.burstFlash
-        drawPixelBurst(flash.col, flash.row, flash.timer, 0.5, 0.9, 0.3, 0.1)
-    end
+    ExplosionAnim.drawAll(self.explosions, self.sprites)
 end
 
 return Sinner
