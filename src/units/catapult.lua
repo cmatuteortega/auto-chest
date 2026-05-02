@@ -73,8 +73,7 @@ function Catapult:new(row, col, owner, sprites)
             description = "Initial blast damage increased to 5",
             onApply     = function(unit)
                 unit.baseDamage = 5
-                local multiplier = 1.3 ^ unit.level
-                unit.damage = math.floor(unit.baseDamage * multiplier)
+                unit.damage     = 5  -- DMG is fixed; no level multiplier
             end
         }
     }

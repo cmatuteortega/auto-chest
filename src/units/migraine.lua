@@ -201,10 +201,12 @@ function Migraine:spawnClone(grid)
         table.insert(clone.activeUpgrades, idx)
     end
     clone.level    = self.level
-    -- Apply scaled stats matching the original's level
-    local mult     = 1.3 ^ self.level
-    clone.maxHealth = math.floor(clone.baseHealth * mult)
-    clone.damage    = math.floor(clone.baseDamage  * mult)
+    -- Apply scaled stats matching the original's level (DMG is fixed, no multiplier)
+    local mult      = 1.3 ^ self.level
+    clone.maxHealth      = math.floor(clone.baseHealth * mult)
+    clone.damage         = clone.baseDamage
+    clone.baseAttackSpeed = clone.rawBaseAttackSpeed + (self.level * 0.10)
+    clone.attackSpeed    = clone.baseAttackSpeed
 
     -- Split HP: both original and clone get hpFraction of the original's current HP
     local hpFraction  = self:hasUpgrade(1) and 0.65 or 0.5

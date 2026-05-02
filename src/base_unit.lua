@@ -49,7 +49,7 @@ UPGRADE SYSTEM DOCUMENTATION (Clash Mini Style)
 OVERVIEW:
 ---------
 Each unit can be upgraded up to level 3 (from base level 0). Upgrades provide:
-1. STAT BOOST: 1.3x multiplier to HP and damage per level (automatic for all units)
+1. STAT BOOST: HP ×1.3/level; DMG fixed; ATK SPD +0.10 flat/level (automatic for all units)
 2. ABILITY UPGRADES: Units with upgrade trees get to choose special abilities
 
 UPGRADE TREE STRUCTURE:
@@ -104,12 +104,15 @@ IMPLEMENTING UPGRADE EFFECTS:
 
 STAT SCALING:
 -------------
-- Level 0: Base stats (e.g., 10 HP, 1 damage)
-- Level 1: 1.3x stats (13 HP, 1 damage)
-- Level 2: 1.69x stats (16 HP, 1 damage)
-- Level 3: 2.197x stats (21 HP, 2 damage)
+- HP:      ×1.3 per level  (L3 = ×2.197 base HP)
+- DMG:     fixed — never scales with level
+- ATK SPD: +0.10 flat per level  (L3 = base + 0.30)
 
-Note: damage uses math.floor, so low base damage may not increase until level 2.
+Example (10 HP, 1 DMG, 0.70 ATK SPD):
+- Level 0: 10 HP / 1 DMG / 0.70 ATK SPD
+- Level 1: 13 HP / 1 DMG / 0.80 ATK SPD
+- Level 2: 17 HP / 1 DMG / 0.90 ATK SPD
+- Level 3: 22 HP / 1 DMG / 1.00 ATK SPD
 
 UNITS WITHOUT UPGRADE TREES:
 ----------------------------
@@ -142,6 +145,8 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.baseHealth = stats.health or 10
     self.baseDamage = stats.damage or 1
     self.baseAttackSpeed = stats.attackSpeed or 1
+
+    self.rawBaseAttackSpeed = stats.attackSpeed or 1  -- never changes; used for level-scaled restore
 
     -- Upgrade tree: each unit can have up to 3 upgrades, all can be selected
     self.activeUpgrades = {}  -- List of upgrade indices that have been selected (e.g., {1, 2})
@@ -745,10 +750,17 @@ function BaseUnit:upgrade(upgradeIndex)
         self.level = self.level + 1
     end
 
-    -- Always apply stat multiplier on upgrade (for all units)
+    -- Stat scaling on upgrade:
+    --   HP:      ×1.3 per level
+    --   DMG:     fixed (never scales — balance stays consistent across levels)
+    --   ATK SPD: +0.10 flat per level; baseAttackSpeed updated so temp-buff
+    --            restore code (self.attackSpeed = self.baseAttackSpeed) lands
+    --            on the correct level-scaled value automatically.
     local multiplier = 1.3 ^ self.level
-    self.maxHealth = math.floor(self.baseHealth * multiplier)
-    self.damage = math.floor(self.baseDamage * multiplier)
+    self.maxHealth       = math.floor(self.baseHealth * multiplier)
+    self.damage          = self.baseDamage
+    self.baseAttackSpeed = self.rawBaseAttackSpeed + (self.level * 0.10)
+    self.attackSpeed     = self.baseAttackSpeed
 
     -- Heal to new max health when upgrading
     self.health = self.maxHealth
