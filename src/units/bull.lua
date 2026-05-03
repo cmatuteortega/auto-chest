@@ -122,6 +122,23 @@ function Bull:onBattleStart(grid)
 
     -- No movement possible (already at wall or blocked on first tile)
     if destCol == self.col and destRow == self.row then
+        if not enemy then
+            return  -- friendly/wall block; nothing to do
+        end
+        -- Enemy directly in front: skip the travel but still apply stun +
+        -- damage + upgrade payloads via the existing resolve path. Setting
+        -- chargeTimer == chargeDuration makes update() resolve next tick.
+        self.startCol         = self.col
+        self.startRow         = self.row
+        self.targetCol        = self.col
+        self.targetRow        = self.row
+        self.tweenProgress    = 1
+        self.isMoving         = false
+        self.isCharging       = true
+        self.chargeTimer      = self.chargeDuration
+        self.chargeEnemy      = enemy
+        self.chargeTrail      = {}
+        self.chargeTrailIndex = 0
         return
     end
 
@@ -183,6 +200,9 @@ function Bull:update(dt, grid)
             self.isCharging    = false
             self.isMoving      = false
             self.tweenProgress = 1
+            -- Restore standard per-cell tween duration so post-charge movement
+            -- isn't stuck at the fast charge rate.
+            self.tweenDuration = 1 / self.moveSpeed
 
             local enemy = self.chargeEnemy
             if enemy and not enemy.isDead then
@@ -301,6 +321,7 @@ function Bull:resetCombatState()
     self.ragingBullTimer  = 0
     self.firePatches     = {}
     self.attackSpeed     = self.baseAttackSpeed
+    self.tweenDuration   = 1 / self.moveSpeed
 end
 
 return Bull

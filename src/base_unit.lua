@@ -664,7 +664,10 @@ function BaseUnit:drawAttackVisualsBelow()
     -- Base implementation does nothing
 end
 
-function BaseUnit:takeDamage(amount)
+-- `attacker` and `grid` (both optional) are passed by the melee attack path
+-- so subclasses (e.g. Cart's Pothole) can react to who hit them and modify
+-- the board. AoE / projectile damage sources leave them nil.
+function BaseUnit:takeDamage(amount, attacker, grid)
     self.health = self.health - amount
     if self.health <= 0 then
         self.health = 0
@@ -1132,7 +1135,7 @@ end
 -- Melee subclasses may override to add extra effects (e.g. Humerus cleave).
 function BaseUnit:attack(target, grid)
     if not target or target.isDead then return end
-    target:takeDamage(self:getDamage(grid))
+    target:takeDamage(self:getDamage(grid), self, grid)
     if self.hitSound then AudioManager.playSFX(self.hitSound) end
     if target.isDead then
         grid:killUnit(target)

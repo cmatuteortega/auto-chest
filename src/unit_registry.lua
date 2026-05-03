@@ -16,6 +16,11 @@ local Clavicula = require('src.units.clavicula')
 local Burrow    = require('src.units.burrow')
 local Catapult  = require('src.units.catapult')
 local Mend      = require('src.units.mend')
+local Pouch     = require('src.units.pouch')
+local Barrel    = require('src.units.barrel')
+local Cart      = require('src.units.cart')
+local Flint     = require('src.units.flint')
+local Mason     = require('src.units.mason')
 
 local SpellRegistry = require('src.spell_registry')
 
@@ -40,13 +45,18 @@ UnitRegistry.unitClasses = {
     burrow   = Burrow,
     catapult = Catapult,
     mend   = Mend,
+    pouch    = Pouch,
+    barrel   = Barrel,
+    cart     = Cart,
+    flint    = Flint,
+    mason    = Mason,
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
     { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "arrows"} },
     { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult", "fireball"} },
-    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow"} },
+    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "cart", "flint", "mason"} },
 }
 
 -- Faction membership per unit type
@@ -68,6 +78,11 @@ UnitRegistry.factions = {
     sinner    = {"folk", "brawler"},
     catapult  = {"folk"},
     burrow    = {"monster", "brawler"},
+    pouch     = {"monster", "marksman"},
+    barrel    = {"monster", "brawler"},
+    cart      = {"monster", "brawler"},
+    flint     = {"monster", "marksman"},
+    mason     = {"monster", "brawler"},
     -- Spells
     arrows    = {"undead"},
     fireball  = {"folk"},
@@ -82,6 +97,11 @@ UnitRegistry.rarity = {
     amalgam   = "common",
     -- Goblin Gang
     burrow    = "common",
+    pouch     = "common",
+    barrel    = "common",
+    cart      = "common",
+    flint     = "common",
+    mason     = "common",
     clavicula = "rare",
     humerus   = "rare",
     migraine  = "epic",
@@ -191,12 +211,42 @@ UnitRegistry.spritePaths = {
         front = "src/assets/mend/front.png",
         back  = "src/assets/mend/back.png",
         dead  = "src/assets/mend/dead.png"
+    },
+    pouch = {
+        front = "src/assets/pouch/front.png",
+        back  = "src/assets/pouch/back.png",
+        dead  = "src/assets/pouch/front.png"  -- no dead sprite yet; reuse front
+    },
+    barrel = {
+        front = "src/assets/barrel/barrel/front.png",
+        back  = "src/assets/barrel/barrel/back.png",
+        dead  = "src/assets/barrel/barrel/front.png"  -- no dead sprite; reuse front
+    },
+    ["barrel-free"] = {
+        front = "src/assets/barrel/barrel-free/front.png",
+        back  = "src/assets/barrel/barrel-free/back.png",
+        dead  = "src/assets/barrel/barrel-free/front.png"
+    },
+    cart = {
+        front = "src/assets/cart/front.png",
+        back  = "src/assets/cart/back.png",
+        dead  = "src/assets/cart/front.png"  -- no dead sprite yet; reuse front
+    },
+    flint = {
+        front = "src/assets/flint/front.png",
+        back  = "src/assets/flint/back.png",
+        dead  = "src/assets/flint/front.png"  -- no dead sprite yet; reuse front
+    },
+    mason = {
+        front = "src/assets/mason/front.png",
+        back  = "src/assets/mason/back.png",
+        dead  = "src/assets/mason/front.png"  -- no dead sprite yet; reuse front
     }
 }
 
 -- Map of unit type names to their passive ability descriptions
 UnitRegistry.passiveDescriptions = {
-    knight = "Taunt all enemies within 3 cells for 3 seconds at battle start",
+    knight = "Taunt all enemies in a 3x3 area in front for 3 seconds at battle start",
     boney = "Deal 2x damage when below 50% HP",
     samurai = "Deal 2x damage when no allies are within 2 cells",
     marrow = "Gain +0.2 attack speed per kill",
@@ -212,7 +262,12 @@ UnitRegistry.passiveDescriptions = {
     clavicula = "Every 10 hits (given or taken), spins and deals damage to all adjacent enemies, healing 50% of damage dealt",
     burrow   = "Burrows underground at battle start, reappearing 1s later at the mirrored cell across the field",
     mend   = "Every 6 hits given or received, heals the lowest HP ally for 2 HP",
-    catapult = "At battle start, fires a projectile 4 rows forward dealing 3 damage in a cross. Leaves burning ground for 3s."
+    catapult = "At battle start, fires a projectile 4 rows forward dealing 3 damage in a cross. Leaves burning ground for 3s.",
+    pouch    = "Always switches to a new in-range target. After 3 different targets in a row, the next throw is a heavy boulder that stuns for 1s.",
+    barrel   = "Rolls forward at battle start until blocked by any unit or reaches the far row. Crash deals 3 damage to a hit enemy, then breaks open into a goblin.",
+    cart     = "Twice as fast between cells. A fragile-looking minecart driven by two goblins; closes the gap and crashes into the front line first.",
+    flint    = "Lobs bombs onto enemy cells. Bombs fuse for 1s before exploding for 2 damage and leaving a 1s fire patch — enemies that step out of the cell during the fuse take no damage.",
+    mason    = "Throws rocks at adjacent enemies. At battle start, hurls a rock 4 rows forward that damages every enemy in its path for 5."
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -279,6 +334,11 @@ UnitRegistry.unitCosts = {
     burrow   = 3,
     catapult = 2,
     mend   = 3,
+    pouch  = 3,
+    barrel = 3,
+    cart   = 4,
+    flint  = 3,
+    mason  = 4,
     -- Spells
     arrows   = 2,
     fireball = 4,
@@ -322,6 +382,11 @@ end
 local LEGACY_ONLY_UNITS = {
     clavicula = true,
     tomb      = true,
+    pouch     = true,
+    barrel    = true,
+    cart      = true,
+    flint     = true,
+    mason     = true,
 }
 
 -- Load directional sprites for a unit type (8-direction animation system).
@@ -555,6 +620,9 @@ local function resetShared()
         explosionFrames  = nil,
         migraineBgFrames = nil,
         catapultProjImg  = nil,
+        fuseFrames       = nil,
+        rockFrames       = nil,
+        rockBreakFrames  = nil,
     }
 end
 
@@ -599,6 +667,9 @@ function UnitRegistry.getLoadSteps()
         if _loadingAllSprites["sinner"] then
             _loadingAllSprites["sinner"].freeForm = UnitRegistry.loadSprites("sinner-free")
         end
+        if _loadingAllSprites["barrel"] then
+            _loadingAllSprites["barrel"].freeForm = UnitRegistry.loadSprites("barrel-free")
+        end
         local lancePath = "src/assets/particles/lance.png"
         if love.filesystem.getInfo(lancePath) and _loadingAllSprites["marrow"] then
             local lanceImg = love.graphics.newImage(lancePath)
@@ -627,6 +698,9 @@ function UnitRegistry.getLoadSteps()
         _shared.migraineBgFrames = loadFrameSequence("src/assets/migraine/background-anim/background-%d.png", 8)
         _shared.catapultProjImg  = loadProjectileImg("src/assets/particles/catapult-projectile.png")
         _shared.explosionFrames  = loadFrameIndices("src/assets/particles/explosion/explosion%d.png", {0,1,2,3,4,5,6})
+        _shared.fuseFrames       = loadFrameSequence("src/assets/particles/fuse/fuse%d.png", 4)
+        _shared.rockFrames       = loadFrameSequence("src/assets/particles/rock/rock%d.png", 4)
+        _shared.rockBreakFrames  = loadFrameSequence("src/assets/particles/rock/break%d.png", 2)
     end)
 
     -- Generic death animations (played by Grid:drawCorpsesInRow for any fallen unit, 0-indexed).
@@ -716,11 +790,22 @@ function UnitRegistry.finalizeSprites()
         end
 
         if _shared.fireFrames and #_shared.fireFrames > 0 then
-            for _, unitType in ipairs({"mage", "catapult", "migraine", "bull"}) do
+            for _, unitType in ipairs({"mage", "catapult", "migraine", "bull", "flint"}) do
                 if allSprites[unitType] then
                     allSprites[unitType].fireFrames = _shared.fireFrames
                 end
             end
+        end
+
+        if _shared.fuseFrames and #_shared.fuseFrames > 0 and allSprites["flint"] then
+            allSprites["flint"].fuseFrames = _shared.fuseFrames
+        end
+
+        if _shared.rockFrames and #_shared.rockFrames > 0 and allSprites["mason"] then
+            allSprites["mason"].rockFrames = _shared.rockFrames
+        end
+        if _shared.rockBreakFrames and #_shared.rockBreakFrames > 0 and allSprites["mason"] then
+            allSprites["mason"].rockBreakFrames = _shared.rockBreakFrames
         end
 
         if _shared.migraineBgFrames and #_shared.migraineBgFrames > 0 and allSprites["migraine"] then
@@ -729,6 +814,9 @@ function UnitRegistry.finalizeSprites()
 
         if _shared.catapultProjImg and allSprites["catapult"] then
             allSprites["catapult"].catapultProjectile = _shared.catapultProjImg
+        end
+        if _shared.catapultProjImg and allSprites["pouch"] then
+            allSprites["pouch"].catapultProjectile = _shared.catapultProjImg
         end
 
         if _shared.deathFrames then
@@ -802,7 +890,7 @@ UnitRegistry.MAX_CARD_COPIES = 4
 -- Rarity tiers for milestone unlock ordering (commons exhausted first, then rares, then epics)
 UnitRegistry.rarityTiers = {
     { tier = "common", units = { "mend", "amalgam", "mage", "bull" } },
-    { tier = "common", units = { "burrow", "arrows", "fireball" } },
+    { tier = "common", units = { "burrow", "pouch", "barrel", "cart", "flint", "mason", "arrows", "fireball" } },
     { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
     { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }

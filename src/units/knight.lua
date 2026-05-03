@@ -40,7 +40,7 @@ function Knight:new(row, col, owner, sprites)
         -- Upgrade 2: +5 HP per enemy in taunt radius
         {
             name = "Guardian",
-            description = "+5 max HP per enemy in taunt radius",
+            description = "+5 max HP per enemy in taunt area",
             onApply = function(unit)
                 -- No immediate effect, handled in onBattleStart()
             end
@@ -56,7 +56,7 @@ function Knight:new(row, col, owner, sprites)
     }
 end
 
--- Passive: Taunt all enemies within 3 cells at battle start
+-- Passive: Taunt all enemies in a 3x3 area in front at battle start
 function Knight:onBattleStart(grid)
     -- Store taunt params; fires when windup animation completes
     self.pendingTaunt = {
@@ -72,10 +72,21 @@ function Knight:applyTaunt(grid, tauntDuration)
     local allUnits = grid:getAllUnits()
     local enemiesInRadius = 0
 
+    -- 3x3 area in front of the knight (3 cols wide, 3 rows deep)
+    local dirRow = (self.owner == 1) and -1 or 1
+    local minCol = self.col - 1
+    local maxCol = self.col + 1
+    local minRow, maxRow
+    if dirRow == -1 then
+        minRow, maxRow = self.row - 3, self.row - 1
+    else
+        minRow, maxRow = self.row + 1, self.row + 3
+    end
+
     for _, unit in ipairs(allUnits) do
         if unit.owner ~= self.owner and not unit.isDead then
-            local distance = math.sqrt((unit.col - self.col)^2 + (unit.row - self.row)^2)
-            if distance <= 3 then
+            if unit.col >= minCol and unit.col <= maxCol
+               and unit.row >= minRow and unit.row <= maxRow then
                 unit.tauntedBy = self
                 unit.tauntTimer = tauntDuration
                 enemiesInRadius = enemiesInRadius + 1
