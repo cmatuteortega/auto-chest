@@ -278,6 +278,77 @@ function GameScreen.new()
         lg.draw(br, maxX, maxY, 0, scale, scale, sw, sh)
     end
 
+    -- Draw a single corner-bracket sprite at one corner of one cell.
+    -- `corner` is "topleft" / "topright" / "bottomleft" / "bottomright".
+    function self:drawCornerBracket(col, row, corner)
+        local lg = love.graphics
+        if not self.cornerSprites then return end
+        local sprite = self.cornerSprites[corner]
+        if not sprite then return end
+
+        local cs = Constants.CELL_SIZE
+        local x, y = self.grid:gridToWorld(col, row)
+        local minX, maxX = x, x + cs
+        local minY, maxY = y, y + cs
+        local scale = cs / 16
+        local sw, sh = sprite:getWidth(), sprite:getHeight()
+
+        lg.setColor(1, 1, 1, 1)
+        if corner == "topleft" then
+            lg.draw(sprite, minX, minY, 0, scale, scale, 0, 0)
+        elseif corner == "topright" then
+            lg.draw(sprite, maxX, minY, 0, scale, scale, sw, 0)
+        elseif corner == "bottomleft" then
+            lg.draw(sprite, minX, maxY, 0, scale, scale, 0, sh)
+        elseif corner == "bottomright" then
+            lg.draw(sprite, maxX, maxY, 0, scale, scale, sw, sh)
+        end
+    end
+
+    -- Draw a corner-bracket outline of an arbitrary AoE shape. `hitOffsets` is
+    -- a list of {dc, dr} offsets relative to (originCol, originRow). For each
+    -- cell in the shape's bounding box, emits a bracket sprite at every corner
+    -- where the two cardinal neighbors that share that corner are both hits
+    -- (concave, on a miss cell) or both misses (convex, on a hit cell). Other
+    -- mixed corners are interior edges and get no bracket.
+    function self:drawAoEOutline(originCol, originRow, hitOffsets)
+        local hits = {}
+        local function key(c, r) return c .. "," .. r end
+        local minC, maxC = math.huge, -math.huge
+        local minR, maxR = math.huge, -math.huge
+        for _, o in ipairs(hitOffsets) do
+            local c = originCol + o[1]
+            local r = originRow + o[2]
+            hits[key(c, r)] = true
+            if c < minC then minC = c end
+            if c > maxC then maxC = c end
+            if r < minR then minR = r end
+            if r > maxR then maxR = r end
+        end
+
+        for r = minR, maxR do
+            for c = minC, maxC do
+                if not self.grid:isValidCell(c, r) then goto continue end
+                local isHit = hits[key(c, r)] or false
+                local n = hits[key(c, r - 1)] or false
+                local s = hits[key(c, r + 1)] or false
+                local e = hits[key(c + 1, r)] or false
+                local w = hits[key(c - 1, r)] or false
+
+                -- A corner is drawn when both cardinal neighbors that share
+                -- it match the OPPOSITE state of the cell itself. On hits =>
+                -- both neighbors are misses (convex). On misses => both are
+                -- hits (concave).
+                local match = not isHit  -- value the neighbors must equal
+                if (n == match) and (w == match) then self:drawCornerBracket(c, r, "topleft")     end
+                if (n == match) and (e == match) then self:drawCornerBracket(c, r, "topright")    end
+                if (s == match) and (w == match) then self:drawCornerBracket(c, r, "bottomleft")  end
+                if (s == match) and (e == match) then self:drawCornerBracket(c, r, "bottomright") end
+                ::continue::
+            end
+        end
+    end
+
     -- Find this player's own spell placement at (col, row), or nil.
     function self:findOwnSpellAt(col, row)
         for i, p in ipairs(self.spellPlacements) do
@@ -585,6 +656,7 @@ function GameScreen.new()
         self.grid.corpses     = {}
         self.grid.firePatches = {}
         self.grid.cellEffects = {}
+        self.grid.hiddenUnits = {}
 
         -- Spells never persist between rounds.
         self.spellPlacements    = {}
@@ -941,7 +1013,9 @@ function GameScreen.new()
                 self.battleAccumulator = self.battleAccumulator - FIXED_DT
                 self.battleStepCount   = self.battleStepCount + 1
 
-                local allUnits = self.grid:getAllUnits()
+                -- Iterate hidden units too (e.g. Burrow underground) so their
+                -- timers tick and they can re-emerge on schedule.
+                local allUnits = self.grid:getAllUnitsIncludingHidden()
                 for _, unit in ipairs(allUnits) do
                     unit:update(FIXED_DT, self.grid)
                 end
@@ -980,7 +1054,7 @@ function GameScreen.new()
             end
         elseif self.state == "battle_ending" then
             -- Continue updating units to allow animations to complete
-            local allUnits = self.grid:getAllUnits()
+            local allUnits = self.grid:getAllUnitsIncludingHidden()
             for _, unit in ipairs(allUnits) do
                 unit:update(dt, self.grid)
             end
@@ -1207,6 +1281,68 @@ function GameScreen.new()
             end
             if indCol and indRow and self.grid:isValidCell(indCol, indRow) then
                 self:drawCellIndicator(indCol, indRow, fpC, fpR)
+
+                -- Burrow tunnels to the mirrored row at battle start; preview
+                -- the emerge cell so the player can see where it'll pop out.
+                local dragType = (self.draggedUnit and self.draggedUnit.unitType)
+                              or (self.draggedCard and self.draggedCard.unitType)
+                if dragType == "burrow" then
+                    local mirrorRow = Constants.GRID_ROWS + 1 - indRow
+                    if self.grid:isValidCell(indCol, mirrorRow) then
+                        self:drawCellIndicator(indCol, mirrorRow, fpC, fpR)
+                    end
+                elseif dragType == "knight" then
+                    -- Knight taunts all enemies in a 3x3 area in front at
+                    -- battle start. Draw one bracket around the whole area
+                    -- (Arrows-spell style) by centering the 3x3 footprint
+                    -- 2 rows ahead of the knight.
+                    local owner = self.grid:getOwner(indRow)
+                    local dirRow
+                    if owner == 1 then dirRow = -1
+                    elseif owner == 2 then dirRow = 1
+                    end
+                    if dirRow then
+                        local centerRow = indRow + dirRow * 2
+                        if self.grid:isValidCell(indCol, centerRow) then
+                            self:drawCellIndicator(indCol, centerRow, 3, 3)
+                        end
+                    end
+                elseif dragType == "catapult" then
+                    -- Catapult fires 4 rows forward at battle start, exploding
+                    -- in a 5-cell cross. Preview each hit cell individually.
+                    local owner = self.grid:getOwner(indRow)
+                    local targetRow
+                    if owner == 1 then
+                        targetRow = math.max(1, indRow - 4)
+                    elseif owner == 2 then
+                        targetRow = math.min(Constants.GRID_ROWS, indRow + 4)
+                    end
+                    if targetRow then
+                        local crossOffsets = { {0,0}, {1,0}, {-1,0}, {0,1}, {0,-1} }
+                        self:drawAoEOutline(indCol, targetRow, crossOffsets)
+                    end
+                elseif dragType == "bull" or dragType == "marrow" or dragType == "barrel" then
+                    -- Forward-line action units: outline the cells the unit
+                    -- moves/fires through at battle start. Bull = 4 tiles;
+                    -- Marrow & Barrel = full column to the far row.
+                    local owner = self.grid:getOwner(indRow)
+                    local dirRow
+                    if owner == 1 then dirRow = -1
+                    elseif owner == 2 then dirRow = 1
+                    end
+                    if dirRow then
+                        local maxSteps = (dragType == "bull") and 4 or Constants.GRID_ROWS
+                        local offsets = {}
+                        for i = 1, maxSteps do
+                            local r = indRow + dirRow * i
+                            if r < 1 or r > Constants.GRID_ROWS then break end
+                            table.insert(offsets, { 0, dirRow * i })
+                        end
+                        if #offsets > 0 then
+                            self:drawAoEOutline(indCol, indRow, offsets)
+                        end
+                    end
+                end
             end
         end
 

@@ -89,7 +89,7 @@ end
 function Humerus:attack(target, grid)
     if not target or target.isDead then return end
 
-    target:takeDamage(self:getDamage(grid))
+    target:takeDamage(self:getDamage(grid), self, grid)
     AudioManager.playSFX("big-hit.mp3")
     self.hitCounter = self.hitCounter + 1
 
@@ -112,7 +112,7 @@ function Humerus:attack(target, grid)
                         if hp < 0.3 then cleaveDmg = cleaveDmg * 2 end
                     end
                     cleaveDmg = math.floor(cleaveDmg * (self.royalCommandBonus or 1))
-                    unit:takeDamage(cleaveDmg)
+                    unit:takeDamage(cleaveDmg, self, grid)
                     AudioManager.playSFX("big-hit.mp3")
                     if unit.isDead then
                         grid:killUnit(unit)

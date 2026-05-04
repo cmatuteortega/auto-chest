@@ -34,6 +34,11 @@ function Grid:new()
 
     -- Per-cell spawn/despawn animations queued whenever the board changes between phases.
     self.cellEffects = {}
+
+    -- Units that are temporarily off the board (e.g. Burrow while underground).
+    -- They still receive update() ticks but are invisible to targeting, AoE,
+    -- and forward-scan checks done by other units.
+    self.hiddenUnits = {}
 end
 
 -- Refresh grid dimensions from Constants (called on resize)
@@ -250,6 +255,47 @@ function Grid:tickFirePatches(dt)
             table.remove(self.firePatches, i)
         end
     end
+end
+
+-- Pull a unit off the board (for Burrow's underground phase). The unit stays
+-- alive and still gets update() ticks via getAllUnitsIncludingHidden(), but
+-- is invisible to every other system (targeting, AoE, forward scans, draw).
+function Grid:hideUnit(unit)
+    if not unit then return end
+    if unit.col and unit.row then
+        local cell = self:getCell(unit.col, unit.row)
+        if cell and cell.unit == unit then
+            cell.unit = nil
+            cell.occupied = false
+        end
+    end
+    -- Avoid double-insertion
+    for _, u in ipairs(self.hiddenUnits) do
+        if u == unit then return end
+    end
+    table.insert(self.hiddenUnits, unit)
+end
+
+-- Remove a previously-hidden unit from the hidden list. Caller is responsible
+-- for placing it back on a cell via placeUnit().
+function Grid:unhideUnit(unit)
+    for i, u in ipairs(self.hiddenUnits) do
+        if u == unit then
+            table.remove(self.hiddenUnits, i)
+            return true
+        end
+    end
+    return false
+end
+
+-- Variant of getAllUnits that also includes hidden units. Used by the battle
+-- update loop so hidden units' timers and emerge logic still tick.
+function Grid:getAllUnitsIncludingHidden()
+    local units = self:getAllUnits()
+    for _, u in ipairs(self.hiddenUnits) do
+        table.insert(units, u)
+    end
+    return units
 end
 
 function Grid:getAllUnits()

@@ -82,20 +82,19 @@ local function findNearestFree(grid, col, row)
 end
 
 -- ============================================================
--- onBattleStart: remove from grid, compute mirror destination,
--- place unit there immediately (logically), begin 1s hide timer.
+-- onBattleStart: pull Burrow off the grid entirely. While hidden, every
+-- forward-scan and target-search by other units sees an empty cell, so
+-- Burrow doesn't interfere with Bull charges, Marrow lances, Barrel rolls,
+-- etc. The actual landing cell is resolved on emerge so we account for any
+-- unit that occupied the mirrored cell during the underground phase.
 -- ============================================================
 function Burrow:onBattleStart(grid)
     local mirroredRow = Constants.GRID_ROWS + 1 - self.row
-    local destCol, destRow = findNearestFree(grid, self.col, mirroredRow)
 
-    -- Move logically to destination immediately (same as Bull pattern)
-    grid:removeUnit(self.col, self.row)
-    self.col = destCol
-    self.row = destRow
-    grid:placeUnit(destCol, destRow, self)
+    grid:hideUnit(self)
+    self.burrowDestCol = self.col
+    self.burrowDestRow = mirroredRow
 
-    -- Begin underground hide timer
     self.isBurrowing = true
     self.burrowTimer = 0
 end
@@ -111,6 +110,14 @@ function Burrow:update(dt, grid)
         if self.burrowTimer >= self.actionDuration then
             self.isBurrowing = false
             self.burrowTimer = 0
+
+            -- Resolve emerge cell now (not at battle start) so we pick a free
+            -- cell against the current board state.
+            local destCol, destRow = findNearestFree(grid, self.burrowDestCol, self.burrowDestRow)
+            grid:unhideUnit(self)
+            self.col = destCol
+            self.row = destRow
+            grid:placeUnit(destCol, destRow, self)
 
             -- Upgrade 2 (Ground Burst): AoE damage + stun on emergence
             if self:hasUpgrade(2) then
@@ -177,10 +184,12 @@ end
 -- ============================================================
 function Burrow:resetCombatState()
     Burrow.super.resetCombatState(self)
-    self.isBurrowing  = false
-    self.burrowTimer  = 0
-    self.surgeTimer   = 0
-    self.attackSpeed  = self.baseAttackSpeed
+    self.isBurrowing   = false
+    self.burrowTimer   = 0
+    self.burrowDestCol = nil
+    self.burrowDestRow = nil
+    self.surgeTimer    = 0
+    self.attackSpeed   = self.baseAttackSpeed
 end
 
 return Burrow
