@@ -21,6 +21,8 @@ local Barrel    = require('src.units.barrel')
 local Cart      = require('src.units.cart')
 local Flint     = require('src.units.flint')
 local Mason     = require('src.units.mason')
+local Pest      = require('src.units.pest')
+local Loot      = require('src.units.loot')
 
 local SpellRegistry = require('src.spell_registry')
 
@@ -50,13 +52,15 @@ UnitRegistry.unitClasses = {
     cart     = Cart,
     flint    = Flint,
     mason    = Mason,
+    pest     = Pest,
+    loot     = Loot,
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
     { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "arrows"} },
     { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult", "fireball"} },
-    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "cart", "flint", "mason"} },
+    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "cart", "flint", "mason", "pest", "loot"} },
 }
 
 -- Faction membership per unit type
@@ -83,6 +87,8 @@ UnitRegistry.factions = {
     cart      = {"monster", "brawler"},
     flint     = {"monster", "marksman"},
     mason     = {"monster", "brawler"},
+    pest      = {"monster", "marksman"},
+    loot      = {"monster"},
     -- Spells
     arrows    = {"undead"},
     fireball  = {"folk"},
@@ -102,6 +108,8 @@ UnitRegistry.rarity = {
     cart      = "common",
     flint     = "common",
     mason     = "common",
+    pest      = "common",
+    loot      = "common",
     clavicula = "rare",
     humerus   = "rare",
     migraine  = "epic",
@@ -241,6 +249,16 @@ UnitRegistry.spritePaths = {
         front = "src/assets/mason/front.png",
         back  = "src/assets/mason/back.png",
         dead  = "src/assets/mason/front.png"  -- no dead sprite yet; reuse front
+    },
+    pest = {
+        front = "src/assets/pest/front.png",
+        back  = "src/assets/pest/back.png",
+        dead  = "src/assets/pest/front.png"  -- no dead sprite yet; reuse front
+    },
+    loot = {
+        front = "src/assets/loot/front.png",
+        back  = "src/assets/loot/back.png",
+        dead  = "src/assets/loot/front.png"  -- no dead sprite yet; reuse front
     }
 }
 
@@ -267,7 +285,9 @@ UnitRegistry.passiveDescriptions = {
     barrel   = "Rolls forward at battle start until blocked by any unit or reaches the far row. Crash deals 3 damage to a hit enemy, then breaks open into a goblin.",
     cart     = "Twice as fast between cells. A fragile-looking minecart driven by two goblins; closes the gap and crashes into the front line first.",
     flint    = "Lobs bombs onto enemy cells. Bombs fuse for 1s before exploding for 2 damage and leaving a 1s fire patch — enemies that step out of the cell during the fuse take no damage.",
-    mason    = "Throws rocks at adjacent enemies. At battle start, hurls a rock 4 rows forward that damages every enemy in its path for 5."
+    mason    = "Throws rocks at adjacent enemies. At battle start, hurls a rock 4 rows forward that damages every enemy in its path for 5.",
+    pest     = "Basic attacks slow target's attack speed and movement by 40% for 2s.",
+    loot     = "If alive at round end: +2 coins. If destroyed: opponent gains +1 coin."
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -339,6 +359,8 @@ UnitRegistry.unitCosts = {
     cart   = 4,
     flint  = 3,
     mason  = 4,
+    pest   = 4,
+    loot   = 3,
     -- Spells
     arrows   = 2,
     fireball = 4,
@@ -387,6 +409,8 @@ local LEGACY_ONLY_UNITS = {
     cart      = true,
     flint     = true,
     mason     = true,
+    pest      = true,
+    loot      = true,
 }
 
 -- Load directional sprites for a unit type (8-direction animation system).
@@ -584,6 +608,26 @@ local function loadSharedUpFrames()
     return frames
 end
 
+local function loadSharedHealthbarSprites()
+    local function loadSeq(prefix, lo, hi)
+        local frames = {}
+        for i = lo, hi do
+            local path = "src/assets/ui/healthbar/" .. prefix .. i .. ".png"
+            if love.filesystem.getInfo(path) then
+                local img = love.graphics.newImage(path)
+                img:setFilter('nearest', 'nearest')
+                frames[i] = img
+            end
+        end
+        return frames
+    end
+    return {
+        ally   = loadSeq("ally",   1, 8),
+        enemy  = loadSeq("enemy",  1, 8),
+        energy = loadSeq("energy", 0, 8),
+    }
+end
+
 local function loadProjectileImg(path)
     if love.filesystem.getInfo(path) then
         local img = love.graphics.newImage(path)
@@ -613,6 +657,7 @@ local function resetShared()
         stunFrames       = nil,
         tauntImg         = nil,
         upFrames         = nil,
+        healthbarFrames  = nil,
         arrowImg         = nil,
         magicImg         = nil,
         fireballFrames   = nil,
@@ -680,9 +725,10 @@ function UnitRegistry.getLoadSteps()
 
     -- Shared particle frames
     table.insert(steps, function()
-        _shared.stunFrames = loadSharedStunFrames()
-        _shared.tauntImg   = loadSharedTauntImg()
-        _shared.upFrames   = loadSharedUpFrames()
+        _shared.stunFrames      = loadSharedStunFrames()
+        _shared.tauntImg        = loadSharedTauntImg()
+        _shared.upFrames        = loadSharedUpFrames()
+        _shared.healthbarFrames = loadSharedHealthbarSprites()
     end)
 
     -- Projectiles + fireball/fire shared frames
@@ -764,12 +810,22 @@ function UnitRegistry.finalizeSprites()
     local allSprites = _loadingAllSprites or {}
 
     if _shared then
-        if (_shared.stunFrames and #_shared.stunFrames > 0) or _shared.tauntImg or (_shared.upFrames and #_shared.upFrames > 0) or (_shared.explosionFrames and #_shared.explosionFrames > 0) then
-            for _, sprites in pairs(allSprites) do
+        if (_shared.stunFrames and #_shared.stunFrames > 0) or _shared.tauntImg or (_shared.upFrames and #_shared.upFrames > 0) or (_shared.explosionFrames and #_shared.explosionFrames > 0) or _shared.healthbarFrames then
+            -- Attach the shared overlay assets onto a sprite table. Also called for any
+            -- alt-form sub-table (e.g. sinner.freeForm, barrel.freeForm) so that swapping
+            -- self.sprites mid-battle keeps healthbar/stun/taunt/etc. wired up.
+            local function wireOverlayAssets(sprites)
                 if _shared.stunFrames and #_shared.stunFrames > 0 then sprites.stunFrames = _shared.stunFrames end
                 if _shared.tauntImg                              then sprites.tauntImg   = _shared.tauntImg   end
                 if _shared.upFrames and #_shared.upFrames > 0    then sprites.upFrames   = _shared.upFrames   end
                 if _shared.explosionFrames and #_shared.explosionFrames > 0 then sprites.explosionFrames = _shared.explosionFrames end
+                if _shared.healthbarFrames                       then sprites.healthbarFrames = _shared.healthbarFrames end
+            end
+            for _, sprites in pairs(allSprites) do
+                wireOverlayAssets(sprites)
+                if sprites.freeForm then
+                    wireOverlayAssets(sprites.freeForm)
+                end
             end
         end
 
@@ -778,7 +834,7 @@ function UnitRegistry.finalizeSprites()
                 allSprites[unitType].projectile = _shared.arrowImg
             end
         end
-        for _, unitType in ipairs({"migraine", "mage"}) do
+        for _, unitType in ipairs({"migraine", "mage", "pest"}) do
             if _shared.magicImg and allSprites[unitType] then
                 allSprites[unitType].projectile = _shared.magicImg
                 allSprites[unitType].projectileAngleOffset = math.pi / 2
@@ -890,7 +946,7 @@ UnitRegistry.MAX_CARD_COPIES = 4
 -- Rarity tiers for milestone unlock ordering (commons exhausted first, then rares, then epics)
 UnitRegistry.rarityTiers = {
     { tier = "common", units = { "mend", "amalgam", "mage", "bull" } },
-    { tier = "common", units = { "burrow", "pouch", "barrel", "cart", "flint", "mason", "arrows", "fireball" } },
+    { tier = "common", units = { "burrow", "pouch", "barrel", "cart", "flint", "mason", "pest", "loot", "arrows", "fireball" } },
     { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
     { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }

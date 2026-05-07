@@ -1090,6 +1090,22 @@ function GameScreen.new()
                         self.playerCoins = self.playerCoins + 3
                     end
 
+                    -- Loot (Buried Treasure): each surviving Loot pays its owner;
+                    -- each destroyed Loot pays the opponent. Greed upgrade scales both.
+                    local lootAlive = self.grid:getAllUnitsIncludingHidden()
+                    for _, u in ipairs(lootAlive) do
+                        if u.unitType == "loot" and not u.isDead then
+                            if u.owner == self.playerRole then
+                                self.playerCoins = self.playerCoins + u:getSurvivalBonus()
+                            end
+                        end
+                    end
+                    for _, u in ipairs(self.grid.corpses) do
+                        if u.unitType == "loot" and u.owner ~= self.playerRole then
+                            self.playerCoins = self.playerCoins + u:getKillBonus()
+                        end
+                    end
+
                     -- Leave bodies on board; apply life deduction after intermission
                     AudioManager.playSFX("battle-end.mp3")
                     self.pendingWinner     = self.winner
@@ -1227,6 +1243,7 @@ function GameScreen.new()
 
         -- During online setup, hide the opponent's units for the element of surprise.
         local hideOwner = (self.isOnline and self.state == "setup" and self.roundNumber == 1) and (3 - self.playerRole) or nil
+        BaseUnit.renderState = self.state
         self.grid:draw(self.draggedUnit, hideOwner)
         self.grid:drawCellEffects()
 
