@@ -142,6 +142,12 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.baseHealth = stats.health or 10
     self.baseDamage = stats.damage or 1
     self.baseAttackSpeed = stats.attackSpeed or 1
+    self.baseMoveSpeed   = stats.moveSpeed or 1
+
+    -- Slow debuff (refresh-not-stack)
+    self.slowTimer       = 0
+    self.slowAttackMult  = 1
+    self.slowMoveMult    = 1
 
     -- Upgrade tree: each unit can have up to 3 upgrades, all can be selected
     self.activeUpgrades = {}  -- List of upgrade indices that have been selected (e.g., {1, 2})
@@ -150,6 +156,11 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.isDead = false
     self.onDeathCallback = nil
     self.hitSound = nil  -- SFX played on successful hit (set per unit)
+
+    -- Healthbar reveal latch: once an energy-bearing unit takes damage or earns
+    -- a charge in a battle, the HP sprite stays visible until death (even if
+    -- the unit later heals to full or its passive zeroes the energy counter).
+    self.barRevealed = false
 
     -- Combat stats
     self.attackCooldown = 0
@@ -547,43 +558,63 @@ function BaseUnit:draw()
     lg.draw(sprite, math.floor(x + offsetX), math.floor(y + offsetY), 0, scale, scale)
     love.graphics.setShader()
 
-    -- Bars above the sprite: anchor to the unit's visible top (same reference as stun particles)
+    -- Bars above the sprite: anchor to the unit's visible top (same reference as stun particles).
+    -- Drawn before taunt/stun blocks below so those status icons render on top.
     if not self.isDead then
-        local barPadding = 4 * Constants.SCALE
-        local barHeight  = 3 * Constants.SCALE
-        local barGap     = math.floor(1 * Constants.SCALE)
-        local barWidth   = Constants.CELL_SIZE - barPadding
-        local barX       = x + (barPadding / 2)
-        local visibleTopY = y + offsetY + trimTop * scale
+        local frames = self.sprites and self.sprites.healthbarFrames
+        if frames then
+            local cx      = x + Constants.CELL_SIZE / 2
+            local visTopY = y + offsetY + trimTop * scale
+            local inSetup = BaseUnit.renderState == "setup"
 
-        -- Energy bar sits directly above the sprite top
-        local hasEnergy = false
-        if self.getEnergy then
-            local curr, max = self:getEnergy()
-            if curr and max and max > 0 then
-                hasEnergy = true
-                local energyBarY = visibleTopY - barHeight - barGap
-                local pct = math.min(curr / max, 1)
-                lg.setColor(0.4, 0.75, 1.0, 1)
-                lg.rectangle('fill', barX, energyBarY, barWidth * pct, barHeight)
+            -- For units with an energy meter, latch a "revealed" flag once they engage
+            -- (take damage or earn a charge). Once latched, the HP sprite stays visible
+            -- until the unit dies — even if it heals to full or its passive zeroes the
+            -- energy counter (e.g. Sinner after form change). Cleared in resetCombatState.
+            local energyCurr, energyMax
+            if self.getEnergy then
+                energyCurr, energyMax = self:getEnergy()
             end
-        end
-
-        -- Health bar sits above the energy bar (or directly above sprite if no energy bar)
-        if self.health < self.maxHealth then
-            local energyOffset = hasEnergy and (barHeight + barGap) or 0
-            local hpBarY = visibleTopY - barHeight - barGap - energyOffset
-
-            lg.setColor(0.3, 0.3, 0.3, 1)
-            lg.rectangle('fill', barX, hpBarY, barWidth, barHeight)
-
-            local healthPercent = self.health / self.maxHealth
-            if self.owner == (Constants.PERSPECTIVE or 1) then
-                lg.setColor(0.2, 0.8, 0.2, 1)
-            else
-                lg.setColor(0.8, 0.2, 0.2, 1)
+            if not inSetup and self.getEnergy then
+                if self.health < self.maxHealth or (energyCurr and energyCurr > 0) then
+                    self.barRevealed = true
+                end
             end
-            lg.rectangle('fill', barX, hpBarY, barWidth * healthPercent, barHeight)
+
+            -- Health sprite: shown when damaged, or (for revealed energy units) always.
+            -- Ceil maps tiny chip damage (>87.5%) to the "8" tier.
+            local showHealth = (self.health > 0)
+                and (self.health < self.maxHealth or self.barRevealed)
+            if showHealth then
+                local pct = self.health / self.maxHealth
+                local idx = math.max(1, math.min(8, math.ceil(pct * 8)))
+                local set = (self.owner == (Constants.PERSPECTIVE or 1)) and frames.ally or frames.enemy
+                local img = set and set[idx]
+                if img then
+                    local sw, sh = img:getWidth(), img:getHeight()
+                    lg.setColor(1, 1, 1, 1)
+                    love.graphics.setShader(getPaletteShader())
+                    lg.draw(img, cx, visTopY, 0, scale, scale, sw / 2, sh)
+                    love.graphics.setShader()
+                end
+            end
+
+            -- Energy sprite: overlays the health sprite at the same position. Hidden in
+            -- setup; otherwise shown once the bar has been revealed AND the unit's
+            -- getEnergy() still yields a valid value (so Sinner's post-form-change
+            -- nil return correctly drops the energy overlay while keeping the HP frame).
+            if not inSetup and self.barRevealed and energyCurr and energyMax and energyMax > 0 then
+                local pct = math.max(0, math.min(1, energyCurr / energyMax))
+                local idx = math.max(0, math.min(8, math.floor(pct * 8)))
+                local img = frames.energy and frames.energy[idx]
+                if img then
+                    local sw, sh = img:getWidth(), img:getHeight()
+                    lg.setColor(1, 1, 1, 1)
+                    love.graphics.setShader(getPaletteShader())
+                    lg.draw(img, cx, visTopY, 0, scale, scale, sw / 2, sh)
+                    love.graphics.setShader()
+                end
+            end
         end
     end
 
@@ -786,6 +817,14 @@ function BaseUnit:hasUpgrade(upgradeIndex)
     return false
 end
 
+-- Apply a slow debuff. Refresh-not-stack: keep the longest remaining duration
+-- and the strongest (lowest) multiplier among overlapping slows.
+function BaseUnit:applySlow(duration, atkMult, moveMult)
+    if duration > self.slowTimer then self.slowTimer = duration end
+    if atkMult  < self.slowAttackMult then self.slowAttackMult = atkMult  end
+    if moveMult < self.slowMoveMult   then self.slowMoveMult   = moveMult end
+end
+
 function BaseUnit:resetCombatState()
     self.health             = self.maxHealth
     self.isDead             = false
@@ -798,6 +837,9 @@ function BaseUnit:resetCombatState()
     self.tauntedBy          = nil
     self.tauntTimer         = 0
     self.stunTimer          = 0
+    self.slowTimer          = 0
+    self.slowAttackMult     = 1
+    self.slowMoveMult       = 1
     self.buffAnimTimer      = 0
     self.actionDelayTimer   = 0
     self.isMoving           = false
@@ -815,6 +857,7 @@ function BaseUnit:resetCombatState()
     self.tombMartyrdombuffTimer = nil
     self._noHeal                = nil
     self.royalCommandBonus      = nil
+    self.barRevealed            = false
 
     -- Reset action animation state
     self.actionAnimProgress = 0
@@ -905,6 +948,16 @@ function BaseUnit:update(dt, grid)
         return
     end
 
+    -- Slow debuff: tick down, reset multipliers when expired
+    if self.slowTimer > 0 then
+        self.slowTimer = self.slowTimer - dt
+        if self.slowTimer <= 0 then
+            self.slowTimer      = 0
+            self.slowAttackMult = 1
+            self.slowMoveMult   = 1
+        end
+    end
+
     -- Update attack cooldown
     if self.attackCooldown > 0 then
         self.attackCooldown = self.attackCooldown - dt
@@ -973,7 +1026,7 @@ function BaseUnit:update(dt, grid)
                     self:attack(self.target, grid)
                 end
             end
-            self.attackCooldown = 1 / self.attackSpeed
+            self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult)
         end
     else
         -- Target out of range, or we're still moving - move toward it
@@ -1006,7 +1059,7 @@ function BaseUnit:update(dt, grid)
                     end
                     self:attack(self.target, grid)
                 end
-                self.attackCooldown = 1 / self.attackSpeed
+                self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult)
             end
         else
             -- Generate new path if we don't have one
@@ -1183,8 +1236,8 @@ function BaseUnit:moveAlongPath(dt, grid)
     if not self.path or #self.path == 0 then return end
 
     if self.isMoving then
-        -- Currently animating movement
-        self.tweenProgress = self.tweenProgress + (dt / self.tweenDuration)
+        -- Currently animating movement (slowMoveMult < 1 stretches the tween)
+        self.tweenProgress = self.tweenProgress + (dt * self.slowMoveMult / self.tweenDuration)
 
         if self.tweenProgress >= 1.0 then
             -- Tween complete - finalize movement
