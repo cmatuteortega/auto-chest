@@ -23,6 +23,7 @@ local Flint     = require('src.units.flint')
 local Mason     = require('src.units.mason')
 local Pest      = require('src.units.pest')
 local Loot      = require('src.units.loot')
+local Ninja     = require('src.units.ninja')
 
 local SpellRegistry = require('src.spell_registry')
 
@@ -54,12 +55,13 @@ UnitRegistry.unitClasses = {
     mason    = Mason,
     pest     = Pest,
     loot     = Loot,
+    ninja    = Ninja,
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
     { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "arrows"} },
-    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult", "fireball"} },
+    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "ninja", "sinner", "catapult", "fireball"} },
     { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "cart", "flint", "mason", "pest", "loot"} },
 }
 
@@ -81,6 +83,7 @@ UnitRegistry.factions = {
     bonk      = {"folk", "brawler"},
     sinner    = {"folk", "brawler"},
     catapult  = {"folk"},
+    ninja     = {"folk", "brawler"},
     burrow    = {"monster", "brawler"},
     pouch     = {"monster", "marksman"},
     barrel    = {"monster", "brawler"},
@@ -121,6 +124,7 @@ UnitRegistry.rarity = {
     bull      = "common",
     samurai   = "rare",
     bonk      = "rare",
+    ninja     = "rare",
     sinner    = "epic",
     catapult  = "epic",
     -- Spells
@@ -259,6 +263,11 @@ UnitRegistry.spritePaths = {
         front = "src/assets/loot/front.png",
         back  = "src/assets/loot/back.png",
         dead  = "src/assets/loot/front.png"  -- no dead sprite yet; reuse front
+    },
+    ninja = {
+        front = "src/assets/ninja/front.png",
+        back  = "src/assets/ninja/back.png",
+        dead  = "src/assets/ninja/front.png"  -- no dead sprite yet; reuse front
     }
 }
 
@@ -287,7 +296,8 @@ UnitRegistry.passiveDescriptions = {
     flint    = "Lobs bombs onto enemy cells. Bombs fuse for 1s before exploding for 2 damage and leaving a 1s fire patch — enemies that step out of the cell during the fuse take no damage.",
     mason    = "Throws rocks at adjacent enemies. At battle start, hurls a rock 4 rows forward that damages every enemy in its path for 5.",
     pest     = "Basic attacks slow target's attack speed and movement by 40% for 2s.",
-    loot     = "If alive at round end: +2 coins. If destroyed: opponent gains +1 coin."
+    loot     = "If alive at round end: +2 coins. If destroyed: opponent gains +1 coin.",
+    ninja    = "Every 7 combined hits (dealt + received), dashes to the farthest enemy and locks onto them"
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -361,6 +371,7 @@ UnitRegistry.unitCosts = {
     mason  = 4,
     pest   = 4,
     loot   = 3,
+    ninja  = 4,
     -- Spells
     arrows   = 2,
     fireball = 4,
@@ -747,6 +758,8 @@ function UnitRegistry.getLoadSteps()
         _shared.fuseFrames       = loadFrameSequence("src/assets/particles/fuse/fuse%d.png", 4)
         _shared.rockFrames       = loadFrameSequence("src/assets/particles/rock/rock%d.png", 4)
         _shared.rockBreakFrames  = loadFrameSequence("src/assets/particles/rock/break%d.png", 2)
+        local healIdx = {} for i = 0, 20 do healIdx[#healIdx+1] = i end
+        _shared.mendHealFrames = loadFrameIndices("src/assets/particles/heal/heal%d.png", healIdx)
     end)
 
     -- Generic death animations (played by Grid:drawCorpsesInRow for any fallen unit, 0-indexed).
@@ -829,12 +842,12 @@ function UnitRegistry.finalizeSprites()
             end
         end
 
-        for _, unitType in ipairs({"marc", "marrow", "mend"}) do
+        for _, unitType in ipairs({"marc", "marrow"}) do
             if _shared.arrowImg and allSprites[unitType] then
                 allSprites[unitType].projectile = _shared.arrowImg
             end
         end
-        for _, unitType in ipairs({"migraine", "mage", "pest"}) do
+        for _, unitType in ipairs({"migraine", "mage", "pest", "mend"}) do
             if _shared.magicImg and allSprites[unitType] then
                 allSprites[unitType].projectile = _shared.magicImg
                 allSprites[unitType].projectileAngleOffset = math.pi / 2
@@ -873,6 +886,10 @@ function UnitRegistry.finalizeSprites()
         end
         if _shared.catapultProjImg and allSprites["pouch"] then
             allSprites["pouch"].catapultProjectile = _shared.catapultProjImg
+        end
+
+        if _shared.mendHealFrames and #_shared.mendHealFrames > 0 and allSprites["mend"] then
+            allSprites["mend"].healFrames = _shared.mendHealFrames
         end
 
         if _shared.deathFrames then

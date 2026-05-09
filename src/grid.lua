@@ -416,6 +416,17 @@ function Grid:draw(draggedUnit, hideOwner)
         end
     end
 
+    -- Top-layer pass: overlays drawn above all units (e.g. heal animations).
+    -- Units opt in by implementing drawTopLayer().
+    for row = rowStart, rowEnd, rowStep do
+        for col = 1, self.cols do
+            local cell = self.cells[row][col]
+            if cell.unit and not cell.unit.isDead and cell.unit.drawTopLayer then
+                cell.unit:drawTopLayer()
+            end
+        end
+    end
+
     -- Grid-owned ground effects: bottom portion clipped over units' feet
     self:drawFirePatches("bottom")
 end

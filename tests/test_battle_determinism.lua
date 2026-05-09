@@ -965,12 +965,10 @@ print("── Test 15: Mend (ally healing + speed buff revert) ─────�
 do
     local m = makeUnit(Mend, 6, 3, 1, 0)
     local fakeAlly = { isDead = false, attackSpeed = 1.5, unitType = "knight" }
-    m.hitCounter = 4
-    m.healPending = true
+    m.energyCounter = 4
     m.healBuffs = { { unit = fakeAlly, timer = 1, baseSpeed = 1.0 } }
     m:resetCombatState()
-    check("t15A_hitCounter",   m.hitCounter,         0)
-    check("t15A_healPending",  m.healPending,        false)
+    check("t15A_hitCounter",   m.energyCounter,      0)
     check("t15A_healBuffs",    #m.healBuffs,         0)
     check("t15A_allySpeedReverted", fakeAlly.attackSpeed, 1.0)
 end
