@@ -14,6 +14,7 @@ local FireballSpell = require('src.spells.fireball')
 local RockSpell = require('src.spells.rock')
 local QuakeSpell = require('src.spells.quake')
 local HornsSpell = require('src.spells.horns')
+local SigilSpell = require('src.spells.sigil')
 
 local GameScreen = {}
 
@@ -652,6 +653,14 @@ function GameScreen.new()
                     }
                     local fx = HornsSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
                     table.insert(self.activeSpellEffects, fx)
+                elseif p.spellType == "sigil" then
+                    local sgSprites = self.spellSprites and self.spellSprites.sigil
+                    local sprites = {
+                        sigilSprite = sgSprites and sgSprites.sigilSprite,
+                        healFrames  = sgSprites and sgSprites.healFrames,
+                    }
+                    local fx = SigilSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
                 end
             end
             self.spellPlacements = {}
@@ -689,6 +698,7 @@ function GameScreen.new()
         self.grid.corpses      = {}
         self.grid.firePatches  = {}
         self.grid.quakePatches = {}
+        self.grid.sigilPatches = {}
         self.grid.cellEffects  = {}
         self.grid.hiddenUnits = {}
         self.grid:clearRocks()
@@ -1064,9 +1074,10 @@ function GameScreen.new()
                     end
                 end
 
-                -- Tick grid-owned ground effects (fire patches, quake slow zones)
+                -- Tick grid-owned ground effects (fire patches, quake slow zones, sigil heal zones)
                 self.grid:tickFirePatches(FIXED_DT)
                 self.grid:tickQuakePatches(FIXED_DT)
+                self.grid:tickSigilPatches(FIXED_DT)
                 self.grid:tickDeathAnims(FIXED_DT)
 
                 -- Check victory condition after each simulation step
@@ -1103,6 +1114,7 @@ function GameScreen.new()
             end
             self.grid:tickFirePatches(dt)
             self.grid:tickQuakePatches(dt)
+            self.grid:tickSigilPatches(dt)
             self.grid:tickDeathAnims(dt)
 
             -- Once animations finish, sync with opponent then handle lives

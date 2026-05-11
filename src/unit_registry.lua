@@ -68,9 +68,9 @@ UnitRegistry.unitClasses = {
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "ribs", "effigy", "arrows"} },
+    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "amalgam", "arrows", "clavicula", "mend", "ribs", "tomb", "humerus", "migraine", "sigil", "effigy"} },
     { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "ninja", "sinner", "catapult", "fireball", "horns"} },
-    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "cart", "flint", "mason", "pest", "loot", "hook", "cannon", "rock", "quake"} },
+    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "quake", "cart", "flint", "mason", "loot", "hook", "pest", "rock", "cannon"} },
 }
 
 -- Faction membership per unit type
@@ -110,6 +110,7 @@ UnitRegistry.factions = {
     rock      = {"monster"},
     quake     = {"monster"},
     horns     = {"folk"},
+    sigil     = {"undead"},
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -117,24 +118,25 @@ UnitRegistry.rarity = {
     -- Calcium Clan
     boney     = "common",
     marrow    = "common",
-    mend    = "common",
+    mend    = "rare",
     amalgam   = "common",
     -- Goblin Gang
     burrow    = "common",
     pouch     = "common",
     barrel    = "common",
-    cart      = "common",
-    flint     = "common",
-    mason     = "common",
-    pest      = "common",
-    loot      = "common",
-    hook      = "rare",
+    quake     = "common",
+    cart      = "rare",
+    flint     = "rare",
+    mason     = "rare",
+    loot      = "rare",
+    hook      = "epic",
+    pest      = "epic",
     clavicula = "rare",
-    humerus   = "rare",
+    humerus   = "epic",
     ribs      = "rare",
     migraine  = "epic",
-    tomb      = "epic",
-    effigy    = "rare",
+    tomb      = "rare",
+    effigy    = "epic",
     -- Castle Crew
     knight    = "common",
     marc      = "common",
@@ -145,13 +147,13 @@ UnitRegistry.rarity = {
     ninja     = "rare",
     sinner    = "epic",
     catapult  = "epic",
-    cannon    = "rare",
+    cannon    = "epic",
     -- Spells
     arrows    = "common",
     fireball  = "common",
-    rock      = "common",
-    quake     = "common",
+    rock      = "epic",
     horns     = "common",
+    sigil     = "epic",
 }
 
 -- Map of unit type names to their sprite paths

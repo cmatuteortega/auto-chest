@@ -140,14 +140,16 @@ function PreloadScreen.new()
                     activeDeckIndex = data.active_deck_index,
                     decks           = data.decks,
                     token           = data.token,
-                    unlocks         = data.unlocks
+                    unlocks         = data.unlocks,
+                    hasEmailBackup  = data.has_email_backup or false
                 }
                 _G.GameSocket = self.client
 
                 if data.token and data.token ~= "" then
                     love.filesystem.write("session.dat", json.encode({
-                        token    = data.token,
-                        username = data.username,
+                        token          = data.token,
+                        username       = data.username,
+                        hasEmailBackup = data.has_email_backup or false,
                     }))
                 end
 

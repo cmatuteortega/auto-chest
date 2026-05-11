@@ -24,17 +24,19 @@ function LoadingScreen.new()
         self.TIMEOUT   = 5
         self.dotTimer  = 0
         self.dotCount  = 0
-        self.token          = nil
-        self.storedUsername = nil
-        self.authMode       = "device"  -- "token" or "device"
+        self.token                = nil
+        self.storedUsername       = nil
+        self.storedHasEmailBackup = false
+        self.authMode             = "device"  -- "token" or "device"
 
         -- Parse session.dat as JSON {token, username}; fall through to device login if missing/invalid
         local raw = love.filesystem.read("session.dat") or ""
         local ok, parsed = pcall(json.decode, raw)
         if ok and parsed and parsed.token then
-            self.token          = parsed.token
-            self.storedUsername = parsed.username
-            self.authMode       = "token"
+            self.token                = parsed.token
+            self.storedUsername       = parsed.username
+            self.storedHasEmailBackup = parsed.hasEmailBackup or false
+            self.authMode             = "token"
         else
             love.filesystem.remove("session.dat")
             self.authMode = "device"
@@ -76,6 +78,8 @@ function LoadingScreen.new()
 
         self.client:on("login_success", function(data)
             self.status = "success"
+            print("[DEBUG] login_success has_email_backup=" .. tostring(data.has_email_backup)
+                  .. " storedHasEmailBackup=" .. tostring(self.storedHasEmailBackup))
 
             _G.PlayerData = {
                 id              = data.player_id,
@@ -89,15 +93,17 @@ function LoadingScreen.new()
                 activeDeckIndex = data.active_deck_index,
                 decks           = data.decks,
                 token           = data.token,
-                unlocks         = data.unlocks
+                unlocks         = data.unlocks,
+                hasEmailBackup  = data.has_email_backup or self.storedHasEmailBackup or false
             }
             _G.GameSocket = self.client
 
             -- Refresh session.dat with the fresh token (device-login issues a new one too)
             if data.token and data.token ~= "" then
                 love.filesystem.write("session.dat", json.encode({
-                    token    = data.token,
-                    username = data.username,
+                    token          = data.token,
+                    username       = data.username,
+                    hasEmailBackup = data.has_email_backup or false,
                 }))
             end
 

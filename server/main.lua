@@ -263,7 +263,8 @@ local function handleMessage(peer, eventName, msgData)
                 active_deck_index = player.activeDeckIndex,
                 decks             = player.decks,
                 token             = token,
-                unlocks           = unlocks
+                unlocks           = unlocks,
+                has_email_backup  = player.hasEmail or false
             }))
             pushLog("Login: " .. username)
         else
@@ -334,7 +335,8 @@ local function handleMessage(peer, eventName, msgData)
             active_deck_index = player.activeDeckIndex,
             decks             = player.decks,
             token             = token,
-            unlocks           = unlocks
+            unlocks           = unlocks,
+            has_email_backup  = player.hasEmail or false
         }))
         pushLog((created and "Device register: " or "Device reuse: ") .. player.username)
 
@@ -342,6 +344,7 @@ local function handleMessage(peer, eventName, msgData)
         local deviceId = msgData.device_id or ""
 
         local player = db:findPlayerByDevice(deviceId)
+        pushLog("[DEBUG] login_with_device player=" .. tostring(player and player.username) .. " hasEmail=" .. tostring(player and player.hasEmail))
         if not player then
             peer:send(encode("login_failed", {reason = "no_device_profile"}))
             return
@@ -375,7 +378,8 @@ local function handleMessage(peer, eventName, msgData)
             active_deck_index = player.activeDeckIndex,
             decks             = player.decks,
             token             = token,
-            unlocks           = unlocks
+            unlocks           = unlocks,
+            has_email_backup  = player.hasEmail or false
         }))
         pushLog("Device login: " .. player.username)
 
@@ -608,6 +612,7 @@ local function handleMessage(peer, eventName, msgData)
             return
         end
         local player = db:validateSession(token, deviceId)
+        pushLog("[DEBUG] reconnect_with_token player=" .. tostring(player and player.username) .. " hasEmail=" .. tostring(player and player.hasEmail))
         if player then
             -- Kick any existing live connection for this player
             evictPlayerSession(player.id, peer)
@@ -637,7 +642,8 @@ local function handleMessage(peer, eventName, msgData)
                 active_deck_index = player.activeDeckIndex,
                 decks             = player.decks,
                 token             = token,
-                unlocks           = unlocks
+                unlocks           = unlocks,
+                has_email_backup  = player.hasEmail or false
             }))
             pushLog("Reconnect: " .. player.username)
         else
@@ -706,6 +712,82 @@ local function handleMessage(peer, eventName, msgData)
             pending_rewards = unlocks and unlocks.pending_rewards or {}
         }))
         pushLog("Reward claimed: " .. session.username)
+
+    elseif eventName == "link_email" then
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("link_email_failed", {reason = "not_authenticated"}))
+            return
+        end
+        local email = tostring(msgData.email or ""):lower():match("^%s*(.-)%s*$")
+        local pw    = tostring(msgData.password or "")
+        if not email:match("^[^@]+@[^@]+%.[^@]+$") then
+            peer:send(encode("link_email_failed", {reason = "invalid_email"}))
+            return
+        end
+        if #pw < 6 then
+            peer:send(encode("link_email_failed", {reason = "password_too_short"}))
+            return
+        end
+        local ok, err = db:linkEmail(session.player_id, email, pw)
+        if ok then
+            peer:send(encode("link_email_success", {}))
+            pushLog("Email linked: " .. session.username .. " -> " .. email)
+        else
+            peer:send(encode("link_email_failed", {reason = err or "email_taken"}))
+            pushLog("Email link failed (" .. tostring(err) .. "): " .. session.username)
+        end
+
+    elseif eventName == "login_with_email" then
+        local email    = tostring(msgData.email or ""):lower():match("^%s*(.-)%s*$")
+        local pw       = tostring(msgData.password or "")
+        local deviceId = tostring(msgData.device_id or "")
+
+        local player, err = db:loginWithEmail(email, pw)
+        if not player then
+            peer:send(encode("login_failed", {reason = "bad_credentials"}))
+            pushLog("Email login failed: " .. email)
+            return
+        end
+
+        db:deletePlayerSessions(player.id)
+        evictPlayerSession(player.id, peer)
+
+        -- Bind the recovered account to the new device so future device-login works
+        local stmt = db.db:prepare("UPDATE players SET device_id = ?, last_login = strftime('%s','now') WHERE id = ?")
+        stmt:bind_values(deviceId, player.id)
+        stmt:step()
+        stmt:finalize()
+
+        local token = db:createSession(player.id, deviceId)
+        sessions[ck] = {
+            player_id = player.id,
+            username  = player.username,
+            token     = token
+        }
+        peerByPlayerId[player.id] = peer
+
+        local unlocks = player.unlocks
+        if not unlocks then
+            unlocks = db:migrateUnlocks(player.id)
+        end
+
+        peer:send(encode("login_success", {
+            player_id         = player.id,
+            username          = player.username,
+            trophies          = player.trophies,
+            coins             = player.coins,
+            gold              = player.gold,
+            gems              = player.gems,
+            xp                = player.xp,
+            level             = player.level,
+            active_deck_index = player.activeDeckIndex,
+            decks             = player.decks,
+            token             = token,
+            unlocks           = unlocks,
+            has_email_backup  = player.hasEmail or false
+        }))
+        pushLog("Email login: " .. player.username)
 
     elseif eventName == "relay" then
         -- Forward game messages to partner (via partnerKey, not raw peer ref)

@@ -11,6 +11,7 @@ SpellRegistry.spellTypes = {
     rock     = true,
     quake    = true,
     horns    = true,
+    sigil    = true,
 }
 
 -- Cost in coins per spell type (mirrors UnitRegistry.unitCosts shape).
@@ -20,6 +21,7 @@ SpellRegistry.spellCosts = {
     rock     = 3,
     quake    = 4,
     horns    = 3,
+    sigil    = 3,
 }
 
 SpellRegistry.rarity = {
@@ -28,6 +30,7 @@ SpellRegistry.rarity = {
     rock     = "common",
     quake    = "common",
     horns    = "common",
+    sigil    = "common",
 }
 
 SpellRegistry.factions = {
@@ -36,6 +39,7 @@ SpellRegistry.factions = {
     rock     = {"monster"},
     quake    = {"monster"},
     horns    = {"folk"},
+    sigil    = {"undead"},
 }
 
 SpellRegistry.spritePaths = {
@@ -44,6 +48,7 @@ SpellRegistry.spritePaths = {
     rock     = { front = "src/assets/rock/rock.png" },
     quake    = { front = "src/assets/quake/quake.png" },
     horns    = { front = "src/assets/horns/horns.png" },
+    sigil    = { front = "src/assets/sigil/sigil.png" },
 }
 
 SpellRegistry.descriptions = {
@@ -52,6 +57,7 @@ SpellRegistry.descriptions = {
     rock     = "Spawns a boulder at the target cell, blocking movement and projectiles for the round. Displaces any unit there.",
     quake    = "Creates a 3x3 seismic zone for 5 seconds. Units inside move 50% slower and attack 20% slower.",
     horns    = "Trumpets buff all ally units in the target row with +25% attack speed for 5 seconds.",
+    sigil    = "Inscribes a sigil on a 3x3 area. Allied units standing on it heal 2 HP every 2 seconds for 10 seconds.",
 }
 
 -- Area-of-effect footprint per spell (cols x rows centered on the target cell).
@@ -61,6 +67,7 @@ SpellRegistry.aoeSize = {
     rock     = { cols = 1, rows = 1 },
     quake    = { cols = 3, rows = 3 },
     horns    = { cols = 5, rows = 1 },
+    sigil    = { cols = 3, rows = 3 },
 }
 
 SpellRegistry.displayNames = {
@@ -69,6 +76,7 @@ SpellRegistry.displayNames = {
     rock     = "Rock",
     quake    = "Quake",
     horns    = "Horns",
+    sigil    = "Sigil",
 }
 
 local _spriteCache = nil
@@ -116,6 +124,16 @@ function SpellRegistry.loadSprites()
     -- Quake ground-shake animation frames
     if _spriteCache.quake then
         _spriteCache.quake.frames = loadFrameSequence("src/assets/particles/quake/quake%d.png", {1,2,3,4,5})
+    end
+    -- Sigil in-battle 48×48 ground sprite and shared heal animation frames
+    if _spriteCache.sigil then
+        _spriteCache.sigil.sigilSprite = loadImage("src/assets/particles/sigil-in-battle.png")
+        local healFrames = {}
+        for i = 0, 20 do
+            local f = loadImage("src/assets/particles/heal/heal" .. i .. ".png")
+            if f then table.insert(healFrames, f) end
+        end
+        _spriteCache.sigil.healFrames = (#healFrames > 0) and healFrames or nil
     end
     -- Horns trumpet and note particle sprites
     if _spriteCache.horns then

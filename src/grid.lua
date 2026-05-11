@@ -35,6 +35,9 @@ function Grid:new()
     -- Quake spell ground-shake patches (slow debuff zone).
     self.quakePatches = {}
 
+    -- Sigil spell healing-zone patches (drawn before units, no clip needed).
+    self.sigilPatches = {}
+
     -- Per-cell spawn/despawn animations queued whenever the board changes between phases.
     self.cellEffects = {}
 
@@ -484,6 +487,7 @@ function Grid:draw(draggedUnit, hideOwner)
     -- Grid-owned ground effects: top portion clipped above units
     self:drawFirePatches("top")
     self:drawQuakePatches("top")
+    self:drawSigilPatches()
 
     -- Interleave death animations with alive units row by row (far → near). Each row's
     -- corpse anims are drawn before its alive units, so a near-row death animation that
@@ -605,6 +609,21 @@ end
 function Grid:drawQuakePatches(clipMode)
     for _, patch in ipairs(self.quakePatches) do
         if patch.draw then patch:draw(clipMode) end
+    end
+end
+
+function Grid:tickSigilPatches(dt)
+    for i = #self.sigilPatches, 1, -1 do
+        local p = self.sigilPatches[i]
+        p.timer    = p.timer - dt
+        p.rotation = (p.rotation or 0) + (p.rotationSpeed or 0) * dt
+        if p.timer <= 0 then table.remove(self.sigilPatches, i) end
+    end
+end
+
+function Grid:drawSigilPatches()
+    for _, p in ipairs(self.sigilPatches) do
+        if p.draw then p.draw(p) end
     end
 end
 
