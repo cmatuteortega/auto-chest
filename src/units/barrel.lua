@@ -75,6 +75,8 @@ function Barrel:findCrashDest(grid)
         if cell and cell.unit and not cell.unit.isDead then
             hitUnit = cell.unit
             break
+        elseif grid:isRock(destCol, checkRow) then
+            break  -- rock blocks the roll — stop before it, no hit unit
         else
             destRow = checkRow
         end
@@ -129,7 +131,7 @@ function Barrel:doCrash(grid)
     local enemyHit = target and target.owner ~= self.owner and not target.isDead
 
     if enemyHit then
-        target:takeDamage(CRASH_DAMAGE)
+        target:takeDamage(CRASH_DAMAGE, self, grid)
         if self:hasUpgrade(1) then
             target.stunTimer = math.max(target.stunTimer, 1.5)
         end
@@ -145,7 +147,7 @@ function Barrel:doCrash(grid)
         for _, d in ipairs(cardinals) do
             local cell = grid:getCell(self.col + d[1], self.row + d[2])
             if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-                cell.unit:takeDamage(1)
+                cell.unit:takeDamage(1, self, grid)
                 if cell.unit.isDead then
                     grid:killUnit(cell.unit)
                     self:onKill(cell.unit)

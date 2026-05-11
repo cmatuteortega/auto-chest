@@ -11,6 +11,10 @@ local BaseUnit = require('src.base_unit')
 local SpellRegistry = require('src.spell_registry')
 local ArrowsSpell = require('src.spells.arrows')
 local FireballSpell = require('src.spells.fireball')
+local RockSpell = require('src.spells.rock')
+local QuakeSpell = require('src.spells.quake')
+local HornsSpell = require('src.spells.horns')
+local SigilSpell = require('src.spells.sigil')
 
 local GameScreen = {}
 
@@ -562,6 +566,23 @@ function GameScreen.new()
             self:checkBoardSync()
         end
 
+        -- Phase 0: terrain spells (Rock) — must run before onBattleStart so displaced units
+        -- start their action passives from the correct post-displacement positions.
+        if #self.spellPlacements > 0 then
+            table.sort(self.spellPlacements, function(a, b)
+                return (a.placementId or 0) < (b.placementId or 0)
+            end)
+            for i = #self.spellPlacements, 1, -1 do
+                local p = self.spellPlacements[i]
+                if p.spellType == "rock" then
+                    local sprite = self.spellSprites and self.spellSprites.rock and self.spellSprites.rock.front
+                    local fx = RockSpell.new(p.col, p.row, p.owner, self.grid, sprite, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
+                    table.remove(self.spellPlacements, i)
+                end
+            end
+        end
+
         local allUnits = self.grid:getAllUnits()
         self.battleUnitsSnapshot = {}
         for _, unit in ipairs(allUnits) do
@@ -619,6 +640,27 @@ function GameScreen.new()
                     }
                     local fx = FireballSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
                     table.insert(self.activeSpellEffects, fx)
+                elseif p.spellType == "quake" then
+                    local qkSprites = self.spellSprites and self.spellSprites.quake
+                    local sprites = { frames = qkSprites and qkSprites.frames }
+                    local fx = QuakeSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
+                elseif p.spellType == "horns" then
+                    local hnSprites = self.spellSprites and self.spellSprites.horns
+                    local sprites = {
+                        trumpet    = hnSprites and hnSprites.trumpet,
+                        noteFrames = hnSprites and hnSprites.noteFrames,
+                    }
+                    local fx = HornsSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
+                elseif p.spellType == "sigil" then
+                    local sgSprites = self.spellSprites and self.spellSprites.sigil
+                    local sprites = {
+                        sigilSprite = sgSprites and sgSprites.sigilSprite,
+                        healFrames  = sgSprites and sgSprites.healFrames,
+                    }
+                    local fx = SigilSpell.new(p.col, p.row, p.owner, self.grid, sprites, p.placementId)
+                    table.insert(self.activeSpellEffects, fx)
                 end
             end
             self.spellPlacements = {}
@@ -652,11 +694,14 @@ function GameScreen.new()
             end
         end
 
-        -- Drop the corpse list and any lingering ground effects (Migraine fire patches).
-        self.grid.corpses     = {}
-        self.grid.firePatches = {}
-        self.grid.cellEffects = {}
+        -- Drop the corpse list and any lingering ground effects (Migraine fire patches, Rock terrain).
+        self.grid.corpses      = {}
+        self.grid.firePatches  = {}
+        self.grid.quakePatches = {}
+        self.grid.sigilPatches = {}
+        self.grid.cellEffects  = {}
         self.grid.hiddenUnits = {}
+        self.grid:clearRocks()
 
         -- Spells never persist between rounds.
         self.spellPlacements    = {}
@@ -1029,8 +1074,10 @@ function GameScreen.new()
                     end
                 end
 
-                -- Tick grid-owned ground effects (Migraine fire patches outlive their source)
+                -- Tick grid-owned ground effects (fire patches, quake slow zones, sigil heal zones)
                 self.grid:tickFirePatches(FIXED_DT)
+                self.grid:tickQuakePatches(FIXED_DT)
+                self.grid:tickSigilPatches(FIXED_DT)
                 self.grid:tickDeathAnims(FIXED_DT)
 
                 -- Check victory condition after each simulation step
@@ -1066,6 +1113,8 @@ function GameScreen.new()
                 end
             end
             self.grid:tickFirePatches(dt)
+            self.grid:tickQuakePatches(dt)
+            self.grid:tickSigilPatches(dt)
             self.grid:tickDeathAnims(dt)
 
             -- Once animations finish, sync with opponent then handle lives
@@ -1338,7 +1387,23 @@ function GameScreen.new()
                         local crossOffsets = { {0,0}, {1,0}, {-1,0}, {0,1}, {0,-1} }
                         self:drawAoEOutline(indCol, targetRow, crossOffsets)
                     end
-                elseif dragType == "bull" or dragType == "marrow" or dragType == "barrel" then
+                elseif dragType == "effigy" then
+                    -- Show the 1-cell ward ring (8 surrounding tiles) that Effigy
+                    -- will shield. Upgrade 3 expands this to a 2-cell radius.
+                    local radius = 1
+                    if self.draggedUnit and self.draggedUnit:hasUpgrade(3) then
+                        radius = 2
+                    end
+                    local offsets = {}
+                    for dc = -radius, radius do
+                        for dr = -radius, radius do
+                            if not (dc == 0 and dr == 0) then
+                                table.insert(offsets, { dc, dr })
+                            end
+                        end
+                    end
+                    self:drawAoEOutline(indCol, indRow, offsets)
+                elseif dragType == "bull" or dragType == "marrow" or dragType == "barrel" or dragType == "cannon" then
                     -- Forward-line action units: outline the cells the unit
                     -- moves/fires through at battle start. Bull = 4 tiles;
                     -- Marrow & Barrel = full column to the far row.

@@ -128,7 +128,7 @@ function Burrow:update(dt, grid)
                         local dy = unit.row - self.row
                         local dist = math.sqrt(dx * dx + dy * dy)
                         if dist <= 1.5 then
-                            unit:takeDamage(2)
+                            unit:takeDamage(2, self, grid)
                             AudioManager.playSFX("soft-hit.mp3")
                             unit.stunTimer = 0.8
                         end

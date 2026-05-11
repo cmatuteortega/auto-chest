@@ -108,8 +108,8 @@ function Mage:resetCombatState()
 end
 
 -- Override takeDamage: track hits received, set pending flag (no grid here)
-function Mage:takeDamage(amount)
-    Mage.super.takeDamage(self, amount)
+function Mage:takeDamage(amount, attacker, grid)
+    Mage.super.takeDamage(self, amount, attacker, grid)
     if not self.isDead then
         self.hitCounter = self.hitCounter + 1
         if self.hitCounter >= 8 then
@@ -173,7 +173,7 @@ function Mage:onProjectileHit(projectile, grid)
             local dy   = unit.row - cy
             local dist = math.sqrt(dx * dx + dy * dy)
             if dist <= radius then
-                unit:takeDamage(dmg)
+                unit:takeDamage(dmg, projectile.shooter, grid)
                 if unit.isDead then
                     grid:killUnit(unit)
                     self:onKill(unit)
@@ -227,7 +227,7 @@ function Mage:update(dt, grid)
             for _, unit in ipairs(allUnits) do
                 if unit.owner ~= self.owner and not unit.isDead
                    and unit.col == patch.col and unit.row == patch.row then
-                    unit:takeDamage(1)
+                    unit:takeDamage(1, self, grid)
                     if unit.isDead then
                         grid:killUnit(unit)
                         self:onKill(unit)

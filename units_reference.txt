@@ -1,0 +1,592 @@
+AUTOCHEST — UNIT REFERENCE
+==========================
+Stats note: ATK SPD = attacks per second. Range = attack range in cells (0 = melee).
+Upgrades: each unit has a tree of 3 upgrades; players may purchase up to 2 per round.
+==========================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CALCIUM CLAN  (Undead skeletons)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+──────────────────────────────────
+BONEY
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Brawler
+Archetype: Berserker
+Cost:      2 coins   |   Rarity: Common
+Type:      Melee
+HP: 7   DMG: 1   ATK SPD: 1.0/s   Move: 1/s   Range: Melee
+
+Description:
+  A ragged skeleton warrior held together by spite. Not particularly tough,
+  but the closer it gets to death the more dangerous it becomes. Best used as
+  a cheap frontline threat that punishes enemies for letting it survive.
+
+Passive — Berserker
+  Deals 2× damage while below 50% HP.
+
+Upgrade 1 — Mend
+  Heals 25% max HP the moment HP drops below 50% (one time per round).
+
+Upgrade 2 — Fury
+  +50% attack speed while below 50% HP.
+
+Upgrade 3 — Desperate
+  Damage multiplier while low HP becomes 3× instead of 2×.
+
+──────────────────────────────────
+MARROW
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Marksman
+Archetype: Skirmisher
+Cost:      2 coins   |   Rarity: Common
+Type:      Ranged
+HP: 9   DMG: 1   ATK SPD: 1.05/s   Move: 1/s   Range: 3 cells
+
+Description:
+  A skeletal archer who opens every battle with a powerful lance throw down
+  its column before switching to rapid ranged fire. Cheap and consistent —
+  the lance alone can cripple a frontline unit before the fight even begins.
+
+Passive — Lance Throw
+  At battle start, fires a lance down its column dealing 5 damage to the
+  first enemy hit.
+
+Upgrade 1 — Extended Range
+  +1 attack range (4 total).
+
+Upgrade 2 — Momentum
+  After killing an enemy, gains +50% damage for 2 seconds.
+
+Upgrade 3 — Volley
+  Each attack fires two arrows simultaneously, hitting a second enemy in range.
+
+──────────────────────────────────
+MEND
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Support
+Archetype: Healer
+Cost:      3 coins   |   Rarity: Common
+Type:      Ranged
+HP: 8   DMG: 1   ATK SPD: 0.8/s   Move: 1/s   Range: 3 cells
+
+Description:
+  A skeletal field medic carrying a gnarled staff. It fights at range but
+  its real value is its pulse heal — periodically it channels restorative
+  energy to whichever ally is hurting most. Keep it alive and your whole
+  front line becomes harder to wear down.
+
+Passive — Mending Pulse
+  Every 6 combined hits (dealt + received), heals the lowest HP ally for 2 HP.
+
+Upgrade 1 — Mending Touch
+  Heal amount increased to 3 HP.
+
+Upgrade 2 — Invigorating Pulse
+  The healed ally also gains +15% attack speed for 2 seconds.
+
+Upgrade 3 — Double Dose
+  Heal the two lowest HP allies instead of just one.
+
+──────────────────────────────────
+AMALGAM
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Monster
+Archetype: Juggernaut
+Cost:      4 coins   |   Rarity: Common
+Type:      Melee
+HP: 13   DMG: 3   ATK SPD: 0.45/s   Move: 1/s   Range: Melee
+
+Description:
+  A horrific mass of fused bones, sinew, and cursed will. Virtually
+  impossible to put down in one blow — its stitched-together body snaps
+  back from any single lethal strike, leaving it briefly untouchable.
+  Slow and brutal; built to soak punishment and keep swinging.
+
+Passive — Unholy Resilience
+  Cannot die from a single hit while above 1 HP. Surviving a lethal blow
+  reduces HP to 1 and grants 1 second of full invulnerability (7 second
+  cooldown).
+
+Upgrade 1 — Bone Armor
+  Permanently reduces all incoming damage by 15% (minimum 1).
+
+Upgrade 2 — Corpse Explosion
+  When invulnerability triggers, deals 2× base damage to all enemies within
+  2 cells.
+
+Upgrade 3 — Relentless
+  Invulnerability cooldown reduced from 7 seconds to 6 seconds.
+
+──────────────────────────────────
+CLAVICULA
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Brawler
+Archetype: Sustain Fighter
+Cost:      4 coins   |   Rarity: Rare
+Type:      Melee
+HP: 14   DMG: 2   ATK SPD: 0.9/s   Move: 1/s   Range: Melee
+
+Description:
+  A whirling skeleton berserker that thrives in the thick of the fight.
+  Absorbs punishment and channels it into explosive spinning attacks that
+  damage every adjacent enemy at once. The more it's surrounded, the more
+  it heals — making it extremely dangerous to gang up on.
+
+Passive — Whirlwind
+  Every 10 combined hits (dealt + received), spins and strikes all adjacent
+  enemies for full damage, then heals 50% of total damage dealt.
+
+Upgrade 1 — Bloodwhirl
+  Whirlwind heals 75% of damage dealt instead of 50%.
+
+Upgrade 2 — Frenzy
+  Whirlwind triggers every 7 hits instead of 10.
+
+Upgrade 3 — War Spoils
+  On every kill, permanently gains +1 damage for the rest of the round (stacks).
+
+──────────────────────────────────
+HUMERUS
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Brawler
+Archetype: Commander / Tank
+Cost:      5 coins   |   Rarity: Rare
+Type:      Melee
+HP: 22   DMG: 4   ATK SPD: 0.35/s   Move: 1/s   Range: Melee
+
+Description:
+  The towering bone lord of the Calcium Clan. Slow and devastating, with
+  the highest HP pool in the game. Its mere presence on the battlefield
+  sharpens the strikes of every ally focused on the same target, turning
+  coordinated attacks into a death sentence. A cornerstone unit that anchors
+  the whole team.
+
+Passive — Royal Command
+  Allies attacking the same target as Humerus gain +20% damage.
+
+Upgrade 1 — Bone Throne
+  Heals 15% of max HP after every kill.
+
+Upgrade 2 — Execute
+  Deals +100% damage to enemies below 30% HP.
+
+Upgrade 3 — Cleave
+  Every 3rd attack also strikes the units flanking the primary target
+  (same row, adjacent column).
+
+──────────────────────────────────
+MIGRAINE
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead, Marksman
+Archetype: Swarmer / Replicator
+Cost:      4 coins   |   Rarity: Epic
+Type:      Ranged
+HP: 9   DMG: 1   ATK SPD: 0.65/s   Move: 1/s   Range: 3 cells
+
+Description:
+  A spectral skeleton that refuses to stay whole. Whenever it absorbs or
+  deals enough punishment, it tears itself in two — spawning a copy that
+  carries on the fight. Left unchecked it floods the board with clones,
+  overwhelming enemies through sheer volume. Hard to focus down because
+  killing one just makes room for the others.
+
+Passive — Spectral Mitosis
+  Every 8 combined hits (dealt + received), spawns a copy of itself on a
+  nearby free cell, splitting current HP 50/50 with the original. Max 4
+  Migraines per player on the board at once.
+
+Upgrade 1 — Twin Spirits
+  Copies spawn at 65% of current HP instead of 50%.
+
+Upgrade 2 — Soul Drain
+  When any Migraine (original or clone) dies, all surviving copies heal 25%
+  of max HP.
+
+Upgrade 3 — Cursed Ground
+  Migraine and all clones explode on death, dealing 3 damage to enemies within
+  2 cells and leaving a burning cross on the ground for 2 seconds.
+
+──────────────────────────────────
+TOMB
+──────────────────────────────────
+Clan:      Calcium Clan
+Tags:      Undead
+Archetype: Utility Structure / Anchor
+Cost:      1 coin   |   Rarity: Epic
+Type:      Stationary (cannot move or attack)
+HP: 15   DMG: 0   ATK SPD: —   Move: 0   Range: —
+
+Description:
+  An ancient gravestone that has wandered onto the battlefield. It cannot
+  move or fight, but it channels dark energy from every corpse that falls
+  nearby. Allies who pass over the dead are healed, turning the graveyard
+  into a regeneration zone. Its absurdly low cost makes it a tempting filler
+  pick — but its epic rarity means it's not found often.
+
+Passive — Corpse Channel
+  Friendly units that step onto a cell where a corpse lies heal 2 HP
+  (once per unit per corpse position per round).
+
+Upgrade 1 — Rot
+  Friendly units also regen 1 HP per second while standing on a corpse cell.
+
+Upgrade 2 — Martyrdom
+  When Tomb dies, all surviving friendly units gain +25% attack speed for 4
+  seconds.
+
+Upgrade 3 — Reinforced
+  +5 base HP (scales with level).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CASTLE CREW  (Human fighters)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+──────────────────────────────────
+KNIGHT
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Support
+Archetype: Protector / Tank
+Cost:      3 coins   |   Rarity: Common
+Type:      Melee
+HP: 12   DMG: 1   ATK SPD: 1.0/s   Move: 1/s   Range: Melee
+
+Description:
+  A heavily armored defender who leads by example. The moment battle starts,
+  the Knight issues a war cry that forces nearby enemies to focus on it,
+  shielding more fragile allies from harm. Not the biggest threat on the
+  board, but essential for buying time for your damage dealers.
+
+Passive — Taunt
+  At battle start, forces all enemies within 3 cells to target Knight for
+  3 seconds.
+
+Upgrade 1 — Iron Will
+  Taunt duration extended to 5 seconds.
+
+Upgrade 2 — Guardian
+  Gains +5 max HP (and current HP) for each enemy caught in the taunt radius.
+
+Upgrade 3 — Mend
+  Heals 25% max HP the moment HP drops below 50% (one time per round).
+
+──────────────────────────────────
+MARC
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Marksman
+Archetype: Sniper
+Cost:      3 coins   |   Rarity: Common
+Type:      Ranged
+HP: 10   DMG: 1   ATK SPD: 0.75/s   Move: 1/s   Range: 6 cells
+
+Description:
+  A cold, patient sharpshooter with the longest attack range in the game.
+  While other archers aim at whoever is closest, Marc locks onto the furthest
+  target in sight — punishing enemies who hide behind their frontline and
+  picking off squishy backrow units before they can act.
+
+Passive — Sniper Focus
+  When enemies are in attack range, always targets the furthest one rather
+  than the nearest.
+
+Upgrade 1 — Headshot
+  +50% damage against enemies above 80% HP.
+
+Upgrade 2 — Piercing Arrow
+  Every 3rd attack fires a piercing arrow that passes through all enemies in
+  a straight line.
+
+Upgrade 3 — Eagle Eye
+  +2 attack range (8 total).
+
+──────────────────────────────────
+MAGE
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Marksman
+Archetype: Battle Mage / Burst Caster
+Cost:      4 coins   |   Rarity: Common
+Type:      Ranged
+HP: 9   DMG: 1   ATK SPD: 0.55/s   Move: 1/s   Range: 3 cells
+
+Description:
+  A robed caster who fights at medium range, channeling energy from every
+  exchange into a devastating fireball. Weak individually, but in a sustained
+  battle the periodic AoE explosion can wipe out clusters of enemies in an
+  instant. Positioning it behind units with hit-counter synergy (or on a busy
+  frontline) charges the fireball faster.
+
+Passive — Fireball
+  Every 8 combined hits (dealt + received), the next shot is upgraded into a
+  fireball that deals 2× damage in a 1-cell AoE on impact.
+
+Upgrade 1 — Burning Ground
+  Fireball explosions leave burning ground that deals 1 damage/second for 4
+  seconds.
+
+Upgrade 2 — Arcane Surge
+  Casting a fireball grants +50% attack speed for 3 seconds.
+
+Upgrade 3 — Big Boom
+  Fireball blast radius increased to 2 cells.
+
+──────────────────────────────────
+BULL
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Monster
+Archetype: Initiator / Disruptor
+Cost:      4 coins   |   Rarity: Common
+Type:      Melee
+HP: 13   DMG: 2   ATK SPD: 0.65/s   Move: 1/s   Range: Melee
+
+Description:
+  A raging minotaur that can't wait for the enemy to come to it. The moment
+  battle begins it charges forward up to 4 tiles, crashing into the first
+  enemy in its path with a stunning blow. Excellent at breaking formation and
+  disrupting the enemy backrow before they can set up.
+
+Passive — Charge
+  At battle start, charges forward up to 4 tiles. Deals 1.5× damage and stuns
+  the first enemy hit for 2 seconds.
+
+Upgrade 1 — Unstoppable
+  Charge also knocks the hit enemy one tile backward.
+
+Upgrade 2 — Blazing Trail
+  Leaves burning fire on every cell traversed during the charge, plus the
+  landing tile and the enemy's tile. Fire lasts 3 seconds, dealing 1 damage/s.
+
+Upgrade 3 — Trampling Hooves
+  Charge stun duration increased to 3 seconds.
+
+──────────────────────────────────
+SAMURAI
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Brawler
+Archetype: Lone Wolf / Assassin
+Cost:      3 coins   |   Rarity: Rare
+Type:      Melee
+HP: 10   DMG: 1   ATK SPD: 1.1/s   Move: 1/s   Range: Melee
+
+Description:
+  A solitary warrior whose blade sharpens the farther it stands from allies.
+  Place it alone on a flank and it strikes twice as hard; surround it with
+  teammates and it loses its edge. Designed to be deployed as an isolated
+  flanker, it rewards unconventional board positioning and punishes the enemy
+  for ignoring a corner of the field.
+
+Passive — Isolation
+  Deals 2× damage when no friendly units are within 2 cells.
+
+Upgrade 1 — Bloodthirst
+  Heals 30% max HP on kill.
+
+Upgrade 2 — Vengeance
+  Gains +1 permanent damage for every ally that dies within 2 cells
+  (stacks throughout the round).
+
+Upgrade 3 — Lone Wolf
+  Isolation damage multiplier becomes 1.75× (trades some raw isolation bonus;
+  pairs well with Vengeance stacking for late-round damage).
+
+──────────────────────────────────
+BONK
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Brawler
+Archetype: Heavy Hitter / Counter Pick
+Cost:      3 coins   |   Rarity: Rare
+Type:      Melee
+HP: 11   DMG: 1   ATK SPD: 0.7/s   Move: 1/s   Range: Melee
+
+Description:
+  A stocky brawler lugging an oversized blunt weapon. Steady and reliable,
+  it winds up every few swings for a bone-crushing blow that hits far harder
+  than anything else its size. A natural counter to units that rely on hit
+  counters — each swing chips away at their mechanics while building toward
+  its own Power Strike.
+
+Passive — Power Strike
+  Every 3rd hit deals 3× damage.
+
+Upgrade 1 — Brute Force
+  Power Strike triggers every 4th hit instead of 3rd but also stuns the
+  target for 1.5 seconds.
+
+Upgrade 2 — Cleave
+  Power Strike also hits units in adjacent side columns, applying all other
+  active upgrades (stun, counter drain) to cleaved targets.
+
+Upgrade 3 — Counter Crush
+  Every hit removes 1 hit counter from the target (hard counters Mage,
+  Clavicula, Migraine, Sinner, and any other unit using hit-counter mechanics).
+
+──────────────────────────────────
+NINJA
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Brawler
+Archetype: Assassin / Flanker
+Cost:      4 coins   |   Rarity: Rare
+Type:      Melee
+HP: 11   DMG: 2   ATK SPD: 1.2/s   Move: 1/s   Range: Melee
+
+Description:
+  A swift shadow-warrior who thrives in the chaos of a packed battlefield.
+  Patient and deliberate, she counts every blow traded until the moment
+  strikes — then vanishes across the board in a blur, reappearing next to
+  the enemy she least wants to fight. Frail if pinned down, devastating
+  when allowed to pick her targets.
+
+Passive — Shadow Dash
+  Every 7 combined hits (dealt + received), dashes to the farthest enemy
+  unit on the board and locks onto them as the new target for 5 seconds
+  (or until they die). Energy resets after each dash.
+
+Upgrade 1 — Phantom Cut
+  Enemies along the dash path take damage equal to Ninja's base damage.
+
+Upgrade 2 — Chi Drain
+  The dash removes 2 energy (hit counter) from every enemy dashed through.
+
+Upgrade 3 — Smokescreen
+  On landing, stuns all enemies within 1.5 cells for 0.8 seconds.
+
+──────────────────────────────────
+SINNER
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk, Brawler
+Archetype: Berserker (Delayed)
+Cost:      4 coins   |   Rarity: Epic
+Type:      Melee
+HP: 18   DMG: 1   ATK SPD: 0.6/s   Move: 0.8/s   Range: Melee
+
+Description:
+  A prisoner wrapped in heavy chains who starts the fight sluggish and
+  suppressed. Absorb enough hits and the chains shatter — releasing a true
+  berserker that moves faster, attacks faster, and cannot be stunned for the
+  rest of the round. High HP pool means it usually survives long enough to
+  transform; the question is whether it does so before the battle is decided.
+
+Passive — Break Free
+  After 15 combined hits (dealt + received), breaks its chains permanently:
+  ATK SPD jumps from 0.6 to 1.3/s and Sinner becomes immune to stun.
+
+Upgrade 1 — Early Release
+  Break Free triggers at 10 hits instead of 15.
+
+Upgrade 2 — Mending Chains
+  Heals 40% max HP upon breaking free.
+
+Upgrade 3 — Shattered Chains
+  Upon breaking free, stuns all enemies within 2 cells for 0.5 seconds.
+
+──────────────────────────────────
+CATAPULT
+──────────────────────────────────
+Clan:      Castle Crew
+Tags:      Folk
+Archetype: Siege / Area Denier
+Cost:      2 coins   |   Rarity: Epic
+Type:      Stationary (cannot move or attack normally)
+HP: 12   DMG: 3   ATK SPD: —   Move: 0   Range: —
+
+Description:
+  A siege engine bolted to the ground. It never moves and never swings, but
+  it doesn't need to — the moment battle starts it launches a single massive
+  volley that carpets a cross-shaped area deep in enemy territory with
+  explosive damage and burning ground. After that it just sits as a durable
+  HP block, daring the enemy to come finish it off while its fire does the work.
+
+Passive — Bombardment
+  At battle start, fires a projectile 4 rows forward. On impact, deals 3
+  damage in a cross pattern (5 cells: center + 4 cardinal neighbors) and
+  leaves burning ground on all 5 cells for 5 seconds (1 damage/second).
+
+Upgrade 1 — Ember Drain
+  Burning ground also removes 1 hit counter per damage tick from targets with
+  hit-counter mechanics.
+
+Upgrade 2 — Scorched
+  Enemies standing on burning ground cannot be healed.
+
+Upgrade 3 — Heavy Payload
+  Initial explosion damage increased from 3 to 5.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GOBLIN GANG  (Monsters)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+──────────────────────────────────
+BURROW
+──────────────────────────────────
+Clan:      Goblin Gang
+Tags:      Monster, Brawler
+Archetype: Flanker / Ambusher
+Cost:      3 coins   |   Rarity: Common
+Type:      Melee
+HP: 8   DMG: 1   ATK SPD: 0.75/s   Move: 1/s   Range: Melee
+
+Description:
+  A wiry goblin tunneler who doesn't believe in fighting fair. The instant
+  battle begins it dives underground, vanishing completely, and resurfaces
+  2 seconds later at the mirrored position on the far side of the field —
+  right in the middle of the enemy backrow. Fragile, but the repositioning
+  alone can completely ruin an opponent's formation and draw fire away from
+  the rest of your team.
+
+Passive — Subterranean Dash
+  At battle start, burrows underground (invisible and invulnerable) for 2
+  seconds, then re-emerges at the mirrored row on the far side of the field
+  (same column, nearest free cell).
+
+Upgrade 1 — Counter Strike
+  Each melee hit removes 1 hit counter from the target.
+
+Upgrade 2 — Ground Burst
+  Emerging from the ground deals 2 damage to all enemies within 1.5 cells and
+  stuns them for 0.8 seconds.
+
+Upgrade 3 — Adrenaline Surge
+  Gains +30% attack speed for 3 seconds after emerging from burrow.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK REFERENCE TABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Unit        Clan              Cost  Rarity  Archetype              HP   DMG  ATK SPD  RNG
+──────────────────────────────────────────────────────────────────────────────────────────
+Tomb        Calcium Clan       1    Epic    Utility Structure       15    0    —       —
+Boney       Calcium Clan       2    Common  Berserker                7    1   1.0      0
+Marrow      Calcium Clan       2    Common  Skirmisher               9    1   1.05     3
+Catapult    Castle Crew        2    Epic    Siege / Area Denier     12    3    —       —
+Mend        Calcium Clan       3    Common  Healer                   8    1   0.8      3
+Knight      Castle Crew        3    Common  Protector / Tank        12    1   1.0      0
+Marc        Castle Crew        3    Common  Sniper                  10    1   0.75     6
+Samurai     Castle Crew        3    Rare    Lone Wolf / Assassin    10    1   1.1      0
+Bonk        Castle Crew        3    Rare    Heavy Hitter            11    1   0.7      0
+Ninja       Castle Crew        4    Rare    Assassin / Flanker      11    2   1.2      0
+Burrow      Goblin Gang        3    Common  Flanker / Ambusher       8    1   0.75     0
+Amalgam     Calcium Clan       4    Common  Juggernaut              13    3   0.45     0
+Migraine    Calcium Clan       4    Epic    Swarmer / Replicator     9    1   0.65     3
+Bull        Castle Crew        4    Common  Initiator / Disruptor   13    2   0.65     0
+Mage        Castle Crew        4    Common  Battle Mage / Caster     9    1   0.55     3
+Clavicula   Calcium Clan       4    Rare    Sustain Fighter         14    2   0.9      0
+Sinner      Castle Crew        4    Epic    Berserker (Delayed)     18    1   0.6      0
+Humerus     Calcium Clan       5    Rare    Commander / Tank        22    4   0.35     0

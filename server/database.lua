@@ -86,6 +86,11 @@ function Database:createTables()
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN unlocks_json TEXT") end)
     pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN device_id TEXT") end)
     pcall(function() self.db:exec("CREATE INDEX IF NOT EXISTS idx_player_device ON players(device_id)") end)
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN email TEXT") end)
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN backup_hash TEXT") end)
+    pcall(function()
+        self.db:exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_player_email ON players(email) WHERE email IS NOT NULL")
+    end)
 
     -- One-time migration: drop UNIQUE constraint on username (device_id is the real identity)
     local sqlStmt = self.db:prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='players'")
@@ -400,7 +405,7 @@ function Database:validateSession(token, deviceId)
         SELECT s.player_id, s.device_id, s.created_at,
                p.username, p.trophies, p.coins, p.active_deck_index,
                p.deck1_json, p.deck2_json, p.deck3_json, p.deck4_json, p.deck5_json,
-               p.gold, p.gems, p.xp, p.level, p.unlocks_json
+               p.gold, p.gems, p.xp, p.level, p.unlocks_json, p.email
         FROM sessions s
         JOIN players p ON s.player_id = p.id
         WHERE s.token = ?
@@ -429,6 +434,7 @@ function Database:validateSession(token, deviceId)
     local xp            = stmt:get_value(14) or 0
     local level         = stmt:get_value(15) or 1
     local unlocksJson   = stmt:get_value(16)
+    local email         = stmt:get_value(17)
     stmt:finalize()
 
     -- Reject if device_id doesn't match
@@ -465,7 +471,8 @@ function Database:validateSession(token, deviceId)
         level = level,
         activeDeckIndex = activeDeckIndex,
         decks = decks,
-        unlocks = unlocks
+        unlocks = unlocks,
+        hasEmail = (email ~= nil and email ~= "")
     }
 end
 
@@ -477,12 +484,47 @@ function Database:deletePlayerSessions(playerId)
     stmt:finalize()
 end
 
+-- Link an email + password to an existing player for cross-device recovery.
+-- Safe to call again with the same email (re-links / updates password).
+-- Returns true on success, or false + reason string on failure.
+function Database:linkEmail(playerId, email, password)
+    local hash = bcrypt.digest(password, 10)
+    local stmt = self.db:prepare([[
+        UPDATE players SET email = ?, backup_hash = ?
+        WHERE id = ? AND (email IS NULL OR email = ?)
+    ]])
+    stmt:bind_values(email, hash, playerId, email)
+    local result = stmt:step()
+    stmt:finalize()
+    if result ~= sqlite3.DONE then return false, "db_error" end
+    if self.db:changes() == 0 then return false, "email_taken" end
+    return true
+end
+
+-- Authenticate by email + password. Always returns "bad_credentials" on any failure
+-- to prevent email enumeration. Returns player table or nil + reason string.
+function Database:loginWithEmail(email, password)
+    local stmt = self.db:prepare("SELECT id, backup_hash FROM players WHERE email = ?")
+    stmt:bind_values(email)
+    if stmt:step() ~= sqlite3.ROW then
+        stmt:finalize()
+        return nil, "bad_credentials"
+    end
+    local playerId   = stmt:get_value(0)
+    local storedHash = stmt:get_value(1)
+    stmt:finalize()
+    if not storedHash or not bcrypt.verify(password, storedHash) then
+        return nil, "bad_credentials"
+    end
+    return self:getPlayer(playerId)
+end
+
 -- Get player by ID
 function Database:getPlayer(playerId)
     local stmt = self.db:prepare([[
         SELECT id, username, trophies, coins, active_deck_index,
                deck1_json, deck2_json, deck3_json, deck4_json, deck5_json,
-               gold, gems, xp, level, unlocks_json
+               gold, gems, xp, level, unlocks_json, email
         FROM players WHERE id = ?
     ]])
     stmt:bind_values(playerId)
@@ -507,6 +549,7 @@ function Database:getPlayer(playerId)
     local xp   = stmt:get_value(12) or 0
     local level = stmt:get_value(13) or 1
     local unlocksJson = stmt:get_value(14)
+    local email       = stmt:get_value(15)
     stmt:finalize()
 
     local decks = {
@@ -533,7 +576,8 @@ function Database:getPlayer(playerId)
         level = level,
         activeDeckIndex = activeDeckIndex,
         decks = decks,
-        unlocks = unlocks
+        unlocks = unlocks,
+        hasEmail = (email ~= nil and email ~= "")
     }
 end
 

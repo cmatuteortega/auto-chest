@@ -32,6 +32,12 @@ function Grid:new()
     -- Ground effects (e.g. Migraine fire patches). Owned by Grid so they outlive their source unit.
     self.firePatches = {}
 
+    -- Quake spell ground-shake patches (slow debuff zone).
+    self.quakePatches = {}
+
+    -- Sigil spell healing-zone patches (drawn before units, no clip needed).
+    self.sigilPatches = {}
+
     -- Per-cell spawn/despawn animations queued whenever the board changes between phases.
     self.cellEffects = {}
 
@@ -39,6 +45,10 @@ function Grid:new()
     -- They still receive update() ticks but are invisible to targeting, AoE,
     -- and forward-scan checks done by other units.
     self.hiddenUnits = {}
+
+    -- Permanent terrain blocks placed by the Rock spell. Each entry: {col, row, sprite}.
+    -- Cells in this table have cell.occupied = true for pathfinding.
+    self.rocks = {}
 end
 
 -- Refresh grid dimensions from Constants (called on resize)
@@ -235,24 +245,61 @@ end
 function Grid:tickFirePatches(dt)
     for i = #self.firePatches, 1, -1 do
         local patch = self.firePatches[i]
-        patch.timer       = patch.timer - dt
-        patch.damageTimer = patch.damageTimer - dt
+        if self:isRock(patch.col, patch.row) then
+            table.remove(self.firePatches, i)
+        else
+            patch.timer       = patch.timer - dt
+            patch.damageTimer = patch.damageTimer - dt
 
-        if patch.damageTimer <= 0 then
-            patch.damageTimer = patch.damageTimer + 1
-            for _, unit in ipairs(self:getAllUnits()) do
-                if unit.owner ~= patch.owner and not unit.isDead
-                   and unit.col == patch.col and unit.row == patch.row then
-                    unit:takeDamage(1)
-                    if unit.isDead then
-                        self:killUnit(unit)
+            if patch.damageTimer <= 0 then
+                patch.damageTimer = patch.damageTimer + 1
+                for _, unit in ipairs(self:getAllUnits()) do
+                    if unit.owner ~= patch.owner and not unit.isDead
+                       and unit.col == patch.col and unit.row == patch.row then
+                        unit:takeDamage(1, nil, self)
+                        if unit.isDead then
+                            self:killUnit(unit)
+                        end
                     end
                 end
+            end
+
+            if patch.timer <= 0 then
+                table.remove(self.firePatches, i)
+            end
+        end
+    end
+end
+
+-- Tick quake patches (Quake spell slow zone). Called from the battle update loop alongside
+-- tickFirePatches. Resets all unit shake offsets each frame then re-applies for units that
+-- are currently standing on an active quake cell.
+function Grid:tickQuakePatches(dt)
+    -- Reset shake on every unit so units that walked off stop shaking immediately.
+    for _, unit in ipairs(self:getAllUnitsIncludingHidden()) do
+        unit.quakeShakeX = 0
+        unit.quakeShakeY = 0
+    end
+
+    for i = #self.quakePatches, 1, -1 do
+        local patch = self.quakePatches[i]
+        patch.timer     = patch.timer - dt
+        patch.shakeTime = patch.shakeTime + dt
+
+        local t      = patch.shakeTime
+        local shakeX = math.sin(t * (patch.shakeFreqX or 30)) * (patch.shakeAmpX or 2)
+        local shakeY = math.cos(t * (patch.shakeFreqY or 25)) * (patch.shakeAmpY or 1)
+
+        for _, unit in ipairs(self:getAllUnits()) do
+            if not unit.isDead and unit.col == patch.col and unit.row == patch.row then
+                unit:applySlow(patch.slowRefresh or 0.3, patch.slowAtkMult or 0.8, patch.slowMovMult or 0.5)
+                unit.quakeShakeX = shakeX
+                unit.quakeShakeY = shakeY
             end
         end
 
         if patch.timer <= 0 then
-            table.remove(self.firePatches, i)
+            table.remove(self.quakePatches, i)
         end
     end
 end
@@ -333,6 +380,49 @@ function Grid:getUnitAtCell(col, row)
     return nil
 end
 
+function Grid:placeRock(col, row, sprite)
+    local cell = self:getCell(col, row)
+    if not cell then return nil end
+    cell.occupied = true
+    local entry = {col = col, row = row, sprite = sprite, animating = true}
+    table.insert(self.rocks, entry)
+    cell.rock = entry
+    return entry
+end
+
+function Grid:isRock(col, row)
+    for _, r in ipairs(self.rocks) do
+        if r.col == col and r.row == row then return true end
+    end
+    return false
+end
+
+function Grid:clearRocks()
+    for _, r in ipairs(self.rocks) do
+        local cell = self:getCell(r.col, r.row)
+        if cell then
+            cell.occupied = false
+            cell.rock = nil
+        end
+    end
+    self.rocks = {}
+end
+
+function Grid:drawRocks()
+    local lg = love.graphics
+    for _, r in ipairs(self.rocks) do
+        if r.sprite then
+            local visualRow = Constants.toVisualRow(r.row)
+            local cx = self.offsetX + (r.col - 1) * self.cellSize + self.cellSize / 2
+            local cy = self.offsetY + (visualRow - 1) * self.cellSize + self.cellSize / 2
+            local sw, sh = r.sprite:getWidth(), r.sprite:getHeight()
+            local scale = self.cellSize / sw
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(r.sprite, cx, cy, 0, scale, scale, sw / 2, sh / 2)
+        end
+    end
+end
+
 function Grid:update()
     -- Refresh dimensions in case window was resized
     self:refreshDimensions()
@@ -394,8 +484,10 @@ function Grid:draw(draggedUnit, hideOwner)
         end
     end
 
-    -- Grid-owned ground effects (Migraine fire patches): top portion clipped above units
+    -- Grid-owned ground effects: top portion clipped above units
     self:drawFirePatches("top")
+    self:drawQuakePatches("top")
+    self:drawSigilPatches()
 
     -- Interleave death animations with alive units row by row (far → near). Each row's
     -- corpse anims are drawn before its alive units, so a near-row death animation that
@@ -413,11 +505,36 @@ function Grid:draw(draggedUnit, hideOwner)
                     end
                 end
             end
+            -- Draw terrain rock for this cell (animating rocks are handled by RockSpell:draw).
+            if cell.rock and not cell.rock.animating then
+                local img = cell.rock.sprite
+                if img then
+                    local rx, ry = self:gridToWorld(col, row)
+                    local sw, sh = img:getWidth(), img:getHeight()
+                    local scale  = math.max(1, math.floor(self.cellSize / 16))
+                    local offX   = math.floor((self.cellSize - sw * scale) / 2)
+                    local offY   = math.floor(self.cellSize - (sh + 3) * scale)
+                    love.graphics.setColor(1, 1, 1, 1)
+                    love.graphics.draw(img, math.floor(rx + offX), math.floor(ry + offY), 0, scale, scale)
+                end
+            end
+        end
+    end
+
+    -- Top-layer pass: overlays drawn above all units (e.g. heal animations).
+    -- Units opt in by implementing drawTopLayer().
+    for row = rowStart, rowEnd, rowStep do
+        for col = 1, self.cols do
+            local cell = self.cells[row][col]
+            if cell.unit and not cell.unit.isDead and cell.unit.drawTopLayer then
+                cell.unit:drawTopLayer()
+            end
         end
     end
 
     -- Grid-owned ground effects: bottom portion clipped over units' feet
     self:drawFirePatches("bottom")
+    self:drawQuakePatches("bottom")
 end
 
 local CELL_EFFECT_FPS = 16
@@ -486,6 +603,27 @@ end
 function Grid:drawFirePatches(clipMode)
     for _, patch in ipairs(self.firePatches) do
         if patch.draw then patch:draw(clipMode) end
+    end
+end
+
+function Grid:drawQuakePatches(clipMode)
+    for _, patch in ipairs(self.quakePatches) do
+        if patch.draw then patch:draw(clipMode) end
+    end
+end
+
+function Grid:tickSigilPatches(dt)
+    for i = #self.sigilPatches, 1, -1 do
+        local p = self.sigilPatches[i]
+        p.timer    = p.timer - dt
+        p.rotation = (p.rotation or 0) + (p.rotationSpeed or 0) * dt
+        if p.timer <= 0 then table.remove(self.sigilPatches, i) end
+    end
+end
+
+function Grid:drawSigilPatches()
+    for _, p in ipairs(self.sigilPatches) do
+        if p.draw then p.draw(p) end
     end
 end
 

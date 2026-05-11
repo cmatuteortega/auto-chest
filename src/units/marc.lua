@@ -179,7 +179,7 @@ function Marc:update(dt, grid)
             if projectile.piercing and projectile.pierceTargets then
                 for _, pierceTarget in ipairs(projectile.pierceTargets) do
                     if not pierceTarget.isDead then
-                        pierceTarget:takeDamage(projectile.damage)
+                        pierceTarget:takeDamage(projectile.damage, self, grid)
                         if pierceTarget.isDead then
                             grid:killUnit(pierceTarget)
                             self:onKill(pierceTarget)
@@ -188,7 +188,7 @@ function Marc:update(dt, grid)
                 end
             else
                 if projectile.target and not projectile.target.isDead then
-                    projectile.target:takeDamage(projectile.damage)
+                    projectile.target:takeDamage(projectile.damage, self, grid)
                     if projectile.target.isDead then
                         grid:killUnit(projectile.target)
                         self:onKill(projectile.target)

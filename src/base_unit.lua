@@ -149,6 +149,14 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.slowAttackMult  = 1
     self.slowMoveMult    = 1
 
+    -- Haste buff (refresh-not-stack)
+    self.hasteTimer      = 0
+    self.hasteAttackMult = 1
+
+    -- Quake patch shake offset (set each frame by Grid:tickQuakePatches, reset to 0 otherwise)
+    self.quakeShakeX = 0
+    self.quakeShakeY = 0
+
     -- Upgrade tree: each unit can have up to 3 upgrades, all can be selected
     self.activeUpgrades = {}  -- List of upgrade indices that have been selected (e.g., {1, 2})
     self.upgradeTree = {}  -- Defined in subclasses: {name, description, apply function}
@@ -513,6 +521,12 @@ function BaseUnit:draw()
         x = x + shakeAmount
     end
 
+    -- Apply quake zone shake (set each frame by Grid:tickQuakePatches)
+    if self.quakeShakeX ~= 0 or self.quakeShakeY ~= 0 then
+        x = x + self.quakeShakeX
+        y = y + self.quakeShakeY
+    end
+
     -- Get current sprite, trimBottom, and trimTop
     local sprite, trimBottom, trimTop
     if self.hasDirectionalSprites then
@@ -699,6 +713,10 @@ end
 -- so subclasses (e.g. Cart's Pothole) can react to who hit them and modify
 -- the board. AoE / projectile damage sources leave them nil.
 function BaseUnit:takeDamage(amount, attacker, grid)
+    if self.shieldedBy and not self.shieldedBy.isDead then
+        self.shieldedBy:takeDamage(amount, attacker, grid)
+        return
+    end
     self.health = self.health - amount
     if self.health <= 0 then
         self.health = 0
@@ -825,6 +843,11 @@ function BaseUnit:applySlow(duration, atkMult, moveMult)
     if moveMult < self.slowMoveMult   then self.slowMoveMult   = moveMult end
 end
 
+function BaseUnit:applyHaste(duration, atkMult)
+    if duration > self.hasteTimer      then self.hasteTimer      = duration end
+    if atkMult  > self.hasteAttackMult then self.hasteAttackMult = atkMult  end
+end
+
 function BaseUnit:resetCombatState()
     self.health             = self.maxHealth
     self.isDead             = false
@@ -840,6 +863,8 @@ function BaseUnit:resetCombatState()
     self.slowTimer          = 0
     self.slowAttackMult     = 1
     self.slowMoveMult       = 1
+    self.hasteTimer         = 0
+    self.hasteAttackMult    = 1
     self.buffAnimTimer      = 0
     self.actionDelayTimer   = 0
     self.isMoving           = false
@@ -858,6 +883,7 @@ function BaseUnit:resetCombatState()
     self._noHeal                = nil
     self.royalCommandBonus      = nil
     self.barRevealed            = false
+    self.shieldedBy             = nil
 
     -- Reset action animation state
     self.actionAnimProgress = 0
@@ -928,6 +954,15 @@ function BaseUnit:update(dt, grid)
         if self.tombMartyrdombuffTimer <= 0 then
             self.tombMartyrdombuffTimer = nil
             self.attackSpeed = self.baseAttackSpeed
+        end
+    end
+
+    -- Haste buff: tick down, reset multiplier when expired
+    if self.hasteTimer > 0 then
+        self.hasteTimer = self.hasteTimer - dt
+        if self.hasteTimer <= 0 then
+            self.hasteTimer      = 0
+            self.hasteAttackMult = 1
         end
     end
 
@@ -1026,7 +1061,7 @@ function BaseUnit:update(dt, grid)
                     self:attack(self.target, grid)
                 end
             end
-            self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult)
+            self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult * self.hasteAttackMult)
         end
     else
         -- Target out of range, or we're still moving - move toward it
@@ -1059,7 +1094,7 @@ function BaseUnit:update(dt, grid)
                     end
                     self:attack(self.target, grid)
                 end
-                self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult)
+                self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult * self.hasteAttackMult)
             end
         else
             -- Generate new path if we don't have one

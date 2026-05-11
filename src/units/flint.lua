@@ -100,7 +100,7 @@ function Flint:update(dt, grid)
             for _, unit in ipairs(grid:getAllUnits()) do
                 if unit.owner ~= self.owner and not unit.isDead
                    and unit.col == p.col and unit.row == p.row then
-                    unit:takeDamage(1)
+                    unit:takeDamage(1, self, grid)
                     if unit.isDead then
                         grid:killUnit(unit)
                         self:onKill(unit)
@@ -132,7 +132,7 @@ function Flint:detonateBomb(bomb, grid)
     if grid:isValidCell(cx, cy) then
         local cell = grid:getCell(cx, cy)
         if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-            cell.unit:takeDamage(BOMB_DAMAGE)
+            cell.unit:takeDamage(BOMB_DAMAGE, self, grid)
             if cell.unit.isDead then
                 grid:killUnit(cell.unit)
                 self:onKill(cell.unit)
@@ -148,7 +148,7 @@ function Flint:detonateBomb(bomb, grid)
             if grid:isValidCell(tc, tr) then
                 local cell = grid:getCell(tc, tr)
                 if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-                    cell.unit:takeDamage(CLUSTER_DAMAGE)
+                    cell.unit:takeDamage(CLUSTER_DAMAGE, self, grid)
                     if cell.unit.isDead then
                         grid:killUnit(cell.unit)
                         self:onKill(cell.unit)

@@ -49,8 +49,8 @@ function Clavicula:getDamage()
 end
 
 -- Track hits received toward Whirlwind
-function Clavicula:takeDamage(amount)
-    Clavicula.super.takeDamage(self, amount)
+function Clavicula:takeDamage(amount, attacker, grid)
+    Clavicula.super.takeDamage(self, amount, attacker, grid)
 
     if self.isDead then return end
 
@@ -91,7 +91,7 @@ function Clavicula:doSpin(grid)
             local dx = math.abs(unit.col - self.col)
             local dy = math.abs(unit.row - self.row)
             if dx <= 1 and dy <= 1 then
-                unit:takeDamage(dmg)
+                unit:takeDamage(dmg, self, grid)
                 AudioManager.playSFX("slice.mp3")
                 if unit.isDead then
                     grid:killUnit(unit)

@@ -80,7 +80,7 @@ function Amalgam:resetCombatState()
     self.explosions             = {}
 end
 
-function Amalgam:takeDamage(amount)
+function Amalgam:takeDamage(amount, attacker, grid)
     if self.isDead then return end
 
     -- Invulnerable: ignore all damage
@@ -111,7 +111,7 @@ function Amalgam:takeDamage(amount)
         end
     else
         -- Normal damage
-        Amalgam.super.takeDamage(self, amount)
+        Amalgam.super.takeDamage(self, amount, attacker, grid)
     end
 end
 
@@ -135,7 +135,7 @@ function Amalgam:doCorpseExplosion(grid)
             local dy   = unit.row - self.row
             local dist = math.sqrt(dx * dx + dy * dy)
             if dist <= radius then
-                unit:takeDamage(dmg)
+                unit:takeDamage(dmg, self, grid)
                 if unit.isDead then
                     grid:killUnit(unit)
                     self:onKill(unit)

@@ -139,6 +139,19 @@ function MenuScreen.new()
         self._settingsTitleLastTap = 0
         self._showGodModeRow     = false
 
+        -- Email Backup overlay (inside settings)
+        self._settingsEmailRect    = nil
+        self._emailInputRect       = nil
+        self._passwordInputRect    = nil
+        self._emailSaveBtnRect     = nil
+        self._emailCancelBtnRect   = nil
+        self._showEmailForm        = false
+        self._emailText            = ""
+        self._passwordText         = ""
+        self._emailActiveField     = nil
+        self._emailFormStatus      = nil
+        self._emailFormStatusTimer = 0
+
         -- Reward reveal state
         self._rewardState     = "idle"   -- "idle", "pending", "revealing"
         self._rewardAnimTimer = 0
@@ -319,6 +332,39 @@ function MenuScreen.new()
             self._leaderboard = data.players
             self._leaderboardLoading = false
         end)
+
+        self._cb_linkEmailSuccess = _G.GameSocket:on("link_email_success", function()
+            if _G.PlayerData then _G.PlayerData.hasEmailBackup = true end
+            -- Persist so next launch shows "Linked" without waiting for server
+            local raw = love.filesystem.read("session.dat")
+            if raw then
+                local json = require('lib.json')
+                local ok2, sess = pcall(json.decode, raw)
+                if ok2 and sess then
+                    sess.hasEmailBackup = true
+                    love.filesystem.write("session.dat", json.encode(sess))
+                end
+            end
+            self._showEmailForm        = false
+            self._emailFormStatus      = "ok"
+            self._emailFormStatusTimer = 2.0
+            self._emailText            = ""
+            self._passwordText         = ""
+            self._emailActiveField     = nil
+            love.keyboard.setTextInput(false)
+        end)
+
+        self._cb_linkEmailFailed = _G.GameSocket:on("link_email_failed", function(data)
+            local reason = (data and data.reason) or "failed"
+            local msgs = {
+                invalid_email      = "Invalid email address",
+                password_too_short = "Password must be 6+ characters",
+                email_taken        = "Email already in use",
+                not_authenticated  = "Not authenticated",
+            }
+            self._emailFormStatus      = msgs[reason] or "Could not save. Try again."
+            self._emailFormStatusTimer = 3.0
+        end)
     end
 
     function self:removeSocketHandlers()
@@ -331,17 +377,21 @@ function MenuScreen.new()
             if self._cb_onlineCount    then _G.GameSocket:removeCallback(self._cb_onlineCount) end
             if self._cb_rewardClaimed  then _G.GameSocket:removeCallback(self._cb_rewardClaimed) end
             if self._cb_cardAwarded    then _G.GameSocket:removeCallback(self._cb_cardAwarded) end
-            if self._cb_leaderboard    then _G.GameSocket:removeCallback(self._cb_leaderboard) end
+            if self._cb_leaderboard       then _G.GameSocket:removeCallback(self._cb_leaderboard) end
+            if self._cb_linkEmailSuccess  then _G.GameSocket:removeCallback(self._cb_linkEmailSuccess) end
+            if self._cb_linkEmailFailed   then _G.GameSocket:removeCallback(self._cb_linkEmailFailed) end
         end
-        self._cb_currencyUpdate = nil
-        self._cb_shopError      = nil
-        self._cb_disconnect     = nil
-        self._cb_forcedLogout   = nil
-        self._cb_decksSynced    = nil
-        self._cb_onlineCount    = nil
-        self._cb_rewardClaimed  = nil
-        self._cb_cardAwarded    = nil
-        self._cb_leaderboard    = nil
+        self._cb_currencyUpdate    = nil
+        self._cb_shopError         = nil
+        self._cb_disconnect        = nil
+        self._cb_forcedLogout      = nil
+        self._cb_decksSynced       = nil
+        self._cb_onlineCount       = nil
+        self._cb_rewardClaimed     = nil
+        self._cb_cardAwarded       = nil
+        self._cb_leaderboard       = nil
+        self._cb_linkEmailSuccess  = nil
+        self._cb_linkEmailFailed   = nil
     end
 
     function self:startReconnect()
@@ -489,6 +539,16 @@ function MenuScreen.new()
             if self.shopNoticeTimer <= 0 then
                 self.shopNotice    = nil
                 self.shopNoticeTimer = 0
+            end
+        end
+
+        if self._emailFormStatusTimer > 0 then
+            self._emailFormStatusTimer = self._emailFormStatusTimer - dt
+            if self._emailFormStatusTimer <= 0 then
+                self._emailFormStatusTimer = 0
+                if self._emailFormStatus ~= "saving" then
+                    self._emailFormStatus = nil
+                end
             end
         end
 
@@ -2724,7 +2784,11 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
             -- Panel geometry
             local panW  = math.floor(300 * sc)
-            local panH  = math.floor(self._showGodModeRow and 360 or 320) * sc
+            local baseH = 320
+            if self._showGodModeRow then baseH = baseH + 44 end
+            baseH = baseH + 44                                       -- Email Backup row
+            if self._showEmailForm  then baseH = baseH + 130 end    -- inline form
+            local panH  = math.floor(baseH) * sc
             local panX  = math.floor((W - panW) / 2)
             local panY  = math.floor((H - panH) / 2)
             local brd   = math.max(1, math.floor(2 * sc))
@@ -2751,8 +2815,12 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     panX + panW - hl, panY + panH - hl,
                     panX + panW - hl, panY + hl)
 
-            -- Vertical offset so the 196-unit content block is centred in panH
-            local contentH = math.floor(196 * sc)
+            -- Compute content block height to centre it vertically in the panel
+            local contentHraw = 196
+            if self._showGodModeRow then contentHraw = contentHraw + 44 end
+            contentHraw = contentHraw + 44                           -- Email Backup row
+            if self._showEmailForm  then contentHraw = contentHraw + 130 end
+            local contentH = math.floor(contentHraw * sc)
             local offY     = math.floor((panH - contentH) / 2)
 
             -- Title (medium font, same weight as panel headers elsewhere)
@@ -2814,6 +2882,120 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             if self._showGodModeRow then
                 local row3Y = panY + offY + math.floor(134 * sc)
                 self._settingsGodModeRect = drawToggleRow("God Mode", _G.GodMode == true, row3Y)
+            end
+
+            -- Email Backup action row (always shown)
+            do
+                local baseRowOffset = self._showGodModeRow and 178 or 134
+                local emailRowY = panY + offY + math.floor(baseRowOffset * sc)
+                local rowH  = math.floor(38 * sc)
+                local btnW  = math.floor(80 * sc)
+                local btnH  = math.floor(28 * sc)
+                local btnX  = panX + panW - math.floor(16 * sc) - btnW
+                local btnY2 = emailRowY + math.floor((rowH - btnH) / 2)
+                local hasBackup = _G.PlayerData and _G.PlayerData.hasEmailBackup
+                local btnLabel = hasBackup and "Linked" or "Set Up"
+
+                lg.setFont(Fonts.small)
+                lg.setColor(0.765, 0.639, 0.541, 1)
+                lg.print("Email Backup", panX + math.floor(16 * sc), textCY(Fonts.small, emailRowY, rowH))
+
+                if hasBackup then
+                    lg.setColor(0.059, 0.247, 0.165, 1)
+                else
+                    lg.setColor(0.059, 0.165, 0.247, 1)
+                end
+                roundedRect(btnX, btnY2, btnW, btnH, 4, sc)
+                if hasBackup then
+                    lg.setColor(0.125, 0.424, 0.310, 1)
+                else
+                    lg.setColor(0.125, 0.224, 0.310, 1)
+                end
+                roundedRectLine(btnX, btnY2, btnW, btnH, 4, sc, math.max(1, math.floor(sc)))
+                lg.setFont(Fonts.small)
+                lg.setColor(0.965, 0.839, 0.741, 1)
+                lg.printf(btnLabel, btnX, textCY(Fonts.small, btnY2, btnH), btnW, 'center')
+                self._settingsEmailRect = { x = btnX, y = btnY2, w = btnW, h = btnH }
+
+                -- Inline email/password form
+                if self._showEmailForm then
+                    local formY = emailRowY + math.floor(44 * sc)
+                    local fieldW = math.floor(panW - 32 * sc)
+                    local fieldH = math.floor(32 * sc)
+                    local fieldX = panX + math.floor(16 * sc)
+
+                    -- Status message
+                    if self._emailFormStatus then
+                        local isOk = (self._emailFormStatus == "ok")
+                        lg.setFont(Fonts.tiny)
+                        lg.setColor(isOk and {0.4, 0.9, 0.4, 1} or {1, 0.4, 0.4, 1})
+                        local msg = isOk and "Saved!" or self._emailFormStatus
+                        lg.printf(msg, panX, formY - math.floor(14 * sc), panW, 'center')
+                    elseif self._emailFormStatus == "saving" then
+                        lg.setFont(Fonts.tiny)
+                        lg.setColor(0.7, 0.7, 0.7, 1)
+                        lg.printf("Saving...", panX, formY - math.floor(14 * sc), panW, 'center')
+                    end
+
+                    -- Email field
+                    local emailActive = (self._emailActiveField == "email")
+                    lg.setColor(emailActive and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
+                    roundedRect(fieldX, formY, fieldW, fieldH, 4, sc)
+                    lg.setColor(emailActive and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
+                    roundedRectLine(fieldX, formY, fieldW, fieldH, 4, sc, math.max(1, math.floor(sc)))
+                    lg.setFont(Fonts.tiny)
+                    lg.setColor(#self._emailText == 0 and {0.4, 0.4, 0.45, 1} or {1, 1, 1, 1})
+                    local emailDisp = #self._emailText == 0 and "Email" or self._emailText
+                    lg.print(emailDisp, fieldX + math.floor(6 * sc), textCY(Fonts.tiny, formY, fieldH))
+                    self._emailInputRect = { x = fieldX, y = formY, w = fieldW, h = fieldH }
+
+                    -- Password field
+                    local pwY2 = formY + fieldH + math.floor(6 * sc)
+                    local pwActive = (self._emailActiveField == "password")
+                    lg.setColor(pwActive and {0.22, 0.22, 0.32, 1} or {0.16, 0.16, 0.22, 1})
+                    roundedRect(fieldX, pwY2, fieldW, fieldH, 4, sc)
+                    lg.setColor(pwActive and {0.5, 0.5, 0.8, 1} or {0.32, 0.32, 0.42, 1})
+                    roundedRectLine(fieldX, pwY2, fieldW, fieldH, 4, sc, math.max(1, math.floor(sc)))
+                    lg.setFont(Fonts.tiny)
+                    lg.setColor(#self._passwordText == 0 and {0.4, 0.4, 0.45, 1} or {1, 1, 1, 1})
+                    local pwDisp = #self._passwordText == 0 and "Password (6+ chars)" or string.rep("*", #self._passwordText)
+                    lg.print(pwDisp, fieldX + math.floor(6 * sc), textCY(Fonts.tiny, pwY2, fieldH))
+                    self._passwordInputRect = { x = fieldX, y = pwY2, w = fieldW, h = fieldH }
+
+                    -- Save + Cancel buttons
+                    local canSave = #self._emailText > 0 and #self._passwordText >= 6
+                    local saveBtnW  = math.floor(96 * sc)
+                    local cancelBtnW = math.floor(76 * sc)
+                    local gap       = math.floor(8 * sc)
+                    local bH        = math.floor(28 * sc)
+                    local totalW    = saveBtnW + gap + cancelBtnW
+                    local bStartX   = panX + math.floor((panW - totalW) / 2)
+                    local bY2       = pwY2 + fieldH + math.floor(8 * sc)
+
+                    lg.setColor(canSave and {0.059, 0.165, 0.247, 1} or {0.031, 0.078, 0.118, 1})
+                    roundedRect(bStartX, bY2, saveBtnW, bH, 4, sc)
+                    lg.setColor(canSave and {0.125, 0.224, 0.310, 1} or {0.2, 0.2, 0.2, 1})
+                    roundedRectLine(bStartX, bY2, saveBtnW, bH, 4, sc, math.max(1, math.floor(sc)))
+                    lg.setFont(Fonts.small)
+                    lg.setColor(canSave and {0.965, 0.839, 0.741, 1} or {0.3, 0.3, 0.3, 1})
+                    lg.printf("Save", bStartX, textCY(Fonts.small, bY2, bH), saveBtnW, 'center')
+                    self._emailSaveBtnRect = canSave and { x = bStartX, y = bY2, w = saveBtnW, h = bH } or nil
+
+                    local cBX = bStartX + saveBtnW + gap
+                    lg.setColor(0.031, 0.078, 0.118, 1)
+                    roundedRect(cBX, bY2, cancelBtnW, bH, 4, sc)
+                    lg.setColor(0.306, 0.286, 0.373, 1)
+                    roundedRectLine(cBX, bY2, cancelBtnW, bH, 4, sc, math.max(1, math.floor(sc)))
+                    lg.setFont(Fonts.small)
+                    lg.setColor(0.765, 0.639, 0.541, 1)
+                    lg.printf("Cancel", cBX, textCY(Fonts.small, bY2, bH), cancelBtnW, 'center')
+                    self._emailCancelBtnRect = { x = cBX, y = bY2, w = cancelBtnW, h = bH }
+                else
+                    self._emailInputRect     = nil
+                    self._passwordInputRect  = nil
+                    self._emailSaveBtnRect   = nil
+                    self._emailCancelBtnRect = nil
+                end
             end
 
             self._settingsPanelRect  = { x = panX, y = panY, w = panW, h = panH }
@@ -3215,11 +3397,71 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     return
                 end
             end
-            -- Tap outside the panel closes overlay
+            -- Email form: Save button
+            if self._showEmailForm and self._emailSaveBtnRect then
+                local r = self._emailSaveBtnRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    self:doLinkEmail()
+                    return
+                end
+            end
+            -- Email form: Cancel button
+            if self._showEmailForm and self._emailCancelBtnRect then
+                local r = self._emailCancelBtnRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    self._showEmailForm     = false
+                    self._emailText        = ""
+                    self._passwordText     = ""
+                    self._emailActiveField = nil
+                    self._emailFormStatus  = nil
+                    love.keyboard.setTextInput(false)
+                    return
+                end
+            end
+            -- Email form: field focus
+            if self._showEmailForm then
+                if self._emailInputRect then
+                    local r = self._emailInputRect
+                    if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                        self._emailActiveField = "email"
+                        love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
+                        return
+                    end
+                end
+                if self._passwordInputRect then
+                    local r = self._passwordInputRect
+                    if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                        self._emailActiveField = "password"
+                        love.keyboard.setTextInput(true, r.x, r.y, r.w, r.h)
+                        return
+                    end
+                end
+            end
+            -- Email Backup row button
+            if self._settingsEmailRect then
+                local r = self._settingsEmailRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    local hasBackup = _G.PlayerData and _G.PlayerData.hasEmailBackup
+                    if not hasBackup then
+                        self._showEmailForm    = true
+                        self._emailFormStatus  = nil
+                        self._emailActiveField = nil
+                    end
+                    AudioManager.playTap()
+                    return
+                end
+            end
+            -- Tap outside the panel closes overlay (also collapses email form)
             if self._settingsPanelRect then
                 local r = self._settingsPanelRect
                 if x < r.x or x > r.x + r.w or y < r.y or y > r.y + r.h then
-                    self.showSettings = false
+                    self.showSettings      = false
+                    self._showEmailForm    = false
+                    self._emailText        = ""
+                    self._passwordText     = ""
+                    self._emailActiveField = nil
+                    self._emailFormStatus  = nil
+                    love.keyboard.setTextInput(false)
                 end
             end
             return
@@ -3230,6 +3472,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local r = self._settingsBtnRect
             if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                 self.showSettings = true
+                print("[DEBUG] settings opened hasEmailBackup=" .. tostring(_G.PlayerData and _G.PlayerData.hasEmailBackup))
                 return
             end
         end
@@ -3596,6 +3839,29 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
     end
 
     function self:keypressed(key)
+        -- Email form input handling
+        if self.showSettings and self._showEmailForm then
+            if key == "backspace" then
+                if self._emailActiveField == "email" then
+                    self._emailText = self._emailText:sub(1, -2)
+                elseif self._emailActiveField == "password" then
+                    self._passwordText = self._passwordText:sub(1, -2)
+                end
+            elseif key == "tab" then
+                self._emailActiveField = (self._emailActiveField == "email") and "password" or "email"
+            elseif key == "return" or key == "kpenter" then
+                if self._emailActiveField == "email" then
+                    self._emailActiveField = "password"
+                else
+                    self:doLinkEmail()
+                end
+            elseif key == "escape" then
+                self._showEmailForm     = false
+                self._emailActiveField  = nil
+                love.keyboard.setTextInput(false)
+            end
+            return
+        end
         -- Room key input handling
         if self._roomKeyActive then
             if key == "backspace" then
@@ -3619,11 +3885,45 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
     end
 
     function self:textinput(t)
+        if self.showSettings and self._showEmailForm then
+            if self._emailActiveField == "email" then
+                if #self._emailText < 128 and t:match("^[%g]$") then
+                    self._emailText = self._emailText .. t
+                end
+            elseif self._emailActiveField == "password" then
+                if #self._passwordText < 128 and t:match("^[%g]$") then
+                    self._passwordText = self._passwordText .. t
+                end
+            end
+            return
+        end
         if self._roomKeyActive then
             if t:match("^[%w]+$") and #self._roomKeyText < 12 then
                 self._roomKeyText = self._roomKeyText .. t:upper()
             end
         end
+    end
+
+    function self:doLinkEmail()
+        local email = self._emailText:match("^%s*(.-)%s*$"):lower()
+        local pw    = self._passwordText
+        if not email:match("^[^@]+@[^@]+%.[^@]+$") then
+            self._emailFormStatus      = "Invalid email address"
+            self._emailFormStatusTimer = 2.5
+            return
+        end
+        if #pw < 6 then
+            self._emailFormStatus      = "Password must be 6+ characters"
+            self._emailFormStatusTimer = 2.5
+            return
+        end
+        if not (_G.GameSocket and _G.GameSocket:isConnected()) then
+            self._emailFormStatus      = "Not connected to server"
+            self._emailFormStatusTimer = 2.5
+            return
+        end
+        self._emailFormStatus = "saving"
+        _G.GameSocket:send("link_email", { email = email, password = pw })
     end
 
     function self:tryJoinPrivateRoom()

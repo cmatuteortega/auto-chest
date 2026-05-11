@@ -66,8 +66,8 @@ function Sinner:checkFormChange()
     end
 end
 
-function Sinner:takeDamage(amount)
-    Sinner.super.takeDamage(self, amount)
+function Sinner:takeDamage(amount, attacker, grid)
+    Sinner.super.takeDamage(self, amount, attacker, grid)
     if self.isDead then return end
     self.hitCounter = self.hitCounter + 1
     self:checkFormChange()

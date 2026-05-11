@@ -23,6 +23,11 @@ local Flint     = require('src.units.flint')
 local Mason     = require('src.units.mason')
 local Pest      = require('src.units.pest')
 local Loot      = require('src.units.loot')
+local Ninja     = require('src.units.ninja')
+local Ribs      = require('src.units.ribs')
+local Hook      = require('src.units.hook')
+local Cannon    = require('src.units.cannon')
+local Effigy    = require('src.units.effigy')
 
 local SpellRegistry = require('src.spell_registry')
 
@@ -54,13 +59,18 @@ UnitRegistry.unitClasses = {
     mason    = Mason,
     pest     = Pest,
     loot     = Loot,
+    ninja    = Ninja,
+    ribs     = Ribs,
+    hook     = Hook,
+    cannon   = Cannon,
+    effigy   = Effigy,
 }
 
 -- Unit groups for collection display
 UnitRegistry.groups = {
-    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "mend", "amalgam", "clavicula", "humerus", "migraine", "tomb", "arrows"} },
-    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "sinner", "catapult", "fireball"} },
-    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "cart", "flint", "mason", "pest", "loot"} },
+    { name = "Calcium Clan", groupType = "skeleton", factionIcon = "undead",  units = {"boney", "marrow", "amalgam", "arrows", "clavicula", "mend", "ribs", "tomb", "humerus", "migraine", "sigil", "effigy"} },
+    { name = "Castle Crew",  groupType = "castle",   factionIcon = "folk",    units = {"knight", "marc", "mage", "bull", "samurai", "bonk", "ninja", "sinner", "catapult", "fireball", "horns"} },
+    { name = "Goblin Gang",  groupType = "goblin",   factionIcon = "monster", units = {"burrow", "pouch", "barrel", "quake", "cart", "flint", "mason", "loot", "hook", "pest", "rock", "cannon"} },
 }
 
 -- Faction membership per unit type
@@ -73,6 +83,8 @@ UnitRegistry.factions = {
     migraine  = {"undead", "marksman"},
     humerus   = {"undead", "brawler"},
     tomb      = {"undead"},
+    ribs      = {"undead", "brawler"},
+    effigy    = {"undead", "support"},
     knight    = {"folk", "support"},
     mage      = {"folk", "marksman"},
     marc      = {"folk", "marksman"},
@@ -81,6 +93,8 @@ UnitRegistry.factions = {
     bonk      = {"folk", "brawler"},
     sinner    = {"folk", "brawler"},
     catapult  = {"folk"},
+    cannon    = {"monster", "marksman"},
+    ninja     = {"folk", "brawler"},
     burrow    = {"monster", "brawler"},
     pouch     = {"monster", "marksman"},
     barrel    = {"monster", "brawler"},
@@ -89,9 +103,14 @@ UnitRegistry.factions = {
     mason     = {"monster", "brawler"},
     pest      = {"monster", "marksman"},
     loot      = {"monster"},
+    hook      = {"monster", "brawler"},
     -- Spells
     arrows    = {"undead"},
     fireball  = {"folk"},
+    rock      = {"monster"},
+    quake     = {"monster"},
+    horns     = {"folk"},
+    sigil     = {"undead"},
 }
 
 -- Rarity per unit type: "common", "rare", "epic"
@@ -99,21 +118,25 @@ UnitRegistry.rarity = {
     -- Calcium Clan
     boney     = "common",
     marrow    = "common",
-    mend    = "common",
+    mend    = "rare",
     amalgam   = "common",
     -- Goblin Gang
     burrow    = "common",
     pouch     = "common",
     barrel    = "common",
-    cart      = "common",
-    flint     = "common",
-    mason     = "common",
-    pest      = "common",
-    loot      = "common",
+    quake     = "common",
+    cart      = "rare",
+    flint     = "rare",
+    mason     = "rare",
+    loot      = "rare",
+    hook      = "epic",
+    pest      = "epic",
     clavicula = "rare",
-    humerus   = "rare",
+    humerus   = "epic",
+    ribs      = "rare",
     migraine  = "epic",
-    tomb      = "epic",
+    tomb      = "rare",
+    effigy    = "epic",
     -- Castle Crew
     knight    = "common",
     marc      = "common",
@@ -121,11 +144,16 @@ UnitRegistry.rarity = {
     bull      = "common",
     samurai   = "rare",
     bonk      = "rare",
+    ninja     = "rare",
     sinner    = "epic",
     catapult  = "epic",
+    cannon    = "epic",
     -- Spells
     arrows    = "common",
     fireball  = "common",
+    rock      = "epic",
+    horns     = "common",
+    sigil     = "epic",
 }
 
 -- Map of unit type names to their sprite paths
@@ -175,6 +203,11 @@ UnitRegistry.spritePaths = {
         back  = "src/assets/humerus/back.png",
         dead  = "src/assets/humerus/dead.png"
     },
+    ribs = {
+        front = "src/assets/ribs/front.png",
+        back  = "src/assets/ribs/back.png",
+        dead  = "src/assets/ribs/dead.png"
+    },
     migraine = {
         front = "src/assets/migraine/front.png",
         back  = "src/assets/migraine/back.png",
@@ -199,6 +232,11 @@ UnitRegistry.spritePaths = {
         front = "src/assets/tomb/front.png",
         back  = "src/assets/tomb/back.png",
         dead  = "src/assets/tomb/front.png"  -- no dead sprite; tomb stays upright
+    },
+    effigy = {
+        front = "src/assets/effigy/front.png",
+        back  = "src/assets/effigy/back.png",
+        dead  = "src/assets/effigy/front.png"  -- no dead sprite; reuse front
     },
     catapult = {
         front = "src/assets/catapult/front.png",
@@ -259,7 +297,22 @@ UnitRegistry.spritePaths = {
         front = "src/assets/loot/front.png",
         back  = "src/assets/loot/back.png",
         dead  = "src/assets/loot/front.png"  -- no dead sprite yet; reuse front
-    }
+    },
+    ninja = {
+        front = "src/assets/ninja/front.png",
+        back  = "src/assets/ninja/back.png",
+        dead  = "src/assets/ninja/front.png"  -- no dead sprite yet; reuse front
+    },
+    hook = {
+        front = "src/assets/hook/front.png",
+        back  = "src/assets/hook/back.png",
+        dead  = "src/assets/hook/front.png",  -- no dead sprite; reuse front
+    },
+    cannon = {
+        front = "src/assets/cannon/front.png",
+        back  = "src/assets/cannon/back.png",
+        dead  = "src/assets/cannon/front.png",  -- no dead sprite; reuse front
+    },
 }
 
 -- Map of unit type names to their passive ability descriptions
@@ -287,7 +340,12 @@ UnitRegistry.passiveDescriptions = {
     flint    = "Lobs bombs onto enemy cells. Bombs fuse for 1s before exploding for 2 damage and leaving a 1s fire patch — enemies that step out of the cell during the fuse take no damage.",
     mason    = "Throws rocks at adjacent enemies. At battle start, hurls a rock 4 rows forward that damages every enemy in its path for 5.",
     pest     = "Basic attacks slow target's attack speed and movement by 40% for 2s.",
-    loot     = "If alive at round end: +2 coins. If destroyed: opponent gains +1 coin."
+    loot     = "If alive at round end: +2 coins. If destroyed: opponent gains +1 coin.",
+    ninja    = "Every 7 combined hits (dealt + received), dashes to the farthest enemy and locks onto them",
+    ribs     = "Last Stand: when HP reaches 0, taunts all enemies within 2 cells for 3s and absorbs all hits before dying",
+    effigy   = "Bone Ward: absorbs all damage dealt to ally units within 1 cell. Effigy takes that damage instead.",
+    hook     = "Every 9 hits (given or taken), throws a hook at the farthest enemy, dragging it to the nearest cell and re-targeting it",
+    cannon   = "Fires a cannonball straight down its column every 2 seconds, hitting the first enemy for 3 damage.",
 }
 
 -- Returns display info for a unit type by reading it directly from a dummy
@@ -361,9 +419,16 @@ UnitRegistry.unitCosts = {
     mason  = 4,
     pest   = 4,
     loot   = 3,
+    ninja  = 4,
+    ribs   = 4,
+    hook   = 4,
+    cannon = 3,
+    effigy = 3,
     -- Spells
     arrows   = 2,
     fireball = 4,
+    rock     = 3,
+    quake    = 4,
 }
 
 -- Count fully-transparent rows at the top of a sprite file.
@@ -411,6 +476,9 @@ local LEGACY_ONLY_UNITS = {
     mason     = true,
     pest      = true,
     loot      = true,
+    hook      = true,
+    cannon    = true,
+    effigy    = true,
 }
 
 -- Load directional sprites for a unit type (8-direction animation system).
@@ -668,6 +736,7 @@ local function resetShared()
         fuseFrames       = nil,
         rockFrames       = nil,
         rockBreakFrames  = nil,
+        hookImg          = nil,
     }
 end
 
@@ -737,6 +806,7 @@ function UnitRegistry.getLoadSteps()
         _shared.magicImg = loadProjectileImg("src/assets/particles/magic-projectile.png")
         _shared.fireballFrames = loadFrameSequence("src/assets/particles/fireball-%d.png", 4)
         _shared.fireFrames     = loadFrameSequence("src/assets/particles/fire-%d.png", 5)
+        _shared.hookImg        = loadProjectileImg("src/assets/particles/hook.png")
     end)
 
     -- Migraine background animation + catapult projectile
@@ -747,6 +817,8 @@ function UnitRegistry.getLoadSteps()
         _shared.fuseFrames       = loadFrameSequence("src/assets/particles/fuse/fuse%d.png", 4)
         _shared.rockFrames       = loadFrameSequence("src/assets/particles/rock/rock%d.png", 4)
         _shared.rockBreakFrames  = loadFrameSequence("src/assets/particles/rock/break%d.png", 2)
+        local healIdx = {} for i = 0, 20 do healIdx[#healIdx+1] = i end
+        _shared.mendHealFrames = loadFrameIndices("src/assets/particles/heal/heal%d.png", healIdx)
     end)
 
     -- Generic death animations (played by Grid:drawCorpsesInRow for any fallen unit, 0-indexed).
@@ -829,12 +901,12 @@ function UnitRegistry.finalizeSprites()
             end
         end
 
-        for _, unitType in ipairs({"marc", "marrow", "mend"}) do
+        for _, unitType in ipairs({"marc", "marrow"}) do
             if _shared.arrowImg and allSprites[unitType] then
                 allSprites[unitType].projectile = _shared.arrowImg
             end
         end
-        for _, unitType in ipairs({"migraine", "mage", "pest"}) do
+        for _, unitType in ipairs({"migraine", "mage", "pest", "mend"}) do
             if _shared.magicImg and allSprites[unitType] then
                 allSprites[unitType].projectile = _shared.magicImg
                 allSprites[unitType].projectileAngleOffset = math.pi / 2
@@ -873,6 +945,17 @@ function UnitRegistry.finalizeSprites()
         end
         if _shared.catapultProjImg and allSprites["pouch"] then
             allSprites["pouch"].catapultProjectile = _shared.catapultProjImg
+        end
+        if _shared.catapultProjImg and allSprites["cannon"] then
+            allSprites["cannon"].catapultProjectile = _shared.catapultProjImg
+        end
+
+        if _shared.mendHealFrames and #_shared.mendHealFrames > 0 and allSprites["mend"] then
+            allSprites["mend"].healFrames = _shared.mendHealFrames
+        end
+
+        if _shared.hookImg and allSprites["hook"] then
+            allSprites["hook"].hookSprite = _shared.hookImg
         end
 
         if _shared.deathFrames then
@@ -947,7 +1030,7 @@ UnitRegistry.MAX_CARD_COPIES = 4
 UnitRegistry.rarityTiers = {
     { tier = "common", units = { "mend", "amalgam", "mage", "bull" } },
     { tier = "common", units = { "burrow", "pouch", "barrel", "cart", "flint", "mason", "pest", "loot", "arrows", "fireball" } },
-    { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus" } },
+    { tier = "rare",   units = { "samurai", "bonk", "clavicula", "humerus", "ribs", "effigy" } },
     { tier = "epic",   units = { "migraine", "tomb", "sinner", "catapult" } },
 }
 
