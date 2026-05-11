@@ -122,7 +122,7 @@ function Cart:applyWhiplash(grid)
     for _, d in ipairs(cardinals) do
         local cell = grid:getCell(self.col + d[1], self.row + d[2])
         if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-            cell.unit:takeDamage(WHIPLASH_DAMAGE, self)
+            cell.unit:takeDamage(WHIPLASH_DAMAGE, self, grid)
             if cell.unit.isDead then
                 grid:killUnit(cell.unit)
                 self:onKill(cell.unit)

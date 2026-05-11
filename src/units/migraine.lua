@@ -124,8 +124,8 @@ function Migraine:resetCombatState()
 end
 
 -- Track hits received toward Spectral Mitosis (Mitosis itself only fires while alive)
-function Migraine:takeDamage(amount)
-    Migraine.super.takeDamage(self, amount)
+function Migraine:takeDamage(amount, attacker, grid)
+    Migraine.super.takeDamage(self, amount, attacker, grid)
 
     if self.isDead then return end
 
@@ -224,7 +224,7 @@ function Migraine:doExplosion(grid)
             local dy   = unit.row - self.row
             local dist = math.sqrt(dx * dx + dy * dy)
             if dist <= EXPLOSION_RADIUS then
-                unit:takeDamage(EXPLOSION_DAMAGE)
+                unit:takeDamage(EXPLOSION_DAMAGE, self, grid)
                 AudioManager.playSFX("fireball.mp3")
                 if unit.isDead then
                     grid:killUnit(unit)

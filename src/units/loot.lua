@@ -103,7 +103,7 @@ function Loot:triggerMimic(grid)
             end
         end
 
-        u:takeDamage(4)
+        u:takeDamage(4, self, grid)
         if u.isDead then
             grid:killUnit(u)
             self:onKill(u)

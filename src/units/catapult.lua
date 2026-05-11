@@ -126,7 +126,7 @@ function Catapult:explodeShot(grid)
             for _, unit in ipairs(allUnits) do
                 if unit.owner ~= self.owner and not unit.isDead
                    and unit.col == tc and unit.row == tr then
-                    unit:takeDamage(dmg)
+                    unit:takeDamage(dmg, self, grid)
                     AudioManager.playSFX("fireball.mp3")
                     if unit.isDead then
                         grid:killUnit(unit)
@@ -239,7 +239,7 @@ function Catapult:update(dt, grid)
             for _, unit in ipairs(allUnits) do
                 if unit.owner ~= self.owner and not unit.isDead
                    and unit.col == patch.col and unit.row == patch.row then
-                    unit:takeDamage(1)
+                    unit:takeDamage(1, self, grid)
                     if self:hasUpgrade(1) and unit.hitCounter then
                         unit.hitCounter = math.max(0, unit.hitCounter - 1)
                     end

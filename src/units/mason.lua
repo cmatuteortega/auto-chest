@@ -183,7 +183,7 @@ function Mason:applyActionRockPayload(rock, grid, cellCol, cellRow)
     end
 
     local dmg = self:hasUpgrade(1) and ACTION_ROCK_BIG_DMG or ACTION_ROCK_DMG
-    target:takeDamage(dmg)
+    target:takeDamage(dmg, self, grid)
 
     if self:hasUpgrade(2) then
         target.stunTimer = math.max(target.stunTimer, ACTION_ROCK_STUN)
@@ -271,6 +271,13 @@ function Mason:tickRock(rock, dt, grid)
         if rock.progress >= threshold then
             local cellCol = rock.startCol + rock.dCol * rock.nextStep
             local cellRow = rock.startRow + rock.dRow * rock.nextStep
+            if grid:isRock(cellCol, cellRow) then
+                -- Terrain rock blocks the thrown rock — stop here, no damage.
+                rock.progress = 1
+                rock.endCol   = cellCol
+                rock.endRow   = cellRow
+                break
+            end
             rock.payload(rock, grid, cellCol, cellRow)
             rock.nextStep = rock.nextStep + 1
         else

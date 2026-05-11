@@ -59,12 +59,14 @@ function Marrow:new(row, col, owner, sprites)
     }
 end
 
--- Lance passive: scan enemies in column, closest first
+-- Lance passive: scan enemies in column, closest first.
+-- Stops at the first rock cell (lance cannot pierce terrain).
 function Marrow:findColumnTargets(grid)
     local targets = {}
     local dir = (self.owner == 1) and -1 or 1
     local r   = self.row + dir
     while r >= 1 and r <= Constants.GRID_ROWS do
+        if grid:isRock(self.col, r) then break end
         local cell = grid:getCell(self.col, r)
         if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
             table.insert(targets, cell.unit)
@@ -75,7 +77,18 @@ function Marrow:findColumnTargets(grid)
 end
 
 function Marrow:onBattleStart(grid)
-    local endRow = (self.owner == 1) and 1 or Constants.GRID_ROWS
+    -- Default endRow is the far board edge; cap at first rock in the path.
+    local boardEdge = (self.owner == 1) and 1 or Constants.GRID_ROWS
+    local endRow    = boardEdge
+    local dir       = (self.owner == 1) and -1 or 1
+    local r         = self.row + dir
+    while r >= 1 and r <= Constants.GRID_ROWS do
+        if grid:isRock(self.col, r) then
+            endRow = r
+            break
+        end
+        r = r + dir
+    end
     -- Store lance params; lance fires when windup animation completes
     self.pendingLance = {
         duration = self.actionDuration,
@@ -142,7 +155,7 @@ function Marrow:update(dt, grid)
             if lance.progress < hitProgress then break end
 
             if not target.isDead then
-                target:takeDamage(lance.damage)
+                target:takeDamage(lance.damage, self, grid)
                 if target.isDead then
                     grid:killUnit(target)
                     self:onKill(target)

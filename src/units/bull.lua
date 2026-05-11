@@ -101,8 +101,8 @@ function Bull:findChargeDest(grid)
             if cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
                 hitEnemy = cell.unit  -- stop before this enemy
                 break
-            elseif cell.unit then
-                break  -- friendly (or dead) blocking — stop here
+            elseif cell.unit or grid:isRock(destCol, checkRow) then
+                break  -- friendly, dead, or rock blocking — stop here
             else
                 table.insert(trail, { col = destCol, row = checkRow })
                 destRow = checkRow  -- empty — advance landing spot
@@ -212,7 +212,7 @@ function Bull:update(dt, grid)
 
                 -- Apply charge damage (base only, no upgrade bonus)
                 local chargeDmg = math.floor(self.damage * 1.5)
-                enemy:takeDamage(chargeDmg)
+                enemy:takeDamage(chargeDmg, self, grid)
 
                 if enemy.isDead then
                     grid:killUnit(enemy)
@@ -266,7 +266,7 @@ function Bull:update(dt, grid)
             for _, unit in ipairs(allUnits) do
                 if unit.owner ~= self.owner and not unit.isDead
                    and unit.col == patch.col and unit.row == patch.row then
-                    unit:takeDamage(1)
+                    unit:takeDamage(1, self, grid)
                     if unit.isDead then
                         grid:killUnit(unit)
                         self:onKill(unit)

@@ -199,7 +199,12 @@ function BaseUnitRanged:update(dt, grid)
         if projectile.animTime  then projectile.animTime  = projectile.animTime  + dt end
         if projectile.rotation  then projectile.rotation  = projectile.rotation  + dt * math.pi * 2 end
 
-        if projectile.progress >= 1.0 then
+        -- Stop projectile if it enters a rock cell mid-flight.
+        local midCol = math.floor(projectile.startCol + (projectile.targetCol - projectile.startCol) * projectile.progress + 0.5)
+        local midRow = math.floor(projectile.startRow + (projectile.targetRow - projectile.startRow) * projectile.progress + 0.5)
+        if grid:isRock(midCol, midRow) then
+            table.remove(self.arrows, i)
+        elseif projectile.progress >= 1.0 then
             self:onProjectileHit(projectile, grid)
             -- Remove projectile
             table.remove(self.arrows, i)
@@ -214,7 +219,7 @@ end
 -- Override in subclasses for AoE or special effects.
 function BaseUnitRanged:onProjectileHit(projectile, grid)
     if projectile.target and not projectile.target.isDead then
-        projectile.target:takeDamage(projectile.damage)
+        projectile.target:takeDamage(projectile.damage, projectile.shooter, grid)
 
         if projectile.target.isDead then
             grid:killUnit(projectile.target)

@@ -158,7 +158,7 @@ function Pouch:onProjectileHit(projectile, grid)
         damage = damage * 2
     end
 
-    projectile.target:takeDamage(damage)
+    projectile.target:takeDamage(damage, self, grid)
     self.firstHitTargets[projectile.target] = true
 
     if projectile.isBoulder and not projectile.target.isDead then

@@ -105,7 +105,7 @@ local function applyDamageAtCell(grid, col, row, ownerOfSpell)
         return a.owner < b.owner
     end)
     for _, u in ipairs(victims) do
-        u:takeDamage(DAMAGE)
+        u:takeDamage(DAMAGE, nil, grid)
         if u.isDead then grid:killUnit(u) end
     end
 end
