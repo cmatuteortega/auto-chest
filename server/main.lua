@@ -560,6 +560,34 @@ local function handleMessage(peer, eventName, msgData)
             peer:send(encode("error", {reason = "Failed to award card"}))
         end
 
+    elseif eventName == "daily_chest_claim" then
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+        local goldAmt  = tonumber(msgData.goldAmount) or 10
+        local xpAmt    = tonumber(msgData.xpAmount)   or 5
+        local cardUnit = msgData.cardUnit  -- may be nil
+
+        local newGold  = db:updateGold(session.player_id, goldAmt)
+        local xpResult = db:updateXP(session.player_id, xpAmt)
+
+        local unlocks = xpResult.unlocks
+        if cardUnit and type(cardUnit) == "string" then
+            unlocks = db:awardCard(session.player_id, cardUnit) or unlocks
+        end
+
+        peer:send(encode("currency_update", {
+            gold    = newGold,
+            xp      = xpResult.xp,
+            level   = xpResult.level,
+            unlocks = unlocks,
+        }))
+        pushLog("Daily chest claimed: +" .. goldAmt .. "g +" .. xpAmt ..
+                "xp" .. (cardUnit and (" +card:" .. cardUnit) or "") ..
+                " [" .. session.username .. "]")
+
     elseif eventName == "get_online_count" then
         local count = 0
         for _ in pairs(sessions) do count = count + 1 end

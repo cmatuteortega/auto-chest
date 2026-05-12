@@ -130,12 +130,13 @@ function Flint:detonateBomb(bomb, grid)
 
     -- Primary detonation: damage whoever's currently on the cell
     if grid:isValidCell(cx, cy) then
-        local cell = grid:getCell(cx, cy)
-        if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-            cell.unit:takeDamage(BOMB_DAMAGE, self, grid)
-            if cell.unit.isDead then
-                grid:killUnit(cell.unit)
-                self:onKill(cell.unit)
+        local cell   = grid:getCell(cx, cy)
+        local target = cell and cell.unit
+        if target and not target.isDead and target.owner ~= self.owner then
+            target:takeDamage(BOMB_DAMAGE, self, grid)
+            if target.isDead then
+                grid:killUnit(target)
+                self:onKill(target)
             end
         end
     end
@@ -146,12 +147,13 @@ function Flint:detonateBomb(bomb, grid)
         for _, d in ipairs(cardinals) do
             local tc, tr = cx + d[1], cy + d[2]
             if grid:isValidCell(tc, tr) then
-                local cell = grid:getCell(tc, tr)
-                if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-                    cell.unit:takeDamage(CLUSTER_DAMAGE, self, grid)
-                    if cell.unit.isDead then
-                        grid:killUnit(cell.unit)
-                        self:onKill(cell.unit)
+                local cell   = grid:getCell(tc, tr)
+                local target = cell and cell.unit
+                if target and not target.isDead and target.owner ~= self.owner then
+                    target:takeDamage(CLUSTER_DAMAGE, self, grid)
+                    if target.isDead then
+                        grid:killUnit(target)
+                        self:onKill(target)
                     end
                 end
             end
