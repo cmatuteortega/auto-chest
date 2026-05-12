@@ -15,6 +15,7 @@ local RockSpell = require('src.spells.rock')
 local QuakeSpell = require('src.spells.quake')
 local HornsSpell = require('src.spells.horns')
 local SigilSpell = require('src.spells.sigil')
+local SynergyManager = require('src.synergy_manager')
 
 local GameScreen = {}
 
@@ -142,16 +143,22 @@ function GameScreen.new()
         -- Initialize Tooltip
         self.tooltip = Tooltip()
 
+        -- Synergy HUD state
+        self._synergyHUDBounds      = nil   -- set each frame by drawUI
+        self._synergyTooltipVisible = false
+
         -- Mouse/touch position
         self.mouseX = 0
         self.mouseY = 0
 
         -- Game state
-        self.state = "setup" -- setup, intermission, battle, battle_ending, finished
-        self.timer = 30 -- seconds for setup phase
+        self.state = "setup" -- setup, intermission, pre_battle_reveal, pre_battle, battle, battle_ending, finished
+        self.timer = 45 -- seconds for setup phase
+        self.preBattleRevealTimer = 0
         -- Fixed timestep simulation (prevents dt desync between clients)
         self.battleAccumulator = 0
         self.battleStepCount   = 0
+        self.isDeathPhase      = false
         self.currentPlayer = 1  -- Player 1 is always the bottom player in canonical coords
 
         -- Round tracking
@@ -465,7 +472,7 @@ function GameScreen.new()
             -- During setup/intermission/pre_battle, buffer opponent moves so their
             -- positions stay frozen at last-round home spots until battle starts.
             local inSetup = self.state == "setup" or self.state == "intermission"
-                         or self.state == "pre_battle"
+                         or self.state == "pre_battle_reveal" or self.state == "pre_battle"
             if inSetup then
                 table.insert(self.pendingOpponentMsgs, msg)
             else
@@ -512,20 +519,12 @@ function GameScreen.new()
         end
         self.cards = {}
 
-        self.state          = "pre_battle"
-        self.preBattleTimer = 1
+        self.state                = "pre_battle_reveal"
+        self.preBattleRevealTimer = 2
+        self:applyRevealPhase()
     end
 
-    function self:startBattle()
-        self.timer = 0
-        self.state = "battle"
-        AudioManager.setBattleMode(true)
-        AudioManager.playSFX("battle-start.mp3")
-        self.battleAccumulator = 0
-        self.battleStepCount   = 0
-
-        -- Snapshot the visible board so we can diff after opponent placements are applied
-        -- and queue per-cell spawn / despawn animations for any cell that changed.
+    function self:applyRevealPhase()
         local boardSnapshot = {}
         for row = 1, self.grid.rows do
             boardSnapshot[row] = {}
@@ -537,7 +536,6 @@ function GameScreen.new()
             end
         end
 
-        -- Apply all buffered opponent moves now that battle is starting
         for _, msg in ipairs(self.pendingOpponentMsgs) do
             self:applyOpponentMsg(msg)
         end
@@ -558,6 +556,16 @@ function GameScreen.new()
                 end
             end
         end
+    end
+
+    function self:startBattle()
+        self.timer = 0
+        self.state = "battle"
+        AudioManager.setBattleMode(true)
+        AudioManager.playSFX("battle-start.mp3")
+        self.battleAccumulator = 0
+        self.battleStepCount   = 0
+        self.isDeathPhase      = false
 
         -- Validate board sync with opponent (both clients compute the same hash if in sync)
         if self.isOnline then
@@ -590,6 +598,31 @@ function GameScreen.new()
             unit.homeRow = unit.row
             table.insert(self.battleUnitsSnapshot, unit)
             unit:onBattleStart(self.grid)
+        end
+
+        -- Apply faction synergies for each owner (deterministic: same board → same result)
+        for _, owner in ipairs({1, 2}) do
+            local counts = SynergyManager.countForOwner(self.grid, owner)
+            local tiers  = SynergyManager.getActiveTiers(counts)
+            for _, unit in ipairs(allUnits) do
+                if unit.owner == owner then
+                    SynergyManager.applyToUnit(unit, tiers)
+                    -- Folk 3 (Battle Discipline): add starting energy to any hit/energy counter
+                    if unit.synergyStartingEnergy > 0 then
+                        if unit.hitCounter ~= nil then
+                            unit.hitCounter = unit.hitCounter + unit.synergyStartingEnergy
+                        end
+                        if unit.energyCounter ~= nil then
+                            unit.energyCounter = unit.energyCounter + unit.synergyStartingEnergy
+                        end
+                    end
+                    -- Folk 5 (Rally): apply move speed increase
+                    if unit.synergyMoveSpeedAdd > 0 then
+                        unit.moveSpeed     = unit.moveSpeed + unit.synergyMoveSpeedAdd
+                        unit.tweenDuration = 1 / unit.moveSpeed
+                    end
+                end
+            end
         end
 
         -- Set up death sound callbacks (relative to local player's perspective)
@@ -749,7 +782,7 @@ function GameScreen.new()
         self:dealSetupCards()
 
         self.state = "setup"
-        self.timer = 30
+        self.timer = 45
     end
 
     function self:generateCards()
@@ -933,7 +966,8 @@ function GameScreen.new()
         -- Camera shift: grid slides to vertical center during battle, returns for setup UI
         local gridCenterY = Constants.GRID_OFFSET_Y + Constants.GRID_HEIGHT / 2
         local cameraShiftTarget = 0
-        if self.state == "pre_battle" or self.state == "battle" or self.state == "battle_ending" then
+        if self.state == "pre_battle_reveal" or self.state == "pre_battle"
+           or self.state == "battle" or self.state == "battle_ending" then
             cameraShiftTarget = Constants.GAME_HEIGHT / 2 - gridCenterY
         end
         self.cameraShiftY = self.cameraShiftY + (cameraShiftTarget - self.cameraShiftY) * math.min(1, dt * 7)
@@ -957,6 +991,14 @@ function GameScreen.new()
             self.opponentDisconnected = false
             self:enterFinishedState(self.playerRole)  -- local player wins by forfeit
             self.statusMsg = "Oponente desconectado. ¡Ganaste!"
+        end
+
+        if self.state == "pre_battle_reveal" then
+            self.preBattleRevealTimer = self.preBattleRevealTimer - dt
+            if self.preBattleRevealTimer <= 0 then
+                self.state          = "pre_battle"
+                self.preBattleTimer = 1
+            end
         end
 
         -- Intermission countdown (bodies stay on board during this period)
@@ -1079,6 +1121,25 @@ function GameScreen.new()
                 self.grid:tickQuakePatches(FIXED_DT)
                 self.grid:tickSigilPatches(FIXED_DT)
                 self.grid:tickDeathAnims(FIXED_DT)
+
+                -- Death phase: after 45s of battle (2700 steps @ 60Hz), drain 1 HP
+                -- from every living unit every 6 steps (~10 HP/s) to force a winner.
+                local DEATH_THRESHOLD = 45 * 60
+                if self.battleStepCount >= DEATH_THRESHOLD then
+                    self.isDeathPhase = true
+                end
+
+                if self.isDeathPhase and self.battleStepCount % 6 == 0 then
+                    for _, unit in ipairs(allUnits) do
+                        if not unit.isDead then
+                            unit.health = unit.health - 1
+                            if unit.health <= 0 then
+                                unit.health = 0
+                                unit.isDead = true
+                            end
+                        end
+                    end
+                end
 
                 -- Check victory condition after each simulation step
                 local p1Alive = 0
@@ -1297,7 +1358,7 @@ function GameScreen.new()
         self.grid:drawCellEffects()
 
         -- Draw own spell markers during setup/pre-battle (opponent markers stay hidden).
-        if (self.state == "setup" or self.state == "pre_battle")
+        if (self.state == "setup" or self.state == "pre_battle_reveal" or self.state == "pre_battle")
            and self.spellPlacements and #self.spellPlacements > 0 then
             local markerScale = Constants.CELL_SIZE / 16
             for _, p in ipairs(self.spellPlacements) do
@@ -1656,8 +1717,13 @@ function GameScreen.new()
             stateText = "GO!"
             lg.setColor(0.3, 1, 0.3, 1)
         elseif self.state == "battle" then
-            stateText = "BATTLE"
-            lg.setColor(0.9, 0.9, 0.9, 1)
+            if self.isDeathPhase then
+                stateText = "DEATH"
+                lg.setColor(1, 0.15, 0.15, 1)
+            else
+                stateText = "BATTLE"
+                lg.setColor(0.9, 0.9, 0.9, 1)
+            end
         elseif self.state == "battle_ending" then
             stateText = ""
         elseif self.state == "finished" and self.winner then
@@ -2131,6 +2197,22 @@ function GameScreen.new()
                 end
             end
         end
+
+        -- Synergy HUD: show active faction bonuses during setup and battle phases
+        if self.rerollButtonX and (
+            self.state == "setup" or self.state == "battle" or
+            self.state == "pre_battle" or self.state == "pre_battle_reveal" or
+            self.state == "battle_ending"
+        ) then
+            local counts = SynergyManager.countForOwner(self.grid, self.playerRole)
+            local tiers  = SynergyManager.getActiveTiers(counts)
+            self._synergyHUDBounds = SynergyManager.drawHUD(self.rerollButtonX, counts, tiers)
+            if self._synergyTooltipVisible then
+                SynergyManager.drawTooltip(self.rerollButtonX, counts, tiers)
+            end
+        else
+            self._synergyHUDBounds = nil
+        end
     end
 
     function self:mousemoved(x, y, dx, dy)
@@ -2345,6 +2427,20 @@ function GameScreen.new()
         -- Tutorial bubble tap-to-advance (does not consume the event)
         if self.isTutorial and self.tutorialManager then
             self.tutorialManager:handleTap(x, y)
+        end
+
+        -- ── Synergy HUD tap toggle ────────────────────────────────────────────
+        if not self.hasMoved and self._synergyHUDBounds then
+            local sb = self._synergyHUDBounds
+            if x >= sb.x and x <= sb.x + sb.w and y >= sb.y and y <= sb.y + sb.h then
+                self._synergyTooltipVisible = not self._synergyTooltipVisible
+                self.tooltip:hide()
+                return
+            end
+        end
+        -- Close synergy tooltip when tapping elsewhere
+        if self._synergyTooltipVisible and not self.hasMoved then
+            self._synergyTooltipVisible = false
         end
 
         -- ── Ready + reroll + emote buttons ───────────────────────────────────

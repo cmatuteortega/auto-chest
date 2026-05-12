@@ -108,7 +108,7 @@ function Mend:triggerHeal(grid)
     local allies = sortedAlliesByHP(self, grid)
     for i = 1, math.min(count, #allies) do
         local target = allies[i]
-        target.health = math.min(target.maxHealth, target.health + healAmt)
+        target.health = math.min(target.maxHealth, target.health + healAmt + (self.synergyHealBonus or 0))
 
         -- Heal animation on the ally
         table.insert(self.healAnims, { unit = target, elapsed = 0 })
