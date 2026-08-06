@@ -145,8 +145,8 @@ function Knight:update(dt, grid)
 end
 
 function Knight:resetCombatState()
-    -- Restore maxHealth to level-scaled base (strips Guardian bonus so it re-applies fresh each round)
-    self.maxHealth = math.floor(self.baseHealth * (1.3 ^ self.level))
+    -- Restore stats to level-scaled base (strips Guardian bonus so it re-applies fresh each round)
+    self:recalculateStats()
     Knight.super.resetCombatState(self)
     self.hasHealed          = false
     self.wasAboveHalfHealth = true

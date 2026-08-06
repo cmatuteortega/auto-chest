@@ -41,10 +41,8 @@ function Tomb:new(row, col, owner, sprites)
             name = "Reinforced",
             description = "+5 base HP",
             onApply = function(unit)
+                -- upgrade() recalculates stats and heals to full right after onApply
                 unit.baseHealth = unit.baseHealth + 5
-                local multiplier = 1.3 ^ unit.level
-                unit.maxHealth = math.floor(unit.baseHealth * multiplier)
-                unit.health    = unit.maxHealth
             end
         }
     }

@@ -39,10 +39,8 @@ function Effigy:new(row, col, owner, sprites)
             name        = "Unbreakable Ward",
             description = "+8 max HP and ward radius expands to 2 cells",
             onApply     = function(unit)
+                -- upgrade() recalculates stats and heals to full right after onApply
                 unit.baseHealth = unit.baseHealth + 8
-                local multiplier = 1.3 ^ unit.level
-                unit.maxHealth = math.floor(unit.baseHealth * multiplier)
-                unit.health    = unit.maxHealth
             end
         },
     }

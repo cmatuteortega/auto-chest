@@ -9,8 +9,8 @@ local AOE_RADIUS = 2
 
 function Sinner:new(row, col, owner, sprites)
     local stats = {
-        health      = 18,
-        maxHealth   = 18,
+        health      = 20,
+        maxHealth   = 20,
         damage      = 1,
         attackSpeed = 0.6,
         moveSpeed   = 0.8,
@@ -84,7 +84,7 @@ end
 
 function Sinner:doFormChange(grid)
     self.isFree      = true
-    self.attackSpeed = 1.3
+    self.attackSpeed = self.baseAttackSpeed + 0.7  -- 1.3 at level 0; keeps per-level ATK SPD gains in free form
     self:triggerBuffAnim()
     self.stunTimer   = 0  -- clear any active stun on transformation
     if self.freeSprites then self.sprites = self.freeSprites end

@@ -85,6 +85,62 @@ local function encode(eventName, data)
     return "["..val(eventName)..","..val(data).."]"
 end
 
+-- ── Bot matchmaking ─────────────────────────────────────────────────────────
+-- When no human opponent is available, the player is matched against a bot.
+-- The bot itself runs client-side (src/bot_manager.lua); the server only
+-- creates a one-sided room so match_result still updates trophies/gold/xp.
+local BOT_MATCH_DELAY_ALONE = 5    -- seconds in queue with nobody else online
+local BOT_MATCH_DELAY_CROWD = 45   -- others queued: let trophy-range expansion try first
+
+local BOT_NAME_PREFIXES = {"CP", "RX", "XJ", "BT", "DV", "MK", "ZQ", "HK", "TR", "VX", "KR", "NL"}
+local BOT_NAME_CORES    = {"C3", "R2", "K9", "Z1", "V8", "Q5", "T7", "X4"}
+local BOT_NAME_TAILS    = {"PO", "D2", "TX", "NA", "BL", "QT", "RM", "OX"}
+
+local function makeBotName()
+    if math.random() < 0.5 then
+        -- "CP-03" style
+        return BOT_NAME_PREFIXES[math.random(#BOT_NAME_PREFIXES)]
+               .. "-" .. string.format("%02d", math.random(0, 99))
+    else
+        -- "C3PO" style
+        return BOT_NAME_CORES[math.random(#BOT_NAME_CORES)]
+               .. BOT_NAME_TAILS[math.random(#BOT_NAME_TAILS)]
+    end
+end
+
+local function createBotMatch(player)
+    local ck = connKey(player.peer)
+    if not ck or rooms[ck] then
+        pushLog("Skipping bot match — peer missing connKey or already in room")
+        return
+    end
+
+    local botName     = makeBotName()
+    local botTrophies = math.max(0, player.trophies + math.random(-30, 30))
+
+    -- One-sided room: no partnerKey, flagged as bot so match_result and
+    -- disconnect handling know there is no human on the other end.
+    rooms[ck] = {
+        peer       = player.peer,
+        partnerKey = nil,
+        isBot      = true,
+        role       = 1,
+        player_id  = player.player_id,
+        username   = player.username,
+        trophies   = player.trophies
+    }
+
+    player.peer:send(encode("match_found", {
+        role              = 1,
+        opponent_name     = botName,
+        opponent_trophies = botTrophies,
+        my_trophies       = player.trophies,
+        is_bot            = true
+    }))
+
+    pushLog("Bot match: " .. player.username .. " (" .. player.trophies .. ") vs " .. botName .. " (" .. botTrophies .. ")")
+end
+
 -- Matchmaking: find opponent within trophy range
 local function findMatch(player)
     local baseTrophyRange = 100
@@ -163,7 +219,18 @@ local function processMatchmaking()
                 -- Don't increment i, continue from same position
             end
         else
-            i = i + 1
+            -- No human opponent available: fall back to a bot match after a
+            -- delay. Short when the queue is otherwise empty; long when other
+            -- players are queued so trophy-range expansion gets a fair chance.
+            local waitTime = love.timer.getTime() - player.queue_time
+            local botDelay = (#queue > 1) and BOT_MATCH_DELAY_CROWD or BOT_MATCH_DELAY_ALONE
+            if waitTime >= botDelay then
+                table.remove(queue, i)
+                createBotMatch(player)
+                -- Don't increment i, continue from same position
+            else
+                i = i + 1
+            end
         end
     end
 end
@@ -570,7 +637,28 @@ local function handleMessage(peer, eventName, msgData)
         if not session then return end
 
         local room = rooms[ck]
-        if not room or not room.partnerKey then return end
+        if not room then return end
+
+        -- Bot match: no human partner — update only the reporting player.
+        -- Trophies move exactly as they would against a real opponent.
+        if room.isBot then
+            local didWin = msgData.did_win == true
+            db:updateTrophies(room.player_id, didWin and 20 or -15)
+            local newGold = db:updateGold(room.player_id, didWin and 10 or 5)
+            local gems    = db:getGems(room.player_id)
+            local xp      = db:updateXP(room.player_id, didWin and 10 or 7)
+            pcall(function()
+                room.peer:send(encode("currency_update", {
+                    gold = newGold, gems = gems,
+                    xp = xp.xp, level = xp.level, unlocks = xp.unlocks
+                }))
+            end)
+            pushLog("Bot match result: " .. room.username .. (didWin and " won" or " lost"))
+            rooms[ck] = nil
+            return
+        end
+
+        if not room.partnerKey then return end
 
         local partnerRoom = rooms[room.partnerKey]
         if not partnerRoom then return end
@@ -890,8 +978,8 @@ function love.update(dt)
         event = host:service(0)
     end
 
-    -- Process matchmaking
-    if #queue >= 2 then
+    -- Process matchmaking (single players fall back to a bot match after a delay)
+    if #queue >= 1 then
         processMatchmaking()
     end
 end

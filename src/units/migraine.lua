@@ -202,9 +202,7 @@ function Migraine:spawnClone(grid)
     end
     clone.level    = self.level
     -- Apply scaled stats matching the original's level
-    local mult     = 1.3 ^ self.level
-    clone.maxHealth = math.floor(clone.baseHealth * mult)
-    clone.damage    = math.floor(clone.baseDamage  * mult)
+    clone:recalculateStats()
 
     -- Split HP: both original and clone get hpFraction of the original's current HP
     local hpFraction  = self:hasUpgrade(1) and 0.65 or 0.5

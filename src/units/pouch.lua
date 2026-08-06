@@ -10,7 +10,7 @@ function Pouch:new(row, col, owner, sprites)
         health          = 9,
         maxHealth       = 9,
         damage          = 1,
-        attackSpeed     = 0.8,
+        attackSpeed     = 0.7,
         moveSpeed       = 1,
         attackRange     = 4,
         projectileSpeed = 12,

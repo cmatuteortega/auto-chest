@@ -72,9 +72,8 @@ function Catapult:new(row, col, owner, sprites)
             name        = "Heavy Payload",
             description = "Initial blast damage increased to 5",
             onApply     = function(unit)
+                -- upgrade() recalculates stats right after onApply (damage = baseDamage, flat)
                 unit.baseDamage = 5
-                local multiplier = 1.3 ^ unit.level
-                unit.damage = math.floor(unit.baseDamage * multiplier)
             end
         }
     }

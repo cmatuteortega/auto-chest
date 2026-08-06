@@ -146,11 +146,13 @@ function Barrel:doCrash(grid)
         local cardinals = { {0, 1}, {0, -1}, {1, 0}, {-1, 0} }
         for _, d in ipairs(cardinals) do
             local cell = grid:getCell(self.col + d[1], self.row + d[2])
-            if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-                cell.unit:takeDamage(1, self, grid)
-                if cell.unit.isDead then
-                    grid:killUnit(cell.unit)
-                    self:onKill(cell.unit)
+            -- Capture the unit: takeDamage can vacate the cell (e.g. Ninja dash)
+            local victim = cell and cell.unit
+            if victim and not victim.isDead and victim.owner ~= self.owner then
+                victim:takeDamage(1, self, grid)
+                if victim.isDead then
+                    grid:killUnit(victim)
+                    self:onKill(victim)
                 end
             end
         end

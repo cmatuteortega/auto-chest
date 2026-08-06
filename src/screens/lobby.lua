@@ -227,6 +227,7 @@ function LobbyScreen.new()
             self.playerRole = data.role
             self.opponentName = data.opponent_name
             self.opponentTrophies = data.opponent_trophies
+            self.opponentIsBot = data.is_bot == true
             self.myTrophies = data.my_trophies
             self.status = "matched"
             self.statusMsg = "Match found!"
@@ -319,7 +320,8 @@ function LobbyScreen.new()
                 -- Store opponent info globally for game screen
                 _G.OpponentData = {
                     name = self.opponentName,
-                    trophies = self.opponentTrophies
+                    trophies = self.opponentTrophies,
+                    isBot = self.opponentIsBot or false
                 }
 
                 -- Update perspective constant

@@ -14,10 +14,10 @@ local DASH_DURATION = 0.35  -- seconds to cross the board visually
 
 function Ninja:new(row, col, owner, sprites)
     local stats = {
-        health      = 11,
-        maxHealth   = 11,
+        health      = 10,
+        maxHealth   = 10,
         damage      = 2,
-        attackSpeed = 1.2,
+        attackSpeed = 1,
         moveSpeed   = 1,
         attackRange = 0,
         unitType    = "ninja"

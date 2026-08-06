@@ -4,10 +4,10 @@ local Clavicula = BaseUnit:extend()
 
 function Clavicula:new(row, col, owner, sprites)
     local stats = {
-        health      = 14,
-        maxHealth   = 14,
+        health      = 12,
+        maxHealth   = 12,
         damage      = 2,
-        attackSpeed = 0.9,
+        attackSpeed = 0.75,
         moveSpeed   = 1,
         attackRange = 0,   -- melee
         unitType    = "clavicula"
@@ -23,12 +23,12 @@ function Clavicula:new(row, col, owner, sprites)
     self.upgradeTree = {
         {
             name        = "Bloodwhirl",
-            description = "Whirlwind heals 75% of damage dealt instead of 50%",
+            description = "Whirlwind heals 50% of damage dealt instead of 30%",
             onApply     = function(_) end
         },
         {
             name        = "Frenzy",
-            description = "Whirlwind triggers every 7 hits instead of 10",
+            description = "Whirlwind triggers every 9 hits instead of 12",
             onApply     = function(_) end
         },
         {
@@ -40,7 +40,7 @@ function Clavicula:new(row, col, owner, sprites)
 end
 
 function Clavicula:getEnergy()
-    local threshold = self:hasUpgrade(2) and 7 or 10
+    local threshold = self:hasUpgrade(2) and 9 or 12
     return self.hitCounter, threshold
 end
 
@@ -54,7 +54,7 @@ function Clavicula:takeDamage(amount, attacker, grid)
 
     if self.isDead then return end
 
-    local threshold = self:hasUpgrade(2) and 7 or 10
+    local threshold = self:hasUpgrade(2) and 9 or 12
     self.hitCounter = self.hitCounter + 1
     if self.hitCounter >= threshold then
         self.hitCounter = 0
@@ -66,7 +66,7 @@ end
 function Clavicula:attack(target, grid)
     Clavicula.super.attack(self, target, grid)
 
-    local threshold = self:hasUpgrade(2) and 7 or 10
+    local threshold = self:hasUpgrade(2) and 9 or 12
     self.hitCounter = self.hitCounter + 1
     if self.hitCounter >= threshold then
         self.hitCounter = 0
@@ -102,9 +102,9 @@ function Clavicula:doSpin(grid)
         end
     end
 
-    -- Heal: 50% of damage dealt (75% with upgrade 1)
+    -- Heal: 30% of damage dealt (50% with upgrade 1)
     if healTotal > 0 then
-        local healFraction = self:hasUpgrade(1) and 0.75 or 0.5
+        local healFraction = self:hasUpgrade(1) and 0.5 or 0.3
         local heal = math.max(1, math.floor(healTotal * healFraction))
         self.health = math.min(self.maxHealth, self.health + heal)
         self:triggerBuffAnim()

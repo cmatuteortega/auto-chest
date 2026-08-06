@@ -131,11 +131,13 @@ function Flint:detonateBomb(bomb, grid)
     -- Primary detonation: damage whoever's currently on the cell
     if grid:isValidCell(cx, cy) then
         local cell = grid:getCell(cx, cy)
-        if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-            cell.unit:takeDamage(BOMB_DAMAGE, self, grid)
-            if cell.unit.isDead then
-                grid:killUnit(cell.unit)
-                self:onKill(cell.unit)
+        -- Capture the unit: takeDamage can vacate the cell (e.g. Ninja dash)
+        local victim = cell and cell.unit
+        if victim and not victim.isDead and victim.owner ~= self.owner then
+            victim:takeDamage(BOMB_DAMAGE, self, grid)
+            if victim.isDead then
+                grid:killUnit(victim)
+                self:onKill(victim)
             end
         end
     end
@@ -147,11 +149,12 @@ function Flint:detonateBomb(bomb, grid)
             local tc, tr = cx + d[1], cy + d[2]
             if grid:isValidCell(tc, tr) then
                 local cell = grid:getCell(tc, tr)
-                if cell and cell.unit and not cell.unit.isDead and cell.unit.owner ~= self.owner then
-                    cell.unit:takeDamage(CLUSTER_DAMAGE, self, grid)
-                    if cell.unit.isDead then
-                        grid:killUnit(cell.unit)
-                        self:onKill(cell.unit)
+                local victim = cell and cell.unit
+                if victim and not victim.isDead and victim.owner ~= self.owner then
+                    victim:takeDamage(CLUSTER_DAMAGE, self, grid)
+                    if victim.isDead then
+                        grid:killUnit(victim)
+                        self:onKill(victim)
                     end
                 end
             end

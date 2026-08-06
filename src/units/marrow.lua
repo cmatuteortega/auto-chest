@@ -96,7 +96,7 @@ function Marrow:onBattleStart(grid)
         startRow = self.row,
         endRow   = endRow,
         targets  = self:findColumnTargets(grid),
-        damage   = 5,
+        damage   = 3,
     }
     self.lance              = nil
     self.actionAnimPlaying  = true
