@@ -13,7 +13,7 @@ function Hook:new(row, col, owner, sprites)
         health      = 14,
         maxHealth   = 14,
         damage      = 2,
-        attackSpeed = 0.85,
+        attackSpeed = 0.75,
         moveSpeed   = 1,
         attackRange = 0,
         unitType    = "hook"

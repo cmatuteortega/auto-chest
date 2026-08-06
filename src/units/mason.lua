@@ -21,8 +21,8 @@ local function sign(n) return (n > 0 and 1) or (n < 0 and -1) or 0 end
 
 function Mason:new(row, col, owner, sprites)
     local stats = {
-        health      = 20,
-        maxHealth   = 20,
+        health      = 16,
+        maxHealth   = 16,
         damage      = 2,
         attackSpeed = 0.6,
         moveSpeed   = 1,

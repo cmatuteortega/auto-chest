@@ -157,8 +157,9 @@ function GameScreen.new()
         -- Round tracking
         self.roundNumber         = 1
         self.battleUnitsSnapshot  = {}  -- all units alive at battle start, for reliable reset
-        self.pendingOpponentMsgs  = {}  -- buffered opponent placement msgs, applied at battle start
+        self.pendingOpponentMsgs  = {}  -- buffered opponent placement msgs (offline replay only)
         self.pendingWinner        = nil -- winner saved during intermission before life deduction
+        self.opponentFinalBoard   = nil -- opponent's end-of-setup snapshot; battle waits for it
 
         -- Desync detection
         self.localBoardHash    = nil
@@ -167,6 +168,7 @@ function GameScreen.new()
         -- Round-end sync (online): both clients must signal done before resetting
         self.localRoundEndReady    = false
         self.opponentRoundEndReady = false
+        self.opponentReportedWinner = nil -- winner from opponent's round_end_ready (outcome agreement)
 
         -- Lives
         self.p1Lives = 3
@@ -226,6 +228,17 @@ function GameScreen.new()
             self.tutorialManager = TutorialManager.new(self)
         end
 
+        -- Bot match: attach the bot driver. It acts as a virtual network peer,
+        -- injecting the opponent-side messages (ready / final_board /
+        -- round_end_ready) via handleNetworkMessage, so the online flow below
+        -- runs unchanged. The socket stays live for the match_result report.
+        self.isBotMatch = (self.isOnline and _G.OpponentData and _G.OpponentData.isBot) or false
+        self.botManager = nil
+        if self.isBotMatch then
+            local BotManager = require('src.bot_manager')
+            self.botManager = BotManager.new(self)
+        end
+
         self:dealSetupCards()
 
         -- Apply battle-mode filter immediately (music stays moody for the full match)
@@ -235,6 +248,9 @@ function GameScreen.new()
     -- ── Network helpers ───────────────────────────────────────────────────────
 
     function self:sendMsg(data)
+        -- Bot matches have no relay partner; the BotManager injects the
+        -- opponent-side messages locally instead.
+        if self.isBotMatch then return end
         if self.isOnline and self.socket then
             self.socket:send("relay", data)
         end
@@ -457,20 +473,125 @@ function GameScreen.new()
         end
     end
 
+    -- Serialize the local player's half of the board (units + spell placements).
+    -- Sent as "final_board" when setup ends; the opponent rebuilds our half from
+    -- this snapshot at startBattle() so late/lost incremental messages can never
+    -- corrupt the battle simulation.
+    function self:captureFinalBoard()
+        local units = {}
+        for _, u in ipairs(self.grid:getAllUnits()) do
+            if u.owner == self.playerRole and not u.isDead then
+                table.insert(units, {
+                    unitType       = u.unitType,
+                    col            = u.col,
+                    row            = u.row,
+                    level          = u.level or 0,
+                    activeUpgrades = u.activeUpgrades,
+                })
+            end
+        end
+        local spells = {}
+        for _, p in ipairs(self.spellPlacements) do
+            if p.owner == self.playerRole then
+                table.insert(spells, {
+                    placementId = p.placementId,
+                    spellType   = p.spellType,
+                    col         = p.col,
+                    row         = p.row,
+                })
+            end
+        end
+        return { units = units, spells = spells }
+    end
+
+    -- Wipe the opponent's half of the board and rebuild it from their
+    -- final_board snapshot. Called at startBattle() in online mode.
+    function self:applyOpponentSnapshot(snap)
+        local oppRole = 3 - self.playerRole
+
+        for _, u in ipairs(self.grid:getAllUnits()) do
+            if u.owner == oppRole then
+                self.grid:removeUnit(u.col, u.row)
+            end
+        end
+        for i = #self.spellPlacements, 1, -1 do
+            if self.spellPlacements[i].owner == oppRole then
+                table.remove(self.spellPlacements, i)
+            end
+        end
+
+        if not snap then
+            print("[SYNC] WARNING: battle starting without opponent final_board")
+            return
+        end
+
+        for _, su in ipairs(snap.units or {}) do
+            local unitSprites = self.sprites[su.unitType]
+            local unit = UnitRegistry.createUnit(su.unitType, su.row, su.col, oppRole, unitSprites)
+            for _, idx in ipairs(su.activeUpgrades or {}) do
+                unit:upgrade(idx)
+            end
+            -- Units without upgrade trees carry level with an empty activeUpgrades list
+            while unit.level < (su.level or 0) do
+                if not unit:upgrade() then break end
+            end
+            self.grid:placeUnit(su.col, su.row, unit)
+        end
+        for _, sp in ipairs(snap.spells or {}) do
+            table.insert(self.spellPlacements, {
+                placementId = sp.placementId,
+                spellType   = sp.spellType,
+                col         = sp.col,
+                row         = sp.row,
+                owner       = oppRole,
+            })
+        end
+    end
+
+    -- Settle any in-flight drag back to its origin. A dragged unit is removed
+    -- from the grid for the duration of the drag, so this must run before the
+    -- final_board snapshot is taken — and it also guarantees a release that
+    -- lands after setup ended can no longer mutate the board.
+    function self:cancelActiveDrags()
+        if self.draggedUnit then
+            self.draggedUnit.col = self.draggedUnitOriginalCol
+            self.draggedUnit.row = self.draggedUnitOriginalRow
+            self.grid:placeUnit(self.draggedUnitOriginalCol, self.draggedUnitOriginalRow, self.draggedUnit)
+            self.draggedUnit.dragX = nil
+            self.draggedUnit.dragY = nil
+            self.draggedUnit = nil
+            self.draggedUnitOriginalCol = nil
+            self.draggedUnitOriginalRow = nil
+        end
+        if self.draggedSpell then
+            -- The placement entry itself is dragged; col/row are untouched until
+            -- drop, so clearing the drag offsets restores its resting position.
+            self.draggedSpell.dragX = nil
+            self.draggedSpell.dragY = nil
+            self.draggedSpell = nil
+            self.draggedSpellOriginalCol = nil
+            self.draggedSpellOriginalRow = nil
+        end
+        if self.draggedCard then
+            self.draggedCard:stopDrag()
+            self.draggedCard = nil
+        end
+        self.pressedUnit  = nil
+        self.pressedCard  = nil
+        self.pressedSpell = nil
+        self.tooltip:hide()
+    end
+
     function self:handleNetworkMessage(msg)
         local t = msg.type
 
         if t == "place_unit" or t == "remove_unit" or t == "upgrade_unit"
            or t == "place_spell" or t == "move_spell" then
-            -- During setup/intermission/pre_battle, buffer opponent moves so their
-            -- positions stay frozen at last-round home spots until battle starts.
-            local inSetup = self.state == "setup" or self.state == "intermission"
-                         or self.state == "pre_battle"
-            if inSetup then
-                table.insert(self.pendingOpponentMsgs, msg)
-            else
-                self:applyOpponentMsg(msg)
-            end
+            -- Informational only: the opponent's half is rebuilt from their
+            -- final_board snapshot at startBattle(). Never mutate the board on
+            -- receipt — a straggler arriving after battle start was a desync
+            -- source (it changed one client's board mid-simulation).
+            table.insert(self.pendingOpponentMsgs, msg)
 
         elseif t == "ready" then
             self.opponentReady = true
@@ -480,8 +601,12 @@ function GameScreen.new()
             math.randomseed(msg.seed)
             self:beginBattleCountdown()
 
+        elseif t == "final_board" then
+            self.opponentFinalBoard = msg
+
         elseif t == "round_end_ready" then
-            self.opponentRoundEndReady = true
+            self.opponentRoundEndReady  = true
+            self.opponentReportedWinner = msg.winner
 
         elseif t == "board_sync_check" then
             self.opponentBoardHash = msg.hash
@@ -505,6 +630,17 @@ function GameScreen.new()
     end
 
     function self:beginBattleCountdown()
+        -- Settle any in-flight drag first: a dragged unit is off the grid and
+        -- would otherwise be missing from the final_board snapshot.
+        self:cancelActiveDrags()
+
+        -- Send the authoritative end-of-setup board. The opponent rebuilds our
+        -- half from this snapshot at startBattle().
+        if self.isOnline then
+            local snap = self:captureFinalBoard()
+            self:sendMsg({type = "final_board", units = snap.units, spells = snap.spells})
+        end
+
         -- Return any unplayed drawn cards to the deck pile before battle
         if self.usingDeck and #self.drawnCardTypes > 0 then
             DeckManager.returnCards(self.drawnCardTypes)
@@ -537,9 +673,17 @@ function GameScreen.new()
             end
         end
 
-        -- Apply all buffered opponent moves now that battle is starting
-        for _, msg in ipairs(self.pendingOpponentMsgs) do
-            self:applyOpponentMsg(msg)
+        -- Build the opponent's half of the board. Online, it is rebuilt from
+        -- their authoritative final_board snapshot — immune to late, lost or
+        -- reordered incremental messages. The buffered incremental messages are
+        -- kept only for the offline replay path (tutorial/sandbox have none).
+        if self.isOnline then
+            self:applyOpponentSnapshot(self.opponentFinalBoard)
+            self.opponentFinalBoard = nil
+        else
+            for _, msg in ipairs(self.pendingOpponentMsgs) do
+                self:applyOpponentMsg(msg)
+            end
         end
         self.pendingOpponentMsgs = {}
 
@@ -741,6 +885,8 @@ function GameScreen.new()
         self.freeRerollUsed       = false
         self.playerCoins          = self.playerCoins + 6
         self.pendingOpponentMsgs  = {}
+        self.opponentFinalBoard   = nil
+        self.opponentReportedWinner = nil
         self.draggedUnit          = nil
         self.draggedCard          = nil
         self.pressedUnit          = nil
@@ -943,6 +1089,12 @@ function GameScreen.new()
             self.tutorialManager:update(dt)
         end
 
+        -- Bot opponent update (virtual peer: builds its board, readies up,
+        -- provides final_board and the round-end handshake)
+        if self.botManager then
+            self.botManager:update(dt)
+        end
+
         -- Poll network (must happen every frame)
         if self.isOnline and self.socket then
             local ok, err = pcall(function() self.socket:update() end)
@@ -992,7 +1144,11 @@ function GameScreen.new()
         -- Pre-battle GO! countdown (setup → battle transition)
         if self.state == "pre_battle" then
             self.preBattleTimer = self.preBattleTimer - dt
-            if self.preBattleTimer <= 0 then
+            -- Online: also wait for the opponent's final_board snapshot — the
+            -- battle must never start on an incomplete board. The reliable
+            -- channel guarantees delivery; a vanished opponent is handled by
+            -- the opponentDisconnected forfeit path.
+            if self.preBattleTimer <= 0 and (not self.isOnline or self.opponentFinalBoard) then
                 self:startBattle()
             end
         end
@@ -1119,11 +1275,12 @@ function GameScreen.new()
 
             -- Once animations finish, sync with opponent then handle lives
             if self:areAllAnimationsComplete() then
-                -- Signal done once (send only once)
+                -- Signal done once (send only once); include our sim's winner
+                -- so both clients can agree on the round outcome.
                 if not self.localRoundEndReady then
                     self.localRoundEndReady = true
                     if self.isOnline then
-                        self:sendMsg({type = "round_end_ready"})
+                        self:sendMsg({type = "round_end_ready", winner = self.winner})
                     end
                 end
 
@@ -1133,6 +1290,21 @@ function GameScreen.new()
                 if bothDone then
                     self.localRoundEndReady    = false
                     self.opponentRoundEndReady = false
+
+                    -- Outcome agreement: each client decided the winner from its
+                    -- own simulation. If they disagree (mid-battle desync), both
+                    -- adopt the host's (P1's) result so lives, coins and the
+                    -- match_result report stay consistent on both clients.
+                    if self.isOnline and self.opponentReportedWinner
+                       and self.opponentReportedWinner ~= self.winner then
+                        print(string.format("[DESYNC] Round %d winner mismatch: local=%s opponent=%s",
+                              self.roundNumber, tostring(self.winner), tostring(self.opponentReportedWinner)))
+                        if self.playerRole == 2 then
+                            self.winner = self.opponentReportedWinner
+                        end
+                    end
+                    self.opponentReportedWinner = nil
+
                     -- Consolation coins for the losing player (+3)
                     local loser = (self.winner == 1) and 2 or 1
                     if self.playerRole == loser then
@@ -2437,7 +2609,9 @@ function GameScreen.new()
         end
 
         -- ── Tooltip upgrade button ────────────────────────────────────────────
-        if self.tooltip:isVisible() then
+        -- Setup only: an upgrade landing after the final_board snapshot was sent
+        -- would diverge the local board from what the opponent simulates.
+        if self.tooltip:isVisible() and self.state == "setup" then
             local upgradeIndex = self.tooltip:checkUpgradeClick(x, y)
             if upgradeIndex then
                 local unit = self.tooltip.unit

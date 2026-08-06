@@ -23,10 +23,8 @@ function Loot:new(row, col, owner, sprites)
             name = "Reinforced Vault",
             description = "+6 max HP",
             onApply = function(unit)
+                -- upgrade() recalculates stats and heals to full right after onApply
                 unit.baseHealth = unit.baseHealth + 6
-                local multiplier = 1.3 ^ unit.level
-                unit.maxHealth = math.floor(unit.baseHealth * multiplier)
-                unit.health    = unit.maxHealth
             end
         },
         {

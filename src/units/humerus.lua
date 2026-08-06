@@ -7,7 +7,7 @@ function Humerus:new(row, col, owner, sprites)
         health      = 22,
         maxHealth   = 22,
         damage      = 4,
-        attackSpeed = 0.35,
+        attackSpeed = 0.3,
         moveSpeed   = 1,
         attackRange = 0,
         unitType    = "humerus"

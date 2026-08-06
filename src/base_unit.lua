@@ -49,7 +49,8 @@ UPGRADE SYSTEM DOCUMENTATION (Clash Mini Style)
 OVERVIEW:
 ---------
 Each unit can be upgraded up to level 3 (from base level 0). Upgrades provide:
-1. STAT BOOST: 1.3x multiplier to HP and damage per level (automatic for all units)
+1. STAT BOOST: fixed +HP and +attack speed per level (automatic for all units);
+   damage per hit NEVER scales with level (Clash Mini rule)
 2. ABILITY UPGRADES: Units with upgrade trees get to choose special abilities
 
 UPGRADE TREE STRUCTURE:
@@ -102,18 +103,30 @@ IMPLEMENTING UPGRADE EFFECTS:
    - onKill(target): For kill-triggered effects
    - onBattleStart(grid): For battle start effects
 
-STAT SCALING:
--------------
-- Level 0: Base stats (e.g., 10 HP, 1 damage)
-- Level 1: 1.3x stats (13 HP, 1 damage)
-- Level 2: 1.69x stats (16 HP, 1 damage)
-- Level 3: 2.197x stats (21 HP, 2 damage)
+STAT SCALING (Clash Mini style — fixed additive amounts per level):
+-------------------------------------------------------------------
+Each level adds a fixed, per-unit amount to HP and attack speed:
+  - maxHealth   = baseHealth + healthPerLevel * level
+  - attackSpeed = base attackSpeed + attackSpeedPerLevel * level
+  - damage: NEVER scales with level (only abilities can change it)
 
-Note: damage uses math.floor, so low base damage may not increase until level 2.
+Per-unit tuning via the stats table (both optional):
+  - stats.healthPerLevel      (default: 50% of base HP, floored, min 1)
+  - stats.attackSpeedPerLevel (default: 0.1 hits/sec)
+
+Example (10 HP, 1 damage, 1.0 SPD, defaults):
+- Level 0: 10 HP, 1 damage, 1.0 SPD
+- Level 1: 15 HP, 1 damage, 1.1 SPD
+- Level 2: 20 HP, 1 damage, 1.2 SPD
+- Level 3: 25 HP, 1 damage, 1.3 SPD
+
+All stats are recomputed from base values in recalculateStats() — abilities
+that permanently change stats should modify baseHealth/baseDamage and call
+unit:recalculateStats() (upgrade() already does this after onApply).
 
 UNITS WITHOUT UPGRADE TREES:
 ----------------------------
-Units that don't define an upgradeTree will still get the stat multiplier
+Units that don't define an upgradeTree will still get the fixed stat gains
 when upgraded, but won't have special abilities to choose from.
 
 ================================================================================
@@ -141,8 +154,14 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.level = 0  -- 0, 1, 2, or 3
     self.baseHealth = stats.health or 10
     self.baseDamage = stats.damage or 1
+    self.statAttackSpeed = stats.attackSpeed or 1  -- pristine level-0 value; baseAttackSpeed = this + level bonus
     self.baseAttackSpeed = stats.attackSpeed or 1
     self.baseMoveSpeed   = stats.moveSpeed or 1
+
+    -- Fixed per-level stat gains (Clash Mini style). Damage never scales with level.
+    -- Non-attackers (base attackSpeed 0, e.g. tomb/loot/effigy) gain no attack speed.
+    self.healthPerLevel      = stats.healthPerLevel or math.max(1, math.floor((stats.health or 10) * 0.5))
+    self.attackSpeedPerLevel = stats.attackSpeedPerLevel or (self.statAttackSpeed > 0 and 0.1 or 0)
 
     -- Slow debuff (refresh-not-stack)
     self.slowTimer       = 0
@@ -797,15 +816,24 @@ function BaseUnit:upgrade(upgradeIndex)
         self.level = self.level + 1
     end
 
-    -- Always apply stat multiplier on upgrade (for all units)
-    local multiplier = 1.3 ^ self.level
-    self.maxHealth = math.floor(self.baseHealth * multiplier)
-    self.damage = math.floor(self.baseDamage * multiplier)
+    -- Always apply fixed stat gains on upgrade (for all units)
+    self:recalculateStats()
 
     -- Heal to new max health when upgrading
     self.health = self.maxHealth
 
     return true
+end
+
+-- Recompute leveled stats from base values (Clash Mini style):
+-- HP and attack speed gain a fixed per-unit amount per level; damage never
+-- scales with level. The level bonus is folded into baseAttackSpeed so every
+-- buff that multiplies or restores from baseAttackSpeed stays level-aware.
+function BaseUnit:recalculateStats()
+    self.maxHealth       = math.floor(self.baseHealth + self.healthPerLevel * self.level)
+    self.damage          = math.floor(self.baseDamage)
+    self.baseAttackSpeed = self.statAttackSpeed + self.attackSpeedPerLevel * self.level
+    self.attackSpeed     = self.baseAttackSpeed
 end
 
 -- Get the next available upgrade (used for drag-to-upgrade auto-selection)
@@ -850,6 +878,7 @@ end
 
 function BaseUnit:resetCombatState()
     self.health             = self.maxHealth
+    self.attackSpeed        = self.baseAttackSpeed  -- strip temp buffs (e.g. Martyrdom) that outlived the round
     self.isDead             = false
     self._deathProcessed    = false
     self.state              = "idle"

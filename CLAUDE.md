@@ -75,6 +75,7 @@ autochest/
     ├── audio_manager.lua    # Music/SFX singleton with persistent settings
     ├── socket_manager.lua   # Socket health check + async reconnection
     ├── tutorial_manager.lua # First-time tutorial overlay + AI opponent
+    ├── bot_manager.lua      # Matchmaking bot opponent (virtual network peer)
     ├── card.lua             # Draggable card UI element
     ├── tooltip.lua          # Unit stat tooltip with upgrade button
     ├── pathfinding.lua      # A* pathfinding for unit movement
@@ -141,18 +142,19 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 ## Round Flow (detailed)
 
 1. `setup`: Players place units, timer counts down for both (P2 just can't auto-trigger).
-2. Both click Ready (or P1's timer hits 0) → `ready` message sent → host generates RNG seed → `battle_start` message → both enter `pre_battle`.
-3. `pre_battle` (1s "GO!" flash) → `startBattle()`:
-   - Applies all buffered opponent placement messages.
+2. Both click Ready (or timer hits 0 → auto-ready) → `ready` message sent → host generates RNG seed → `battle_start` message → both enter `pre_battle`.
+3. Entering `pre_battle` (`beginBattleCountdown()`): cancels in-flight drags, then each client sends `final_board` — an authoritative snapshot of its own half (units + spell placements).
+4. `pre_battle` (1s "GO!" flash; online also waits for opponent's `final_board`) → `startBattle()`:
+   - Rebuilds the opponent's half from their `final_board` snapshot (incremental placement messages are never applied to a live board — they were a desync source when they arrived late).
    - Computes board hash for desync detection.
    - Saves `homeCol`/`homeRow` per unit, calls `onBattleStart()`.
-4. `battle`: Units advance via a **fixed timestep loop** (see Battle Simulation below).
-5. One side wiped → `state = "battle_ending"`.
-6. `battle_ending`: Animations play out; once `areAllAnimationsComplete()`:
-   - Both clients set `localRoundEndReady = true` and send `round_end_ready`.
-   - When `opponentRoundEndReady` also arrives: consolation coins → `state = "intermission"`, `intermissionTimer = 2.5`.
-7. `intermission` (2.5s, bodies stay): Timer expires → deduct life → if 0: `finished`, else `resetRound()`.
-8. `resetRound()`: Clear grid, re-place all units at home positions, `+6 coins`, `state = "setup"`.
+5. `battle`: Units advance via a **fixed timestep loop** (see Battle Simulation below).
+6. One side wiped → `state = "battle_ending"`.
+7. `battle_ending`: Animations play out; once `areAllAnimationsComplete()`:
+   - Both clients set `localRoundEndReady = true` and send `round_end_ready` **with their sim's `winner`**.
+   - When `opponentRoundEndReady` also arrives: winners are compared — on mismatch (mid-battle desync) both clients adopt the **host's** result → consolation coins → `state = "intermission"`, `intermissionTimer = 2.5`.
+8. `intermission` (2.5s, bodies stay): Timer expires → deduct life → if 0: `finished`, else `resetRound()`.
+9. `resetRound()`: Clear grid, re-place all units at home positions, `+6 coins`, `state = "setup"`.
 
 ---
 
@@ -169,19 +171,21 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 1. Client sends `queue_join` with `player_id` and `trophies`.
 2. Server matches by trophy range ±100 (expands +50/5s, max ±500).
 3. `match_found` → `role` (1=P1/host, 2=P2/guest), opponent info → `Constants.PERSPECTIVE` set → `GameScreen`.
+4. No human available → **bot match** (see Bot Matchmaking below): after 5s alone in queue (45s if others are queued but out of range), the server sends `match_found` with `is_bot = true`, `role = 1` and a generated robot name.
 
 **Game Messages** (relayed through server):
 
 | Message | Type | Sender | Description |
 |---------|------|--------|-------------|
-| `place_unit` | relay | Either | Unit placed on grid |
-| `remove_unit` | relay | Either | Unit removed from grid |
-| `upgrade_unit` | relay | Either | Unit upgraded |
-| `ready` | relay | Either | Player clicked Ready |
+| `place_unit` | relay | Either | Unit placed on grid (informational only — never applied to a live board) |
+| `remove_unit` | relay | Either | Unit removed from grid (informational only) |
+| `upgrade_unit` | relay | Either | Unit upgraded (informational only) |
+| `ready` | relay | Either | Player clicked Ready (or timer auto-ready) |
 | `battle_start` | relay | P1 only | Includes RNG `seed` |
-| `round_end_ready` | relay | Either | Animations done, ready to reset |
+| `final_board` | relay | Either | Authoritative end-of-setup snapshot of own half (units + spells); opponent rebuilds our half from it at `startBattle()` |
+| `round_end_ready` | relay | Either | Animations done; includes `winner` for outcome agreement (host's result wins on mismatch) |
 | `board_sync_check` | relay | Either | Board hash for desync detection |
-| `match_result` | direct | Either | Winner ID → server updates trophies |
+| `match_result` | direct | Either | Winner ID → server updates trophies (server dedupes: first report tears down the room) |
 
 **Server-Only Messages**:
 
@@ -197,13 +201,32 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 
 **Client Roles**: P1 = host (role 1), P2 = guest (role 2). Set in `Constants.PERSPECTIVE`.
 
-**Opponent placement buffering**: During `setup`/`intermission`/`pre_battle`, incoming placement messages buffer in `pendingOpponentMsgs`. Applied at `startBattle()` so enemy positions appear frozen during setup.
+**Opponent board sync**: Incremental placement messages (`place_unit`/`remove_unit`/`upgrade_unit`/`place_spell`/`move_spell`) are buffered but **never applied** in online mode. Instead, each client sends a `final_board` snapshot of its own half when setup ends, and `startBattle()` rebuilds the opponent's half from that snapshot (`applyOpponentSnapshot`). The battle will not start until the opponent's snapshot has arrived. This makes battle boards immune to late/lost/reordered setup messages (previously a desync source). Enemy positions still appear frozen during setup because nothing is applied until battle start.
 
 **Round 1**: Enemy units hidden entirely. Round 2+: enemy units visible during setup.
 
 **Socket Keepalive**: Menu screen calls `_G.GameSocket:update()` every frame to prevent ENet timeout.
 
 **SocketManager** (`src/socket_manager.lua`): Use `SocketManager.isHealthy()` to check connection. `SocketManager.reconnect(onSuccess, onFailure)` handles async reconnection with saved token; pump with `SocketManager.updateReconnect(handle, dt)` each frame.
+
+---
+
+## Bot Matchmaking
+
+When no human opponent is available, the queue falls back to a bot match. Trophies/gold/XP move exactly as against a real player (+20/-15, etc.).
+
+**Server side** (`server/main.lua`):
+- `processMatchmaking()` runs whenever `#queue >= 1`. A player with no match after `BOT_MATCH_DELAY_ALONE` (5s, queue otherwise empty) or `BOT_MATCH_DELAY_CROWD` (45s, others queued — lets trophy-range expansion try first) gets a bot.
+- `createBotMatch()` builds a one-sided room (`partnerKey = nil`, `isBot = true`, player always `role = 1`) and sends `match_found` with `is_bot = true`, a generated robot name ("CP-03" / "C3PO" style) and bot trophies = player ±30.
+- `match_result` on a bot room updates only the reporting player (trophies/gold/xp + `currency_update`) and tears the room down. Relay messages to bot rooms are dropped.
+
+**Client side** (`src/bot_manager.lua`, attached in `game.lua` when `_G.OpponentData.isBot`):
+- The bot is a **virtual network peer**: it never touches the socket. It injects the opponent-side messages (`ready`, `final_board`, `round_end_ready`) directly into `game:handleNetworkMessage()`, so the entire online round flow runs unchanged. `game:sendMsg()` is a no-op in bot matches (`isBotMatch`); the socket stays live only for `match_result`.
+- **Deck**: mirrors the player's active deck (same types and copy counts, duplicates kept for upgrades); ~30% of types and all spells swap to a random unit of similar cost (±1). Thin decks are padded to 12 cards, favouring extra copies of already-picked units.
+- **Economy**: 6 starting coins, +6/round, +3 consolation on a lost round — same as players. Pays unit costs for placements and upgrades; can reroll its virtual hand once per round (1 coin).
+- **Placement**: bruisers (melee) in front rows 4→3, ranged in back rows 2→1 (canonical P2 zone), columns biased toward where the player's units are massing. Band overrides: `tomb`/`loot` back, `effigy` mid. Rounds 2+ it may reposition its most off-target bruiser.
+- Units live in a virtual roster during setup and materialize via the `final_board` snapshot at battle start — so round-1 concealment and frozen-setup visuals behave exactly like a human match, and no incremental placement messages exist to desync.
+- Smoke test: `lua tests/test_bot_manager.lua` (headless, same LÖVE stubs as the determinism test).
 
 ---
 
@@ -246,7 +269,8 @@ upgradeTree = {
 - `unit:hasUpgrade(index)` — checks if upgrade is active.
 - `unit:getNextAvailableUpgrade()` — returns index of next purchasable upgrade.
 - `activeUpgrades` — list of purchased upgrade indices.
-- Stat scaling: 1.3× per level (level 3 = 2.197× base).
+- **Stat scaling (Clash Mini style, fixed additive)**: each level adds `healthPerLevel` HP (default: 50% of base HP, floored) and `attackSpeedPerLevel` hits/sec (default: 0.1). **Damage never scales with level** — only abilities change it. Override per unit via `stats.healthPerLevel` / `stats.attackSpeedPerLevel`.
+- `unit:recalculateStats()` — recomputes `maxHealth`/`damage`/`attackSpeed` from base stats + level; the level's ATK SPD bonus is folded into `baseAttackSpeed` so buffs that scale or restore from it stay level-aware. Abilities that permanently change stats should modify `baseHealth`/`baseDamage` and rely on `upgrade()` calling this (or call it directly).
 
 In online mode the tooltip upgrade button is hidden/blocked for enemy units.
 
@@ -290,9 +314,10 @@ Battle runs as independent peer-to-peer simulation on each client.
 
 ---
 
-## Desync Detection
+## Desync Detection & Recovery
 
-At `startBattle()`, each client computes `computeBoardHash()` (sorted `"unitType,col,row,owner,level"` strings), sends `board_sync_check`, and `checkBoardSync()` prints `[SYNC]` or `[DESYNC]`.
+- **Battle start**: each client computes `computeBoardHash()` (sorted `"unitType,col,row,owner,level"` strings), sends `board_sync_check`, and `checkBoardSync()` prints `[SYNC]` or `[DESYNC]`. Since boards are rebuilt from `final_board` snapshots, a `[DESYNC]` here indicates a code bug, not a network race.
+- **Battle end (outcome agreement)**: `round_end_ready` carries each sim's `winner`. On mismatch, a `[DESYNC] ... winner mismatch` line is printed and both clients adopt the host's (P1's) result, keeping lives, coins, and `match_result` consistent even if the battles diverged.
 
 ---
 

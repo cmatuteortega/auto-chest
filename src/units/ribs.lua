@@ -34,10 +34,10 @@ local DEATH_RATTLE_RADIUS = 2
 
 function Ribs:new(row, col, owner, sprites)
     local stats = {
-        health      = 16,
-        maxHealth   = 16,
+        health      = 18,
+        maxHealth   = 18,
         damage      = 1,
-        attackSpeed = 0.65,
+        attackSpeed = 0.75,
         moveSpeed   = 1.0,
         attackRange = 0,
         unitType    = "ribs"
