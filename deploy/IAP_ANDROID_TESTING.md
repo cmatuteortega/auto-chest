@@ -33,28 +33,24 @@ Two of these are permanent and two are easy to break:
 
 ---
 
-## 1. Create the product in Play Console
+## 0. Two gates before anything else
 
-Play Console → your app → **Monetise → Products → In-app products → Create**.
+Both of these block product creation, and both are easy to miss:
 
-| Field | Value |
-|---|---|
-| Product ID | `coins_1000` (must match `src/iap_manager.lua`) |
-| Name | 1000 Coins |
-| Price | €1.00 |
-| Status | **Active** |
+**A payments profile.** Play Console → **Setup → Payments profile**. Without a
+Google payments merchant profile linked to the account you cannot sell anything,
+and the in-app products page stays closed.
 
-The product ID is the one thing that cannot be changed later. It must match
-`stores.android` in `src/iap_manager.lua` exactly.
+**A build with the BILLING permission, already uploaded.** Play will not let you
+create in-app products until it has seen an APK/AAB that declares
+`com.android.vending.BILLING`. This is why the build comes *before* the product
+here — the opposite order does not work.
 
-## 2. Grab the licensing public key
+If the in-app products page is already open for you, skip ahead to step 3, come
+back for the build, and nothing is lost: the product and the build only have to
+meet before you can actually buy anything.
 
-Play Console → **Monetise → Monetisation setup → Licensing**.
-
-Copy the long base64 `RSA public key` blob. This is what the server uses to
-verify receipts offline — no OAuth, no service account, no Google API call.
-
-## 3. Add the native bridge to love-android
+## 1. Prepare love-android
 
 ```bash
 cp lib/iap/native/android/IAPBridge.java \
@@ -78,7 +74,8 @@ Same file, in `dependencies`:
 implementation 'com.android.billingclient:billing:7.1.1'
 ```
 
-`~/love-android/app/src/main/AndroidManifest.xml`, inside `<manifest>`:
+`~/love-android/app/src/main/AndroidManifest.xml`, inside `<manifest>` — this is
+the line Play looks for before it unlocks in-app products:
 
 ```xml
 <uses-permission android:name="com.android.vending.BILLING" />
@@ -103,7 +100,72 @@ protected void onDestroy() {
 `"autochest"` is how the bridge finds the same directory LÖVE writes to. Get it
 wrong and nothing happens at all — no error, just silence.
 
-## 4. Point the server at the key and restart
+## 2. Build and upload to Internal testing
+
+```bash
+./build-android.sh
+```
+
+`build-android.sh` produces a **debug** APK. Debug builds are fine for running
+the game locally but Play rejects them: the upload must be signed with a real
+key, so you need an upload keystore first.
+
+```bash
+keytool -genkey -v -keystore ~/tinyturf-upload.jks \
+        -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+```
+
+Back it up somewhere safe — lose it and you cannot ship updates without Google's
+key-reset process. Wire it into `~/love-android/app/build.gradle`
+(`signingConfigs` + `buildTypes.release.signingConfig`), then:
+
+```bash
+cd ~/love-android && ./gradlew bundleEmbedNoRecordRelease
+```
+
+The task name follows love-android's `embed`/`noRecord` product flavours — the
+same ones `build-android.sh` uses for its debug build. Run `./gradlew tasks
+--all | grep -i bundle` if your checkout names them differently. The output
+lands in `app/build/outputs/bundle/`.
+
+Play Console → **Testing → Internal testing → Create new release**. It does not
+need review or promotion — uploading and rolling out to the internal track is
+enough. Accept Play App Signing when offered; the key above then becomes your
+*upload* key and Google holds the release key.
+
+Play will also ask you to complete **App content** (privacy policy, ads, content
+rating, target audience, data safety) before it lets you roll out. Internal
+testing needs far less than production, but it is not zero.
+
+> New personal developer accounts also need 12 testers opted in for 14 days
+> before *production* access. That does not affect internal testing, so it does
+> not block anything here — but it is worth knowing before you plan a launch.
+
+## 3. Create the product
+
+Now the page is open: Play Console → **Monetise → Products → In-app products →
+Create product**.
+
+| Field | Value |
+|---|---|
+| Product ID | `coins_1000` — **permanent**, must match `stores.android` in `src/iap_manager.lua` |
+| Name | `1000 Coins` (max 55 chars) |
+| Description | e.g. `A pile of 1000 coins to spend in the shop.` (max 200) |
+| Default price | `€1.00` — let Play auto-convert the other currencies |
+| Status | **Active** — a new product is inactive and will not be sold until you activate it |
+
+Two things bite here: the product ID cannot be changed or reused after
+creation, and a product left inactive returns `product_unavailable` at runtime
+with no other clue.
+
+## 4. Grab the licensing public key
+
+Play Console → **Monetise → Monetisation setup → Licensing**.
+
+Copy the long base64 `RSA public key` blob. This is what the server uses to
+verify receipts offline — no OAuth, no service account, no Google API call.
+
+## 5. Point the server at the key and restart
 
 On the VPS, add to the systemd unit
 (`/etc/systemd/system/autochest-server.service`, under `[Service]`):
@@ -113,7 +175,7 @@ Environment="AUTOCHEST_PLAY_PUBLIC_KEY=MIIBIjANBgkq...the whole blob..."
 Environment="AUTOCHEST_ANDROID_PACKAGE=com.cmatute.tinyturf"
 ```
 
-This is the `applicationId` set in step 3 — receipts from any other app are
+This is the `applicationId` set in step 1 — receipts from any other app are
 refused.
 
 ```bash
@@ -132,24 +194,13 @@ The startup line tells you whether it is armed:
 loses coins they paid for; the client keeps the receipt and retries until the
 key is set.
 
-## 5. Upload a build Play recognises
-
-```bash
-./build-android.sh
-```
-
-Then upload the **signed release** APK/AAB to Play Console →
-**Testing → Internal testing**. It does not need to be promoted or reviewed,
-only uploaded and rolled out to the internal track.
-
-Add your Google account under **Monetise → Monetisation setup → License
-testing**. Licence testers are charged nothing, and their purchases can be
-re-bought freely.
-
 ## 6. Install and buy
 
-Install from the internal-testing opt-in link, **not** `adb install` — an
-APK that did not come from Play gets `billing_unavailable`.
+Add your Google account under **Monetise → Monetisation setup → License
+testing**. Licence testers are charged nothing and can re-buy freely.
+
+Install from the internal-testing opt-in link, **not** `adb install` — an APK
+that did not come from Play gets `billing_unavailable`.
 
 In the game: **Shop → Coins → the €1.00 button**. Play's purchase sheet opens,
 shows "test card, always approves", and on confirm the button flips to
@@ -214,7 +265,8 @@ lua tests/test_iap_manager.lua   # client <-> server wiring (33 assertions)
 |---|---|
 | Button stuck on "Connecting to store..." | Bridge not started, or identity ≠ `autochest`. Check `adb logcat -s IAPBridge` for the bridge directory line. |
 | `billing_unavailable` | Installed outside Play, or no Play Store (most emulators). |
-| `product_unavailable` | Product ID mismatch, product not Active, or the build is not on a test track. |
+| `product_unavailable` | Product ID mismatch, product left **inactive**, or the build is not on a test track. |
+| In-app products page won't open | No payments profile, or no uploaded build declaring `com.android.vending.BILLING`. |
 | Button stuck on "Processing..." | Server refusing. Check `journalctl` for `IAP REJECTED`. |
 | `IAP REJECTED (wrong_package)` | `AUTOCHEST_ANDROID_PACKAGE` ≠ the APK's `applicationId`. |
 | `IAP REJECTED (bad_signature)` | Wrong licensing key, or the APK is signed with a different key than Play expects. |
