@@ -40,6 +40,11 @@ sudo journalctl -u autochest-server -f   # view logs
 lua tests/test_battle_determinism.lua
 ```
 
+**IAP module tests** (run after any change to `lib/iap/`):
+```bash
+lua tests/test_iap.lua
+```
+
 ---
 
 ## Project Structure
@@ -51,6 +56,7 @@ autochest/
 ├── play-online.sh       # Quick launcher for production server
 ├── tests/
 │   ├── test_battle_determinism.lua  # Determinism regression test (lua, not love)
+│   ├── test_iap.lua                 # In-app purchase lifecycle tests (lua, not love)
 │   └── balance_sim.lua              # Unit balance simulation tool
 ├── deploy/              # Cloud deployment files
 ├── server/              # Authentication + Matchmaking Server
@@ -63,7 +69,14 @@ autochest/
 │   ├── json.lua         # JSON encode/decode
 │   ├── screen.lua       # Base screen object
 │   ├── screen_manager.lua
-│   └── suit/            # Immediate-mode UI (buttons)
+│   ├── suit/            # Immediate-mode UI (buttons)
+│   └── iap/             # Portable in-app purchase module (see lib/iap/README.md)
+│       ├── init.lua         # Public API + settle loop
+│       ├── catalog.lua      # Product defs, store SKUs, localised pricing
+│       ├── ledger.lua       # Durable purchase record (crash-safe)
+│       ├── backends/        # mock.lua (desktop/CI), native.lua (device)
+│       ├── transport/       # filedrop.lua — Lua <-> native file IPC
+│       └── native/          # IAPBridge.java (Play Billing 7), IAPBridge.swift (StoreKit 2)
 └── src/
     ├── config.lua           # Server address config (dev/production)
     ├── constants.lua        # Resolution, grid layout, scaling helpers
@@ -378,6 +391,36 @@ Battle runs as independent peer-to-peer simulation on each client.
 - `DeckManager.setActive(deckIndex)` — sets/toggles active deck
 - `DeckManager.initDrawPile()` — builds and shuffles draw pile; returns `true` if active deck loaded, `false` for random fallback
 - `DeckManager.drawCards(n)` / `reshuffleAndDraw(currentHand, n)` — card draw operations
+
+---
+
+## In-App Purchases (`lib/iap/`)
+
+Self-contained, project-agnostic IAP module — drop the `lib/iap/` folder into any
+LÖVE project. Not yet wired into the shop panel; `menu.lua` still sends
+`gem_purchase` and shows "Purchase simulated!".
+
+**Usage**:
+```lua
+local IAP = require("lib.iap")
+IAP.init{ products = {...}, validate = ..., onGrant = function(p) ... end }
+function love.update(dt) IAP.update(dt) end
+IAP.purchase("gems_small", function(ok, result) ... end)
+```
+
+- **Backends**: `auto` picks `mock` on desktop (full simulated flow, scriptable
+  outcomes via `IAP.setMockOutcome`) and `native` on Android/iOS.
+- **Native half**: `lib/iap/native/android/IAPBridge.java` (Play Billing 7) and
+  `lib/iap/native/ios/IAPBridge.swift` (StoreKit 2). Neither patches LÖVE; both
+  talk to Lua over committed file pairs in `<save>/iap_bridge/`. See the
+  `INTEGRATION.md` next to each.
+- **Settle order** (this is what makes it crash-safe): store hands over purchase
+  → written to `iap_ledger.json` → `validate` → `onGrant` → *then* consume/
+  acknowledge at the store → record removed. Anything that fails before the last
+  step is re-delivered by the store on the next launch.
+- **Grants are at-least-once.** Server-side crediting must be idempotent on
+  `purchase.txn`.
+- Full API, error codes, and shipping checklist: `lib/iap/README.md`.
 
 ---
 
