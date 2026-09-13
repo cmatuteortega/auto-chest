@@ -442,7 +442,8 @@ no Google API call — then checked for package, product and purchase state. iOS
 is **not implemented** and refuses transiently by design. Environment:
 
 - `AUTOCHEST_PLAY_PUBLIC_KEY` — base64 key from Play Console → Licensing.
-- `AUTOCHEST_ANDROID_PACKAGE` — must match the APK's `applicationId`.
+- `AUTOCHEST_ANDROID_PACKAGE` — `com.cmatute.tinyturf`. Must match the APK's
+  `applicationId` exactly, or receipts are refused as `wrong_package`.
 - `AUTOCHEST_IAP_ALLOW_UNVERIFIED=true` — accepts receipts unverified.
   **Local development only**; it makes coins free. Also re-enables the legacy
   mock `gem_purchase` message, which is otherwise blocked.
@@ -455,6 +456,12 @@ credited once, to one account, ever. This (not the signature) is what stops a
 valid receipt being replayed across accounts, and what makes the client's
 at-least-once retries safe. Any new payout logic must go through
 `db:claimIapTransaction()`.
+
+**Android identifiers**: Play name `Tiny Turf: Auto Tactics PVP`, package
+`com.cmatute.tinyturf` (permanent; also love-android's `applicationId` and
+`AUTOCHEST_ANDROID_PACKAGE`). The LÖVE identity stays `autochest` — it is the
+save directory and the native bridge's rendezvous point, unrelated to the store
+name, and renaming it wipes player data and breaks the bridge silently.
 
 **Trying it on Android**: `deploy/IAP_ANDROID_TESTING.md`.
 

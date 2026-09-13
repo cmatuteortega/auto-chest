@@ -16,7 +16,7 @@
 --
 --   AUTOCHEST_PLAY_PUBLIC_KEY     base64 RSA key from Play Console →
 --                                 Monetise → Licensing. One long line.
---   AUTOCHEST_ANDROID_PACKAGE     e.g. com.yourstudio.autochest. The payload's
+--   AUTOCHEST_ANDROID_PACKAGE     com.cmatute.tinyturf for this app. The payload's
 --                                 packageName must match.
 --   AUTOCHEST_IAP_ALLOW_UNVERIFIED
 --                                 "true" accepts receipts without checking the

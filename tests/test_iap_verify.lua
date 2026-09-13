@@ -49,7 +49,7 @@ local function sign(payload)
     return (sig:gsub("%s", ""))
 end
 
-local PACKAGE = "com.yourstudio.autochest"
+local PACKAGE = "com.cmatute.tinyturf"   -- this app's real applicationId
 
 local function makePayload(overrides)
     local t = {

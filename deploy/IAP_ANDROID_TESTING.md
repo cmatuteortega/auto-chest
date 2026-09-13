@@ -7,6 +7,30 @@ name, the signing key, and the product ID, which means a real (unreleased)
 upload to a test track. Budget an hour for the first run; afterwards it is one
 `./build-android.sh` away.
 
+## This app's identifiers
+
+| | |
+|---|---|
+| Play Store name | Tiny Turf: Auto Tactics PVP |
+| Package name (`applicationId`) | `com.cmatute.tinyturf` |
+| LÖVE identity (`t.identity`) | `autochest` |
+| Product ID | `coins_1000` |
+
+Two of these are permanent and two are easy to break:
+
+- **`com.cmatute.tinyturf` can never be changed** once the app exists in Play
+  Console, and must be identical in three places: Play Console, love-android's
+  `applicationId`, and `AUTOCHEST_ANDROID_PACKAGE` on the VPS. A mismatch shows
+  up as `IAP REJECTED (wrong_package)`.
+- **`autochest` must not be renamed.** The Play name and the identity are
+  unrelated on purpose: the identity is the save-directory name and the place
+  the native bridge and Lua meet. Changing it wipes every player's local data
+  and silently breaks the bridge.
+- Do **not** confuse `applicationId` with the `package org.love2d.android;`
+  line at the top of `IAPBridge.java`. That is the *Java* package — where the
+  class lives in the project — and it stays as it is. Only `applicationId` goes
+  to Play.
+
 ---
 
 ## 1. Create the product in Play Console
@@ -37,7 +61,18 @@ cp lib/iap/native/android/IAPBridge.java \
    ~/love-android/app/src/main/java/org/love2d/android/IAPBridge.java
 ```
 
-`~/love-android/app/build.gradle`, in `dependencies`:
+`~/love-android/app/build.gradle`, in `defaultConfig` — love-android ships with
+`org.love2d.android`, which is the LÖVE app's own package and is already taken
+on Play, so this **must** be changed:
+
+```gradle
+defaultConfig {
+    applicationId "com.cmatute.tinyturf"
+    // ...
+}
+```
+
+Same file, in `dependencies`:
 
 ```gradle
 implementation 'com.android.billingclient:billing:7.1.1'
@@ -75,11 +110,11 @@ On the VPS, add to the systemd unit
 
 ```ini
 Environment="AUTOCHEST_PLAY_PUBLIC_KEY=MIIBIjANBgkq...the whole blob..."
-Environment="AUTOCHEST_ANDROID_PACKAGE=com.yourstudio.autochest"
+Environment="AUTOCHEST_ANDROID_PACKAGE=com.cmatute.tinyturf"
 ```
 
-Use the package name from `~/love-android/app/build.gradle`
-(`applicationId`) — receipts from any other app are refused.
+This is the `applicationId` set in step 3 — receipts from any other app are
+refused.
 
 ```bash
 rsync -avz --exclude 'server/players.db' . root@75.119.142.247:/opt/autochest/
@@ -90,7 +125,7 @@ ssh root@75.119.142.247 'journalctl -u autochest-server -n 20'
 The startup line tells you whether it is armed:
 
 ```
-[LOG] IAP verification: android=key set, package=com.yourstudio.autochest, ios=not implemented
+[LOG] IAP verification: android=key set, package=com.cmatute.tinyturf, ios=not implemented
 ```
 
 `android=NO KEY` means purchases will be refused — **transiently**, so nobody
