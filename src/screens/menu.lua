@@ -171,6 +171,8 @@ function MenuScreen.new()
         -- Shop state
         self._shopGemBtns  = {}  -- hit rects for gem purchase buttons
         self._shopGoldBtns = {}  -- hit rects for gold purchase buttons
+        self._coinBuyRect  = nil -- hit rect for the real-money coin pack
+        self._restoreRect  = nil -- hit rect for "Restore Purchases"
         self.shopNotice    = nil
         self.shopNoticeTimer = 0
 
@@ -531,6 +533,14 @@ function MenuScreen.new()
                 self._onlinePollTimer = 0
                 _G.GameSocket:send("get_online_count", {})
             end
+        end
+
+        -- Purchases can land while the player is on another screen (or at
+        -- launch, recovering an interrupted one) — surface whatever is waiting.
+        local iapNotice = IAPManager.takeNotice()
+        if iapNotice then
+            self.shopNotice      = iapNotice
+            self.shopNoticeTimer = 3.0
         end
 
         -- Shop notice timer
@@ -2174,10 +2184,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self:saveTradeTimer()
     end
 
-    function self:drawShopPanel(ox, W, H) -- luacheck: ignore H
+    function self:drawShopPanel(ox, W, H)
         local lg = love.graphics
         local sc = Constants.SCALE
-        local _ = H  -- parameter passed by caller; unused here
+        -- H is the content height (the caller already subtracted the tab bar).
 
         self:loadChestSprites()
 
@@ -2296,12 +2306,14 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self:drawGroupHeader(startX, tradeHdrY, totalW, hdrH, "Card Trade", sc)
 
         self._tradeCardRects = {}
+        local tradeBottom = tradeHdrY + hdrH
         local allUnits = UnitRegistry.getAllUnitTypes()
         if #allUnits >= 3 then
             local btnH    = math.floor(42 * sc)
             local btnGap  = math.floor(18 * sc)
             local btnShd  = math.floor(4 * sc)
             local cardY   = tradeHdrY + hdrH + math.floor(28 * sc)
+            tradeBottom   = cardY + cardH + btnGap + btnH + btnShd
             -- Side cards centered between the title margin and the center card
             local tradeCardX = {
                 math.floor(startX + totalW / 5 - cardW / 2),
@@ -2366,6 +2378,85 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 end
             end
         end
+
+        -- ── Coins (real money) ───────────────────────────────────────────────
+        -- Anchored to the bottom of the content area rather than stacked after
+        -- the trade row: the chest and trade sections already fill most of the
+        -- panel, and on a phone with a large bottom safe-inset a stacked layout
+        -- collides with the tab bar.
+        local buyH     = math.floor(48 * sc)
+        local buyShd   = math.floor(4 * sc)
+        local resH     = math.floor(26 * sc)
+        local minGap   = math.floor(12 * sc)
+        local margin   = math.floor(10 * sc)
+        local hdrBlock = hdrH + math.floor(10 * sc)
+        local coreH    = buyH + buyShd + math.floor(8 * sc) + resH
+
+        -- On a phone with large safe insets the chest and trade rows leave too
+        -- little room for the group header. Drop it rather than overflow the
+        -- tab bar — the coin icon and price already say what the button is.
+        local avail      = H - (tradeBottom + minGap) - margin
+        local showHeader = avail >= (hdrBlock + coreH)
+        local blockH     = showHeader and (hdrBlock + coreH) or coreH
+        local coinsTop   = math.max(tradeBottom + minGap, H - blockH - margin)
+
+        if showHeader then
+            self:drawGroupHeader(startX, coinsTop, totalW, hdrH, "Coins", sc)
+        end
+
+        local buyY = showHeader and (coinsTop + hdrBlock) or coinsTop
+        local ready  = IAPManager.isReady()
+        local busy   = IAPManager.isBusy()
+        local usable = ready and not busy
+
+        -- Shadow
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        roundedRect(startX + math.floor(2 * sc), buyY + buyShd, totalW, buyH, 8, sc)
+        -- Face
+        lg.setColor(usable and 0.765 or 0.42, usable and 0.639 or 0.38, usable and 0.541 or 0.35, 1)
+        roundedRect(startX, buyY, totalW, buyH, 8, sc)
+        lg.setColor(usable and 0.965 or 0.55, usable and 0.839 or 0.50, usable and 0.741 or 0.46, 1)
+        roundedRectLine(startX, buyY, totalW, buyH, 8, sc, 2 * sc)
+
+        local buyMidY = textCY(Fonts.small, buyY, buyH)
+        lg.setFont(Fonts.small)
+        if not ready then
+            lg.setColor(0.82, 0.82, 0.82, 1)
+            lg.printf("Connecting to store...", startX, buyMidY, totalW, 'center')
+        elseif busy then
+            lg.setColor(0.82, 0.82, 0.82, 1)
+            lg.printf("Processing...", startX, buyMidY, totalW, 'center')
+        else
+            -- Coin icon + amount on the left, store-localised price on the right.
+            local iconH  = math.floor(buyH * 0.5)
+            local iconSc = iconH / self.goldIcon:getHeight()
+            local iconW  = self.goldIcon:getWidth() * iconSc
+            local pad    = math.floor(18 * sc)
+            local visH   = Fonts.small:getAscent() - Fonts.small:getDescent()
+            local iconY  = math.floor(buyMidY + (visH - iconH) / 2)
+
+            lg.setColor(1, 1, 1, 1)
+            lg.draw(self.goldIcon, startX + pad, iconY, 0, iconSc, iconSc)
+            lg.print(tostring(IAPManager.COIN_AMOUNT), startX + pad + iconW + math.floor(6 * sc), buyMidY)
+
+            local priceStr = IAPManager.getPrice()
+            lg.print(priceStr, startX + totalW - pad - Fonts.small:getWidth(priceStr), buyMidY)
+        end
+
+        self._coinBuyRect = usable
+            and { x = startX + po, y = buyY, w = totalW, h = buyH + buyShd }
+            or nil
+
+        -- ── Restore Purchases (App Review requires a visible control) ────────
+        local resY = buyY + buyH + buyShd + math.floor(8 * sc)
+        lg.setColor(0.059, 0.165, 0.247, 1)
+        roundedRect(startX, resY, totalW, resH, 6, sc)
+        lg.setColor(0.30, 0.42, 0.52, 1)
+        roundedRectLine(startX, resY, totalW, resH, 6, sc, math.max(1, math.floor(sc)))
+        lg.setFont(Fonts.tiny)
+        lg.setColor(0.70, 0.80, 0.88, 1)
+        lg.printf("Restore Purchases", startX, textCY(Fonts.tiny, resY, resH), totalW, 'center')
+        self._restoreRect = { x = startX + po, y = resY, w = totalW, h = resH }
     end
 
     function self:drawBottomBar(W, H, sc)
@@ -3761,15 +3852,23 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         -- Tap: shop buttons
         if self.currentPanel == 4 then
-            -- Gem purchase buttons (placeholder)
-            for _, btn in ipairs(self._shopGemBtns) do
-                if x >= btn.x and x <= btn.x + btn.w and
-                   y >= btn.y and y <= btn.y + btn.h then
-                    if _G.GameSocket then
-                        _G.GameSocket:send("gem_purchase", {package = btn.key})
-                    end
-                    self.shopNotice = "Purchase simulated! +" .. btn.gems .. " gems added."
-                    self.shopNoticeTimer = 3.0
+            -- Real-money coin pack
+            if self._coinBuyRect then
+                local r = self._coinBuyRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    AudioManager.playTap()
+                    -- The store dialog, verification and crediting are all
+                    -- driven by IAPManager; notices surface via takeNotice().
+                    IAPManager.purchase()
+                    return
+                end
+            end
+            -- Restore Purchases
+            if self._restoreRect then
+                local r = self._restoreRect
+                if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                    AudioManager.playTap()
+                    IAPManager.restore()
                     return
                 end
             end

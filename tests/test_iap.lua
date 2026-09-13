@@ -281,6 +281,38 @@ test("purchase interrupted before granting is recovered on next launch", functio
     eq(IAP.getPendingCount(), 0, "record settled and removed")
 end)
 
+test("a purchase interrupted mid-verification resumes immediately", function()
+    -- The app died while validate() was in flight, so the record was written
+    -- with busy=true and a deadline. Neither means anything in a new process:
+    -- the purchase must be retried at once, not after the old deadline.
+    wipeFs()
+    freshModule()
+
+    local json = require("lib.iap.json")
+    files["iap_ledger.json"] = json.encode({
+        version = 1, processed = {}, processedOrder = {}, owned = {},
+        pending = {
+            ["txn-midflight"] = {
+                txn = "txn-midflight", productId = "gems_small", sku = "gems_small",
+                type = "consumable", platform = "mock", token = "tok-midflight",
+                status = "unverified", attempts = 4, created = 1,
+                busy = true, verifyDeadline = 1e9, nextAttempt = 1e9,
+            },
+        },
+    })
+
+    local grants, validated = 0, 0
+    IAP.init({ products = PRODUCTS, backend = "mock", platform = "mock", logLevel = "off",
+               mock = { latency = 0.1 },
+               validate = function(_, done) validated = validated + 1; done(true) end,
+               onGrant = function() grants = grants + 1 end })
+    advance(1.5)
+
+    eq(validated, 1, "validation retried right away, not after the stale deadline")
+    eq(grants, 1, "granted once")
+    eq(IAP.getPendingCount(), 0, "settled")
+end)
+
 test("a purchase already granted is finished but never granted twice", function()
     wipeFs()
     freshModule()
@@ -383,6 +415,44 @@ test("onGrant errors are retried rather than swallowed", function()
 
     check(calls >= 3, "onGrant retried after throwing (" .. calls .. " calls)")
     eq(IAP.getPendingCount(), 0, "settled once onGrant stopped failing")
+end)
+
+test("a validate() that never answers is retried, not wedged", function()
+    local calls, grants = 0, 0
+    bootMock({
+        retryBase = 0.2, retryCap = 0.5, validateTimeout = 1.0,
+        onGrant  = function() grants = grants + 1 end,
+        validate = function(_, done)
+            calls = calls + 1
+            if calls >= 3 then done(true) end   -- first two never call back
+        end,
+    })
+
+    IAP.purchase("gems_small")
+    advance(8.0)
+
+    check(calls >= 3, "validation retried past the silent attempts (" .. calls .. " calls)")
+    eq(grants, 1, "granted once the server finally answered")
+    eq(IAP.getPendingCount(), 0, "settled")
+end)
+
+test("a late validate() callback from a stale attempt is ignored", function()
+    local grants, stale = 0, nil
+    bootMock({
+        retryBase = 0.2, retryCap = 0.5, validateTimeout = 1.0,
+        onGrant  = function() grants = grants + 1 end,
+        validate = function(_, done)
+            if not stale then stale = done else done(true) end
+        end,
+    })
+
+    IAP.purchase("gems_small")
+    advance(4.0)
+    eq(grants, 1, "second attempt granted it")
+
+    stale(true)                    -- attempt 1 finally answers, far too late
+    advance(1.0)
+    eq(grants, 1, "stale callback did not grant a second time")
 end)
 
 test("guards: unknown product, not ready, and concurrent purchases", function()

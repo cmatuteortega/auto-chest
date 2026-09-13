@@ -202,7 +202,8 @@ local function doGrant(record)
         S.ledger:setOwned(record.productId, record.txn)
     end
 
-    S.ledger:updatePending(record.txn, { status = "granted", attempts = 0, nextAttempt = 0, busy = false })
+    S.ledger:updatePending(record.txn, { status = "granted", attempts = 0, nextAttempt = 0,
+                                        busy = false, verifyDeadline = nil })
 
     util.info("granted %s (%s)", record.productId, record.txn)
     emit("purchase", purchase)
@@ -224,7 +225,14 @@ local function verify(record)
         return doGrant(record)
     end
 
-    S.ledger:updatePending(record.txn, { busy = true })
+    -- Each attempt gets a generation number. A late callback from a previous
+    -- attempt is ignored rather than racing the current one.
+    local gen = (record.verifyGen or 0) + 1
+    S.ledger:updatePending(record.txn, {
+        busy          = true,
+        verifyGen     = gen,
+        verifyDeadline = util.now() + (S.config.validateTimeout or 60),
+    })
 
     local settled = false
     local function done(ok, err)
@@ -236,6 +244,11 @@ local function verify(record)
 
         local live = S.ledger:getPending(record.txn)
         if not live then return end  -- cancelled/reset while we waited
+        if live.verifyGen ~= gen then
+            util.warn("stale validate() callback for %s; ignoring", record.txn)
+            return
+        end
+        live.verifyDeadline = nil
 
         if ok then
             live.busy = false
@@ -246,7 +259,8 @@ local function verify(record)
             -- re-delivering it forever.
             util.err("validation permanently rejected %s: %s",
                 live.productId, tostring(err.message or err.code))
-            S.ledger:updatePending(live.txn, { status = "rejected", busy = false, nextAttempt = 0 })
+            S.ledger:updatePending(live.txn, { status = "rejected", busy = false,
+                                               nextAttempt = 0, verifyDeadline = nil })
             emit("failed", {
                 productId = live.productId,
                 code      = err.code or "invalid_receipt",
@@ -280,10 +294,15 @@ local function pumpPending()
 
     for _, record in ipairs(S.ledger:pendingList()) do
         if record.busy then
-            -- Guard against a native bridge that never answers a finish.
+            -- Guard against a native bridge that never answers a finish, or a
+            -- validate() that never calls done(). Either would otherwise leave
+            -- the record busy forever and the purchase unsettled.
             if record.finishDeadline and now > record.finishDeadline then
                 S.ledger:updatePending(record.txn, { busy = false, finishDeadline = nil })
                 scheduleRetry(record, "finish timed out")
+            elseif record.verifyDeadline and now > record.verifyDeadline then
+                S.ledger:updatePending(record.txn, { busy = false, verifyDeadline = nil })
+                scheduleRetry(record, "validate timed out")
             end
         elseif now >= (record.nextAttempt or 0) then
             if record.status == "unverified" then
@@ -428,6 +447,7 @@ end
 --    storageFile ledger filename in the save directory.
 --    json        JSON library (defaults to the copy vendored beside this file).
 --    logLevel    "off"|"error"|"warn"|"info"|"debug". Default "info".
+--    validateTimeout  seconds before an unanswered validate() is retried. Default 60.
 --    bridge      { dir, poll, transport } for the native backend.
 --    mock        { latency, outcome } for the mock backend.
 function IAP.init(config)

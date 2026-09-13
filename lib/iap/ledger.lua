@@ -77,6 +77,21 @@ function Ledger:load()
     self.data.pending        = type(decoded.pending)        == "table" and decoded.pending        or {}
     self.data.version        = FORMAT_VERSION
 
+    -- `busy` and the two deadlines mark an operation that is in flight *in this
+    -- process*. Nothing survives a restart, so anything still flagged was cut
+    -- short — clear it, or the record would sit out its old deadline (or wait
+    -- forever) before being retried.
+    for _, rec in pairs(self.data.pending) do
+        if rec.busy then
+            util.info("resuming '%s' interrupted mid-%s", tostring(rec.productId),
+                rec.finishDeadline and "finish" or "verify")
+        end
+        rec.busy           = false
+        rec.finishDeadline = nil
+        rec.verifyDeadline = nil
+        rec.nextAttempt    = 0   -- retry immediately on the next update
+    end
+
     util.debug("ledger loaded: %d processed, %d owned, %d pending",
         util.count(self.data.processed), util.count(self.data.owned), util.count(self.data.pending))
 end

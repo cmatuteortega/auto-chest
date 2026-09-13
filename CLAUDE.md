@@ -40,9 +40,11 @@ sudo journalctl -u autochest-server -f   # view logs
 lua tests/test_battle_determinism.lua
 ```
 
-**IAP module tests** (run after any change to `lib/iap/`):
+**IAP tests** (run after any change to `lib/iap/`, `src/iap_manager.lua` or `server/iap_verify.lua`):
 ```bash
-lua tests/test_iap.lua
+lua tests/test_iap.lua           # module lifecycle
+lua tests/test_iap_verify.lua    # server receipt verification (needs openssl)
+lua tests/test_iap_manager.lua   # client <-> server wiring
 ```
 
 ---
@@ -57,10 +59,13 @@ autochest/
 ├── tests/
 │   ├── test_battle_determinism.lua  # Determinism regression test (lua, not love)
 │   ├── test_iap.lua                 # In-app purchase lifecycle tests (lua, not love)
+│   ├── test_iap_verify.lua          # Receipt verification tests (needs openssl)
+│   ├── test_iap_manager.lua         # Client <-> server IAP wiring tests
 │   └── balance_sim.lua              # Unit balance simulation tool
 ├── deploy/              # Cloud deployment files
 ├── server/              # Authentication + Matchmaking Server
 │   ├── main.lua         # ENet server: auth, queue-based matchmaking, relay
+│   ├── iap_verify.lua   # Purchase receipt verification (Play RSA via openssl)
 │   ├── database.lua     # SQLite wrapper (bcrypt password hashing, session tokens)
 │   └── players.db       # SQLite database (created on first run)
 ├── lib/
@@ -79,6 +84,7 @@ autochest/
 │       └── native/          # IAPBridge.java (Play Billing 7), IAPBridge.swift (StoreKit 2)
 └── src/
     ├── config.lua           # Server address config (dev/production)
+    ├── iap_manager.lua      # AutoChest's IAP wiring (1000-coin pack + restore)
     ├── constants.lua        # Resolution, grid layout, scaling helpers
     ├── grid.lua             # Grid data model + rendering
     ├── deck_manager.lua     # Persistent deck storage + draw pile management
@@ -394,33 +400,63 @@ Battle runs as independent peer-to-peer simulation on each client.
 
 ---
 
-## In-App Purchases (`lib/iap/`)
+## In-App Purchases
 
-Self-contained, project-agnostic IAP module — drop the `lib/iap/` folder into any
-LÖVE project. Not yet wired into the shop panel; `menu.lua` still sends
-`gem_purchase` and shows "Purchase simulated!".
+**Product**: one repeatable consumable — `coins_1000`, 1000 gold for ~€1.
+Surfaced in the Shop panel (`menu.lua` → `drawShopPanel`) as a Coins button
+showing the store-localised price, plus a **Restore Purchases** button.
 
-**Usage**:
-```lua
-local IAP = require("lib.iap")
-IAP.init{ products = {...}, validate = ..., onGrant = function(p) ... end }
-function love.update(dt) IAP.update(dt) end
-IAP.purchase("gems_small", function(ok, result) ... end)
+**Gold is server-authoritative.** The client never credits coins itself:
+
+```
+Shop tap → IAPManager.purchase() → store charges → receipt
+        → validate() sends `verify_purchase` to the server
+        → server verifies the signature, claims the txn, credits gold
+        → `currency_update` (normal economy path) + `purchase_verified`
+        → lib/iap grants (toast only) → store consumes the purchase
 ```
 
-- **Backends**: `auto` picks `mock` on desktop (full simulated flow, scriptable
-  outcomes via `IAP.setMockOutcome`) and `native` on Android/iOS.
-- **Native half**: `lib/iap/native/android/IAPBridge.java` (Play Billing 7) and
-  `lib/iap/native/ios/IAPBridge.swift` (StoreKit 2). Neither patches LÖVE; both
-  talk to Lua over committed file pairs in `<save>/iap_bridge/`. See the
-  `INTEGRATION.md` next to each.
-- **Settle order** (this is what makes it crash-safe): store hands over purchase
-  → written to `iap_ledger.json` → `validate` → `onGrant` → *then* consume/
-  acknowledge at the store → record removed. Anything that fails before the last
-  step is re-delivered by the store on the next launch.
-- **Grants are at-least-once.** Server-side crediting must be idempotent on
-  `purchase.txn`.
-- Full API, error codes, and shipping checklist: `lib/iap/README.md`.
+`onGrant` only shows "+1000 coins!" — the balance already moved via
+`currency_update`. Anything that fails before the consume step means the store
+re-delivers the purchase on the next launch, so a crash or a dead connection
+mid-purchase never loses it.
+
+**Files**:
+- `lib/iap/` — the portable module (drop into any LÖVE project; see its README).
+- `src/iap_manager.lua` — AutoChest's glue: catalog, `validate` over `GameSocket`,
+  notices for the shop panel. Initialised in `main.lua`, pumped in `love.update`
+  on every screen so a purchase settles even mid-match.
+- `server/iap_verify.lua` — receipt verification.
+- `lib/iap/native/android/IAPBridge.java` / `ios/IAPBridge.swift` — native halves.
+
+**Server messages**:
+
+| Message | Direction | Description |
+|---|---|---|
+| `verify_purchase` | client → server | `{platform, product_id, sku, txn, payload, signature}` |
+| `purchase_verified` | server → client | `{txn, ok, code, reason, permanent}` — `permanent` stops the client retrying |
+
+**Verification** (`server/iap_verify.lua`): Android receipts are verified offline
+by RSA-SHA1 against the Play licensing key (`openssl dgst -verify`) — no OAuth,
+no Google API call — then checked for package, product and purchase state. iOS
+is **not implemented** and refuses transiently by design. Environment:
+
+- `AUTOCHEST_PLAY_PUBLIC_KEY` — base64 key from Play Console → Licensing.
+- `AUTOCHEST_ANDROID_PACKAGE` — must match the APK's `applicationId`.
+- `AUTOCHEST_IAP_ALLOW_UNVERIFIED=true` — accepts receipts unverified.
+  **Local development only**; it makes coins free. Also re-enables the legacy
+  mock `gem_purchase` message, which is otherwise blocked.
+
+A missing key refuses *transiently*, so a server misconfiguration never destroys
+a purchase the player paid for.
+
+**Idempotency**: `iap_transactions.txn` is a global PRIMARY KEY — one receipt is
+credited once, to one account, ever. This (not the signature) is what stops a
+valid receipt being replayed across accounts, and what makes the client's
+at-least-once retries safe. Any new payout logic must go through
+`db:claimIapTransaction()`.
+
+**Trying it on Android**: `deploy/IAP_ANDROID_TESTING.md`.
 
 ---
 
