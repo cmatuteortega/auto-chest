@@ -13,6 +13,9 @@ AudioManager = require('src.audio_manager')
 -- Global transition manager (cloud curtain between screens)
 TransitionManager = require('src.transition_manager')
 
+-- Global in-app purchase manager (store + server verification)
+IAPManager = require('src.iap_manager')
+
 -- Load screens
 local NameEntryScreen = require('src.screens.name_entry')
 local PreloadScreen   = require('src.screens.preload')
@@ -66,6 +69,10 @@ function love.load()
 
     -- Load cloud curtain sprites used for inter-screen transitions
     TransitionManager.init()
+
+    -- Connect to the store. Safe to do before login: a purchase that lands
+    -- before the socket is up simply waits on disk until it can be verified.
+    IAPManager.init()
 
     -- Render to the full window (edge-to-edge); safe insets used only for UI margins
     local isMobile = love.system.getOS() == "Android" or love.system.getOS() == "iOS"
@@ -154,6 +161,10 @@ function love.update(dt)
     love.audio.update()
     ScreenManager.update(dt)
     TransitionManager.update(dt)
+
+    -- Drives store replies and the purchase settle loop. Runs on every screen
+    -- so an interrupted purchase finishes even mid-match.
+    IAPManager.update(dt)
 end
 
 function love.draw()

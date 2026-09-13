@@ -40,6 +40,13 @@ sudo journalctl -u autochest-server -f   # view logs
 lua tests/test_battle_determinism.lua
 ```
 
+**IAP tests** (run after any change to `lib/iap/`, `src/iap_manager.lua` or `server/iap_verify.lua`):
+```bash
+lua tests/test_iap.lua           # module lifecycle
+lua tests/test_iap_verify.lua    # server receipt verification (needs openssl)
+lua tests/test_iap_manager.lua   # client <-> server wiring
+```
+
 ---
 
 ## Project Structure
@@ -51,10 +58,14 @@ autochest/
 ├── play-online.sh       # Quick launcher for production server
 ├── tests/
 │   ├── test_battle_determinism.lua  # Determinism regression test (lua, not love)
+│   ├── test_iap.lua                 # In-app purchase lifecycle tests (lua, not love)
+│   ├── test_iap_verify.lua          # Receipt verification tests (needs openssl)
+│   ├── test_iap_manager.lua         # Client <-> server IAP wiring tests
 │   └── balance_sim.lua              # Unit balance simulation tool
 ├── deploy/              # Cloud deployment files
 ├── server/              # Authentication + Matchmaking Server
 │   ├── main.lua         # ENet server: auth, queue-based matchmaking, relay
+│   ├── iap_verify.lua   # Purchase receipt verification (Play RSA via openssl)
 │   ├── database.lua     # SQLite wrapper (bcrypt password hashing, session tokens)
 │   └── players.db       # SQLite database (created on first run)
 ├── lib/
@@ -63,9 +74,17 @@ autochest/
 │   ├── json.lua         # JSON encode/decode
 │   ├── screen.lua       # Base screen object
 │   ├── screen_manager.lua
-│   └── suit/            # Immediate-mode UI (buttons)
+│   ├── suit/            # Immediate-mode UI (buttons)
+│   └── iap/             # Portable in-app purchase module (see lib/iap/README.md)
+│       ├── init.lua         # Public API + settle loop
+│       ├── catalog.lua      # Product defs, store SKUs, localised pricing
+│       ├── ledger.lua       # Durable purchase record (crash-safe)
+│       ├── backends/        # mock.lua (desktop/CI), native.lua (device)
+│       ├── transport/       # filedrop.lua — Lua <-> native file IPC
+│       └── native/          # IAPBridge.java (Play Billing 7), IAPBridge.swift (StoreKit 2)
 └── src/
     ├── config.lua           # Server address config (dev/production)
+    ├── iap_manager.lua      # AutoChest's IAP wiring (1000-coin pack + restore)
     ├── constants.lua        # Resolution, grid layout, scaling helpers
     ├── grid.lua             # Grid data model + rendering
     ├── deck_manager.lua     # Persistent deck storage + draw pile management
@@ -378,6 +397,73 @@ Battle runs as independent peer-to-peer simulation on each client.
 - `DeckManager.setActive(deckIndex)` — sets/toggles active deck
 - `DeckManager.initDrawPile()` — builds and shuffles draw pile; returns `true` if active deck loaded, `false` for random fallback
 - `DeckManager.drawCards(n)` / `reshuffleAndDraw(currentHand, n)` — card draw operations
+
+---
+
+## In-App Purchases
+
+**Product**: one repeatable consumable — `coins_1000`, 1000 gold for ~€1.
+Surfaced in the Shop panel (`menu.lua` → `drawShopPanel`) as a Coins button
+showing the store-localised price, plus a **Restore Purchases** button.
+
+**Gold is server-authoritative.** The client never credits coins itself:
+
+```
+Shop tap → IAPManager.purchase() → store charges → receipt
+        → validate() sends `verify_purchase` to the server
+        → server verifies the signature, claims the txn, credits gold
+        → `currency_update` (normal economy path) + `purchase_verified`
+        → lib/iap grants (toast only) → store consumes the purchase
+```
+
+`onGrant` only shows "+1000 coins!" — the balance already moved via
+`currency_update`. Anything that fails before the consume step means the store
+re-delivers the purchase on the next launch, so a crash or a dead connection
+mid-purchase never loses it.
+
+**Files**:
+- `lib/iap/` — the portable module (drop into any LÖVE project; see its README).
+- `src/iap_manager.lua` — AutoChest's glue: catalog, `validate` over `GameSocket`,
+  notices for the shop panel. Initialised in `main.lua`, pumped in `love.update`
+  on every screen so a purchase settles even mid-match.
+- `server/iap_verify.lua` — receipt verification.
+- `lib/iap/native/android/IAPBridge.java` / `ios/IAPBridge.swift` — native halves.
+
+**Server messages**:
+
+| Message | Direction | Description |
+|---|---|---|
+| `verify_purchase` | client → server | `{platform, product_id, sku, txn, payload, signature}` |
+| `purchase_verified` | server → client | `{txn, ok, code, reason, permanent}` — `permanent` stops the client retrying |
+
+**Verification** (`server/iap_verify.lua`): Android receipts are verified offline
+by RSA-SHA1 against the Play licensing key (`openssl dgst -verify`) — no OAuth,
+no Google API call — then checked for package, product and purchase state. iOS
+is **not implemented** and refuses transiently by design. Environment:
+
+- `AUTOCHEST_PLAY_PUBLIC_KEY` — base64 key from Play Console → Licensing.
+- `AUTOCHEST_ANDROID_PACKAGE` — `com.cmatute.tinyturf`. Must match the APK's
+  `applicationId` exactly, or receipts are refused as `wrong_package`.
+- `AUTOCHEST_IAP_ALLOW_UNVERIFIED=true` — accepts receipts unverified.
+  **Local development only**; it makes coins free. Also re-enables the legacy
+  mock `gem_purchase` message, which is otherwise blocked.
+
+A missing key refuses *transiently*, so a server misconfiguration never destroys
+a purchase the player paid for.
+
+**Idempotency**: `iap_transactions.txn` is a global PRIMARY KEY — one receipt is
+credited once, to one account, ever. This (not the signature) is what stops a
+valid receipt being replayed across accounts, and what makes the client's
+at-least-once retries safe. Any new payout logic must go through
+`db:claimIapTransaction()`.
+
+**Android identifiers**: Play name `Tiny Turf: Auto Tactics PVP`, package
+`com.cmatute.tinyturf` (permanent; also love-android's `applicationId` and
+`AUTOCHEST_ANDROID_PACKAGE`). The LÖVE identity stays `autochest` — it is the
+save directory and the native bridge's rendezvous point, unrelated to the store
+name, and renaming it wipes player data and breaks the bridge silently.
+
+**Trying it on Android**: `deploy/IAP_ANDROID_TESTING.md`.
 
 ---
 

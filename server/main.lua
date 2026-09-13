@@ -9,6 +9,7 @@ local enet = require("enet")
 package.path = package.path .. ';../?.lua'
 
 local Database = require("server.database")
+local IAPVerify = require("server.iap_verify")
 
 local PORT    = 12345
 local MAX_CONNECTIONS = 16
@@ -767,10 +768,90 @@ local function handleMessage(peer, eventName, msgData)
         peer:send(encode("currency_update", {gold = newGold, gems = newGems}))
         pushLog("Shop purchase: " .. session.username .. " bought " .. item)
 
+    elseif eventName == "verify_purchase" then
+        -- Real-money purchase. The client has already been charged by the
+        -- store; our job is to prove the receipt is genuine, credit the coins
+        -- exactly once, and tell the client so it can consume the purchase.
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+
+        local txn       = msgData.txn
+        local productId = msgData.product_id
+        local sku       = msgData.sku or productId
+        local platform  = msgData.platform or "unknown"
+
+        -- What each product pays out. The client never gets a say in the amount.
+        local payouts = { coins_1000 = {currency = "gold", amount = 1000} }
+        local payout  = productId and payouts[productId]
+
+        local function refuse(code, reason, permanent)
+            peer:send(encode("purchase_verified", {
+                txn = txn, ok = false, code = code,
+                reason = reason, permanent = permanent and true or false,
+            }))
+        end
+
+        if type(txn) ~= "string" or txn == "" then
+            refuse("no_txn", "Purchase carried no transaction id", true)
+            return
+        end
+        if not payout then
+            refuse("unknown_product", "Unknown product: " .. tostring(productId), true)
+            return
+        end
+
+        local verified, code, reason, permanent =
+            IAPVerify.verify(platform, msgData.payload, msgData.signature, sku)
+        if not verified then
+            pushLog("IAP REJECTED (" .. tostring(code) .. ") " .. session.username
+                .. " " .. tostring(productId) .. " txn=" .. txn)
+            refuse(code, reason, permanent)
+            return
+        end
+
+        -- Idempotency. The client retries until it hears back, so the same
+        -- valid receipt will arrive more than once; it must pay out once.
+        local claim = db:claimIapTransaction(txn, session.player_id, productId,
+                                             platform, payout.amount)
+
+        if claim == "conflict" then
+            -- A genuine receipt already credited to a different account.
+            pushLog("IAP CONFLICT: " .. session.username .. " replayed txn=" .. txn)
+            refuse("already_claimed", "This purchase belongs to another account", true)
+            return
+        end
+
+        if claim == "claimed" then
+            db:updateGold(session.player_id, payout.amount)
+            pushLog("IAP OK: " .. session.username .. " +" .. payout.amount
+                .. " gold (" .. productId .. ", " .. platform .. ") txn=" .. txn)
+        else
+            -- "duplicate": already paid out to this player. Answering ok lets
+            -- the client finish consuming the purchase at the store.
+            pushLog("IAP duplicate (already credited): " .. session.username .. " txn=" .. txn)
+        end
+
+        local gold = db:updateGold(session.player_id, 0)
+        local gems = db:getGems(session.player_id)
+        peer:send(encode("currency_update", {gold = gold, gems = gems}))
+        peer:send(encode("purchase_verified", {txn = txn, ok = true, gold = gold}))
+
     elseif eventName == "gem_purchase" then
         local session = sessions[ck]
         if not session then
             peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+
+        -- Legacy mock: credits gems for free to anyone who asks. Kept only for
+        -- local testing and gated off by default — real purchases now go
+        -- through `verify_purchase` above.
+        if os.getenv("AUTOCHEST_IAP_ALLOW_UNVERIFIED") ~= "true" then
+            pushLog("Blocked mock gem_purchase from " .. session.username)
+            peer:send(encode("shop_error", {reason = "Unavailable"}))
             return
         end
 
@@ -953,6 +1034,7 @@ function love.load()
     -- Initialize database
     db = Database.new("server/players.db")
     pushLog("Database initialized")
+    pushLog("IAP verification: " .. IAPVerify.describe())
 
     -- Start ENet host
     host = enet.host_create("*:"..PORT, MAX_CONNECTIONS)

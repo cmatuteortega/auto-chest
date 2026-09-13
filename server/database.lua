@@ -153,6 +153,76 @@ function Database:createTables()
         CREATE INDEX IF NOT EXISTS idx_session_player ON sessions(player_id);
     ]]
     self.db:exec(sessionSchema)
+
+    -- In-app purchases. `txn` is the store's transaction id and is the PRIMARY
+    -- KEY *globally*, not per player: one receipt can therefore only ever be
+    -- credited once, to one account. This table — not the signature check — is
+    -- what stops a valid receipt being replayed across accounts, and what makes
+    -- the client's at-least-once retries safe.
+    self.db:exec([[
+        CREATE TABLE IF NOT EXISTS iap_transactions (
+            txn         TEXT PRIMARY KEY,
+            player_id   INTEGER NOT NULL,
+            product_id  TEXT NOT NULL,
+            platform    TEXT NOT NULL DEFAULT '',
+            amount      INTEGER NOT NULL DEFAULT 0,
+            created_at  INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY (player_id) REFERENCES players(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_iap_player ON iap_transactions(player_id);
+    ]])
+end
+
+--- Claim a store transaction for a player, exactly once.
+--  Returns one of:
+--    "claimed"   first time we have seen this receipt — the caller must credit
+--    "duplicate" this player already got it — the caller must NOT credit again
+--    "conflict"  the receipt belongs to a different account — refuse
+function Database:claimIapTransaction(txn, playerId, productId, platform, amount)
+    if type(txn) ~= "string" or txn == "" then return "conflict" end
+
+    local stmt = self.db:prepare([[
+        INSERT OR IGNORE INTO iap_transactions
+            (txn, player_id, product_id, platform, amount)
+        VALUES (?, ?, ?, ?, ?)
+    ]])
+    stmt:bind_values(txn, playerId, productId, platform or "", amount or 0)
+    stmt:step()
+    stmt:finalize()
+
+    if self.db:changes() > 0 then return "claimed" end
+
+    -- Already present: whose is it?
+    stmt = self.db:prepare("SELECT player_id FROM iap_transactions WHERE txn = ?")
+    stmt:bind_values(txn)
+    local owner = nil
+    if stmt:step() == sqlite3.ROW then owner = stmt:get_value(0) end
+    stmt:finalize()
+
+    if owner == playerId then return "duplicate" end
+    return "conflict"
+end
+
+--- Total real-money transactions recorded for a player (support/debugging).
+function Database:getIapHistory(playerId, limit)
+    local stmt = self.db:prepare([[
+        SELECT txn, product_id, platform, amount, created_at
+        FROM iap_transactions WHERE player_id = ?
+        ORDER BY created_at DESC LIMIT ?
+    ]])
+    stmt:bind_values(playerId, limit or 25)
+    local out = {}
+    while stmt:step() == sqlite3.ROW do
+        out[#out + 1] = {
+            txn        = stmt:get_value(0),
+            product_id = stmt:get_value(1),
+            platform   = stmt:get_value(2),
+            amount     = stmt:get_value(3),
+            created_at = stmt:get_value(4),
+        }
+    end
+    stmt:finalize()
+    return out
 end
 
 -- Register a new player
