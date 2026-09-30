@@ -37,7 +37,8 @@ function Marrow:new(row, col, owner, sprites)
             name = "Extended Range",
             description = "+1 attack range",
             onApply = function(unit)
-                unit.attackRange = unit.attackRange + 1
+                unit.attackRange     = unit.attackRange + 1
+                unit.baseAttackRange = unit.baseAttackRange + 1  -- survives the per-round reset
             end
         },
         -- Upgrade 2: 2s damage boost on kill

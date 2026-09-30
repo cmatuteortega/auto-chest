@@ -147,8 +147,9 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     self.damage = stats.damage or 1
     self.attackSpeed = stats.attackSpeed or 1  -- attacks per second
     self.moveSpeed = stats.moveSpeed or 1  -- cells per second
-    self.attackRange = stats.attackRange or 0  -- 0 = melee
-    self.unitType = stats.unitType or "unknown"
+    self.attackRange     = stats.attackRange or 0  -- 0 = melee
+    self.baseAttackRange = stats.attackRange or 0  -- restored each round in resetCombatState
+    self.unitType        = stats.unitType or "unknown"
 
     -- Upgrade system (Clash Mini style - 3 upgrades, can choose all 3)
     self.level = 0  -- 0, 1, 2, or 3
@@ -188,6 +189,21 @@ function BaseUnit:new(row, col, owner, sprites, stats)
     -- a charge in a battle, the HP sprite stays visible until death (even if
     -- the unit later heals to full or its passive zeroes the energy counter).
     self.barRevealed = false
+
+    -- Synergy modifier fields (set by SynergyManager at battle start, reset each round)
+    self.synergyUndyingWill    = false
+    self.synergyUndyingUsed    = false
+    self.synergyStartingEnergy = 0
+    self.synergyMoveSpeedAdd   = 0
+    self.synergyDamageAdd      = 0
+    self.synergySavageRush     = false
+    self.savageRushTargets     = {}
+    self.synergySpeedMult      = 1.0
+    self.synergyFinishingBlow  = false
+    self.synergyHitCounter     = 0
+    self.synergyDeathMark      = false
+    self.synergyHealBonus      = 0
+    self.synergyCCDurationMult = 1.0
 
     -- Combat stats
     self.attackCooldown = 0
@@ -736,21 +752,54 @@ function BaseUnit:takeDamage(amount, attacker, grid)
         self.shieldedBy:takeDamage(amount, attacker, grid)
         return
     end
+
+    -- Apply attacker's target-dependent synergy damage bonuses
+    if attacker then
+        -- Death Mark (Marksman 5): +50% damage vs targets already below 50% HP
+        if attacker.synergyDeathMark and self.health <= self.maxHealth * 0.5 then
+            amount = math.floor(amount * 1.5)
+        end
+        -- Savage Rush (Monster 5): +40% damage on first hit vs each enemy
+        if attacker.synergySavageRush then
+            if not (attacker.savageRushTargets and attacker.savageRushTargets[self]) then
+                amount = math.floor(amount * 1.4)
+                if not attacker.savageRushTargets then attacker.savageRushTargets = {} end
+                attacker.savageRushTargets[self] = true
+            end
+        end
+        -- Finishing Blow (Brawler 5): every 5th hit deals double damage
+        if attacker.synergyFinishingBlow then
+            attacker.synergyHitCounter = (attacker.synergyHitCounter or 0) + 1
+            if attacker.synergyHitCounter % 5 == 0 then
+                amount = amount * 2
+            end
+        end
+    end
+
     self.health = self.health - amount
     if self.health <= 0 then
-        self.health = 0
-        self.isDead = true
-        if self.onDeathCallback then self.onDeathCallback(self) end
+        -- Undying Will (Undead 5): survive lethal hit once, heal to 1 HP
+        if self.synergyUndyingWill and not self.synergyUndyingUsed then
+            self.health = 1
+            self.synergyUndyingUsed = true
+            self:triggerBuffAnim()
+        else
+            self.health = 0
+            self.isDead = true
+            if self.onDeathCallback then self.onDeathCallback(self) end
+        end
     end
 
     -- Trigger hit animation (scaled)
-    self.hitAnimProgress = 0  -- Reset to start
-    self.hitAnimIntensity = 4 * Constants.SCALE  -- Pixels to shake (scaled)
+    self.hitAnimProgress = 0
+    self.hitAnimIntensity = 4 * Constants.SCALE
 end
 
 -- Hook: Get damage amount (can be overridden for conditional damage)
 function BaseUnit:getDamage(grid)
-    return math.floor(self.damage * (self.royalCommandBonus or 1))
+    local dmg = math.floor(self.damage * (self.royalCommandBonus or 1))
+    dmg = dmg + (self.synergyDamageAdd or 0)
+    return dmg
 end
 
 -- Hook: Called when this unit kills an enemy
@@ -877,8 +926,29 @@ function BaseUnit:applyHaste(duration, atkMult)
 end
 
 function BaseUnit:resetCombatState()
+    -- Restore stats that synergy bonuses modify directly (level-aware, additive)
+    self.maxHealth          = math.floor(self.baseHealth + self.healthPerLevel * self.level)
     self.health             = self.maxHealth
     self.attackSpeed        = self.baseAttackSpeed  -- strip temp buffs (e.g. Martyrdom) that outlived the round
+    self.attackRange        = self.baseAttackRange
+    self.moveSpeed          = self.baseMoveSpeed
+    self.tweenDuration      = 1 / self.baseMoveSpeed
+
+    -- Reset all synergy modifier fields
+    self.synergyUndyingWill    = false
+    self.synergyUndyingUsed    = false
+    self.synergyStartingEnergy = 0
+    self.synergyMoveSpeedAdd   = 0
+    self.synergyDamageAdd      = 0
+    self.synergySavageRush     = false
+    self.savageRushTargets     = {}
+    self.synergySpeedMult      = 1.0
+    self.synergyFinishingBlow  = false
+    self.synergyHitCounter     = 0
+    self.synergyDeathMark      = false
+    self.synergyHealBonus      = 0
+    self.synergyCCDurationMult = 1.0
+
     self.isDead             = false
     self._deathProcessed    = false
     self.state              = "idle"
@@ -1090,7 +1160,7 @@ function BaseUnit:update(dt, grid)
                     self:attack(self.target, grid)
                 end
             end
-            self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult * self.hasteAttackMult)
+            self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult * self.hasteAttackMult * (self.synergySpeedMult or 1.0))
         end
     else
         -- Target out of range, or we're still moving - move toward it
@@ -1123,7 +1193,7 @@ function BaseUnit:update(dt, grid)
                     end
                     self:attack(self.target, grid)
                 end
-                self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult * self.hasteAttackMult)
+                self.attackCooldown = 1 / (self.attackSpeed * self.slowAttackMult * self.hasteAttackMult * (self.synergySpeedMult or 1.0))
             end
         else
             -- Generate new path if we don't have one

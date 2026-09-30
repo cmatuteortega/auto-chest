@@ -56,7 +56,8 @@ self.upgradeTree = {
         name = "Sniper",
         description = "+2 attack range",
         onApply = function(unit)
-            unit.attackRange = unit.attackRange + 2
+            unit.attackRange     = unit.attackRange + 2
+            unit.baseAttackRange = unit.baseAttackRange + 2  -- survives the per-round reset
         end
     }
 }

@@ -59,18 +59,20 @@ Constants.GRID_OFFSET_Y = 180
 
 -- Base font sizes (at reference resolution)
 Constants.BASE_FONT_SIZES = {
-    LARGE = 48,
-    MEDIUM = 32,
-    SMALL = 24,
-    TINY = 16
+    LARGE   = 48,
+    MEDIUM  = 32,
+    SMALL   = 24,
+    CAPTION = 20,
+    TINY    = 16
 }
 
 -- Current font sizes (will be scaled)
 Constants.FONT_SIZES = {
-    LARGE = 48,
-    MEDIUM = 32,
-    SMALL = 24,
-    TINY = 16
+    LARGE   = 48,
+    MEDIUM  = 32,
+    SMALL   = 24,
+    CAPTION = 20,
+    TINY    = 16
 }
 
 -- Margin percentages (relative to screen dimensions)
@@ -148,10 +150,11 @@ function Constants.updateResolution(windowWidth, windowHeight)
         return math.max(minSize, scaled)
     end
 
-    Constants.FONT_SIZES.LARGE  = snapFont(Constants.BASE_FONT_SIZES.LARGE,  24)
-    Constants.FONT_SIZES.MEDIUM = snapFont(Constants.BASE_FONT_SIZES.MEDIUM, 16)
-    Constants.FONT_SIZES.SMALL  = snapFont(Constants.BASE_FONT_SIZES.SMALL,  8)
-    Constants.FONT_SIZES.TINY   = snapFont(Constants.BASE_FONT_SIZES.TINY,   8)
+    Constants.FONT_SIZES.LARGE   = snapFont(Constants.BASE_FONT_SIZES.LARGE,   24)
+    Constants.FONT_SIZES.MEDIUM  = snapFont(Constants.BASE_FONT_SIZES.MEDIUM,  16)
+    Constants.FONT_SIZES.SMALL   = snapFont(Constants.BASE_FONT_SIZES.SMALL,   8)
+    Constants.FONT_SIZES.CAPTION = snapFont(Constants.BASE_FONT_SIZES.CAPTION, 8)
+    Constants.FONT_SIZES.TINY    = snapFont(Constants.BASE_FONT_SIZES.TINY,    8)
 end
 
 -- Convert physical-pixel safe area into virtual-coordinate insets.

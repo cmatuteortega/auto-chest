@@ -79,6 +79,7 @@ autochest/
     ├── card.lua             # Draggable card UI element
     ├── tooltip.lua          # Unit stat tooltip with upgrade button
     ├── pathfinding.lua      # A* pathfinding for unit movement
+    ├── synergy_manager.lua  # Faction synergies (3/5-unit tiers), HUD + tooltip
     ├── units/               # 17 unit types: amalgam, boney, bonk, bull, burrow,
     │                        #   catapult, clavicula, humerus, knight, mage, marc,
     │                        #   marrow, mend, migraine, samurai, sinner, tomb
@@ -196,6 +197,7 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 | `queue_join` / `queue_leave` | Matchmaking queue |
 | `sync_decks` | Save all 5 deck slots to server |
 | `update_active_deck` | Set active deck for battle |
+| `daily_chest_claim` | Claim daily chest (gold, XP, optional card) → `currency_update` |
 
 **Trophy System**: Winner: +20, Loser: -15 (min 0). Server updates DB after each match.
 
@@ -251,6 +253,17 @@ All units extend `BaseUnit` (via `classic.lua`). Ranged units extend `BaseUnitRa
 **Sprites**: `front.png` (facing enemy), `back.png` (moving away), `dead.png`. Units with `hasDirectionalSprites = true` use 8-directional animation via `getDirectionalSprite()`.
 
 **Ranged projectiles** (`base_unit_ranged.lua`): `createProjectile(target, grid)` launches a projectile tracked in `self.arrows`. Override `onProjectileHit(projectile, grid)` for AoE effects. Override `drawProjectile(projectile)` for custom visuals.
+
+---
+
+## Faction Synergies
+
+`SynergyManager` (`src/synergy_manager.lua`): each unit type belongs to one or more factions (`UnitRegistry.factions`). Having 3 / 5 alive units of a faction on your side activates tier bonuses.
+
+- Applied in `startBattle()` after `onBattleStart()`, per owner, from the rebuilt board (deterministic: same board → same result).
+- Bonuses either modify fields directly (`maxHealth`, `attackRange`, `moveSpeed`) or set `synergy*` flags read during combat.
+- `resetCombatState()` restores `maxHealth`/`attackRange`/`moveSpeed` from base values and clears all `synergy*` fields every round. **Upgrades that permanently change range must also bump `baseAttackRange`**, or the reset wipes them.
+- HUD (active tiers) shown during setup/battle; tap toggles a tooltip.
 
 ---
 

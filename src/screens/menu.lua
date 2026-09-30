@@ -8,6 +8,7 @@ local UnitRegistry   = require('src.unit_registry')
 local DeckManager    = require('src.deck_manager')
 local SocketManager  = require('src.socket_manager')
 local SpellRegistry  = require('src.spell_registry')
+local SynergyManager = require('src.synergy_manager')
 local json           = require('lib.json')
 
 local MenuScreen = {}
@@ -49,6 +50,8 @@ function MenuScreen.new()
         self._detailSpriteRect = nil
         self._detailRotAngle   = 1    -- 1-6 index into ROTATION_ANGLES
         self._detailDragX      = nil  -- non-nil while dragging sprite
+        self._detailSwipeDragY = nil  -- live vertical drag offset (px) while swiping on detail
+        self._detailSwipeAnim  = nil  -- { from, to, startOffset, dir, t, dur } commit/snapback
         -- Collection grid scroll
         self.collectionScrollY      = 0
         self.collectionScrollMax    = 0  -- computed each draw
@@ -76,6 +79,9 @@ function MenuScreen.new()
         self.deckScrollMax    = 0
         self._deckScrollVel   = 0
         self._deckScrollDragY = nil
+        -- Synergy reference tooltip (deck builder banner)
+        self._deckFactionIconsRect     = nil
+        self._deckSynergyTooltipVisible = false
 
         -- Load front sprites for collection display (sorted for stable ordering).
         -- Use loadSprites so we also get frontTrimBottom for baseline alignment.
@@ -188,6 +194,13 @@ function MenuScreen.new()
         self._chestSprites   = nil    -- loaded lazily
         self._chestBtnRect   = nil    -- hit rect for the chest sprite
         self._chestSkipRect  = nil    -- hit rect for god-mode skip button
+        -- Flying coin animation (daily chest)
+        self._flyingCoins    = {}
+        self._coinPillSpring = { scale = 1.0, vel = 0.0 }
+        self._xpBarSpring    = { scale = 1.0, vel = 0.0 }
+        self._displayGold    = nil   -- nil = read from PlayerData.gold directly
+        self._xpBounceTimer  = nil   -- countdown after last coin lands
+        self._goldCounterPos = nil   -- {x,y} screen-space pill center; set each draw
         self:loadChestTimer()
 
         -- Card trade state
@@ -279,11 +292,28 @@ function MenuScreen.new()
         self._cb_currencyUpdate = _G.GameSocket:on("currency_update", function(data)
             print("[MENU] currency_update received gold=" .. tostring(data.gold) .. " gems=" .. tostring(data.gems))
             if _G.PlayerData then
+                local oldGold = _G.PlayerData.gold or 0
+                local oldXP   = _G.PlayerData.xp   or 0
+
                 if data.gold    ~= nil then _G.PlayerData.gold    = data.gold    end
                 if data.gems    ~= nil then _G.PlayerData.gems    = data.gems    end
                 if data.xp      ~= nil then _G.PlayerData.xp      = data.xp      end
                 if data.level   ~= nil then _G.PlayerData.level   = data.level   end
                 if data.unlocks ~= nil then _G.PlayerData.unlocks = data.unlocks end
+
+                local goldDelta = (data.gold or oldGold) - oldGold
+                local xpDelta   = (data.xp   or oldXP)  - oldXP
+
+                if goldDelta > 0 and self._deckPreviewGridRect then
+                    local r  = self._deckPreviewGridRect
+                    local ox = r.x + r.w / 2
+                    local oy = r.y + r.h / 2
+                    self._displayGold   = oldGold
+                    self._xpBounceTimer = nil
+                    self:spawnFlyingCoins(math.min(goldDelta, 10), ox, oy)
+                elseif xpDelta > 0 then
+                    self._xpBarSpring.vel = self._xpBarSpring.vel - 5.0
+                end
             end
         end)
 
@@ -589,21 +619,46 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 self._chestAnimTimer = self._chestAnimTimer + dt
                 local frame = math.floor(self._chestAnimTimer / OPEN_FRAME_DT) + 1
                 if frame > 16 then
-                    self._chestAnimFrame = 17  -- animation done; award card now
-                    -- Pick a random unit using rarity weighting
-                    local unitType = self:pickWeightedCard()
-                    -- Update locally for immediate feedback
-                    if _G.PlayerData and _G.PlayerData.unlocks then
-                        local u = _G.PlayerData.unlocks
-                        u.cards = u.cards or {}
-                        u.cards[unitType] = (u.cards[unitType] or 0) + 1
-                        u.pending_rewards = u.pending_rewards or {}
-                        table.insert(u.pending_rewards, { unit = unitType, type = "card" })
+                    self._chestAnimFrame = 17  -- animation done; award rewards now
+
+                    local GOLD_REWARD = 10
+                    local XP_REWARD   = 5
+                    local oldGold = _G.PlayerData and (_G.PlayerData.gold or 0) or 0
+
+                    -- Optimistic update
+                    if _G.PlayerData then
+                        _G.PlayerData.gold = oldGold + GOLD_REWARD
+                        _G.PlayerData.xp   = (_G.PlayerData.xp or 0) + XP_REWARD
                     end
+
+                    -- Start display at pre-award value; coins animate it up
+                    self._displayGold   = oldGold
+                    self._xpBounceTimer = nil
+
+                    self:spawnFlyingCoins(GOLD_REWARD)
+
+                    -- 20% chance: also award a card
+                    local cardUnit = nil
+                    if love.math.random() < 0.2 then
+                        cardUnit = self:pickWeightedCard()
+                        if _G.PlayerData and _G.PlayerData.unlocks then
+                            local u = _G.PlayerData.unlocks
+                            u.cards = u.cards or {}
+                            u.cards[cardUnit] = (u.cards[cardUnit] or 0) + 1
+                            u.pending_rewards = u.pending_rewards or {}
+                            table.insert(u.pending_rewards, { unit = cardUnit, type = "card" })
+                        end
+                    end
+
                     -- Persist to server (authoritative)
                     if _G.GameSocket then
-                        _G.GameSocket:send("award_card", { unit = unitType })
+                        _G.GameSocket:send("daily_chest_claim", {
+                            goldAmount = GOLD_REWARD,
+                            xpAmount   = XP_REWARD,
+                            cardUnit   = cardUnit,
+                        })
                     end
+
                     -- Reset chest
                     self._chestTimer     = 0
                     self._chestState     = "waiting"
@@ -758,6 +813,62 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         updateSpring(self._backSpring, dt)
         updateSpring(self._settingsSpring, dt)
         for i = 1, 3 do updateSpring(self._tradeBtnSprings[i], dt) end
+
+        -- Coin-pill and XP bar springs
+        local function updateGenericSpring(sp, dt2)
+            local accel = -480 * (sp.scale - 1.0) - 18 * sp.vel
+            sp.vel   = sp.vel   + accel * dt2
+            sp.scale = sp.scale + sp.vel  * dt2
+            sp.scale = math.max(0.88, math.min(1.14, sp.scale))
+        end
+        updateGenericSpring(self._coinPillSpring, dt)
+        updateGenericSpring(self._xpBarSpring,    dt)
+
+        -- Flying coins
+        local COIN_SPEED = 1 / 0.42
+        local allDone = (#self._flyingCoins == 0 and self._displayGold ~= nil)
+        for i = #self._flyingCoins, 1, -1 do
+            local c = self._flyingCoins[i]
+            if not c.active then
+                c.delay = c.delay - dt
+                if c.delay <= 0 then c.active = true end
+            else
+                c.t = c.t + dt * COIN_SPEED
+                if c.t >= 1 then
+                    if self._displayGold then
+                        self._displayGold = self._displayGold + 1
+                    end
+                    self._coinPillSpring.vel = self._coinPillSpring.vel - 5.0
+                    table.remove(self._flyingCoins, i)
+                end
+            end
+        end
+
+        -- After last coin lands, bounce XP bar then clear display override
+        if allDone and self._xpBounceTimer == nil then
+            self._xpBounceTimer = 0.18
+        end
+        if self._xpBounceTimer ~= nil then
+            self._xpBounceTimer = self._xpBounceTimer - dt
+            if self._xpBounceTimer <= 0 then
+                self._xpBarSpring.vel = self._xpBarSpring.vel - 5.0
+                self._displayGold     = nil
+                self._xpBounceTimer   = nil
+            end
+        end
+
+        -- Collection detail swipe animation
+        if self._detailSwipeAnim then
+            local anim = self._detailSwipeAnim
+            anim.t = math.min(1, anim.t + dt / anim.dur)
+            if anim.t >= 1 then
+                if anim.to then
+                    self.detailUnit      = anim.to
+                    self._detailRotAngle = 1
+                end
+                self._detailSwipeAnim = nil
+            end
+        end
     end
 
     -- Returns the current preview frame + trimBottom for a unit type.
@@ -994,9 +1105,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.print(name, x + 14 * sc, textCY(Fonts.medium, y, h))
     end
 
-    function self:drawCollectionDetailPage(ox, W, H, sc)
+    function self:drawCollectionDetailPage(ox, W, H, sc, unitOverride)
         local lg    = love.graphics
-        local utype = self.detailUnit
+        local utype = unitOverride or self.detailUnit
         if not utype then return end
 
         local info    = UnitRegistry.getUnitDisplayInfo(utype)
@@ -1038,7 +1149,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.printf("X", -backW / 2, textCY(Fonts.medium, -backH / 2, backH), backW, 'center')
         lg.pop()
 
-        self._backButtonRect = { x = backX + self.panelOffset, y = backAnchorY - backMaxF, w = backW, h = backH + backMaxF }
+        if not unitOverride then
+            self._backButtonRect = { x = backX + self.panelOffset, y = backAnchorY - backMaxF, w = backW, h = backH + backMaxF }
+        end
 
         -- ── Spell detail: simplified panel ────────────────────────────────────
         if SpellRegistry.isSpell(utype) then
@@ -1085,70 +1198,78 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             return
         end
 
-        -- ── Text content (top to bottom, starting below back button) ──
-        local curY = backAnchorY + backH + backShadH + math.floor(8 * sc)
-
-        -- Unit name + faction icons inline
-        local name = utype:sub(1,1):upper() .. utype:sub(2)
-        lg.setFont(Fonts.medium)
+        -- ── Header row: [X button] [name centered in gap] [icons right-aligned] ─
+        local name        = utype:sub(1,1):upper() .. utype:sub(2)
         local detFactions = UnitRegistry.factions and UnitRegistry.factions[utype] or {}
         local detIcons    = UnitRegistry.factionIcons or {}
-        local detIconSc   = math.max(2, math.floor(3 * sc))
-        local detIconSz   = 8 * detIconSc
-        local detIconGap  = math.floor(4 * sc)
-        local detNameH    = Fonts.medium:getHeight()
-        local detLineH    = math.max(detNameH, detIconSz)
-        local detNameW    = Fonts.medium:getWidth(name)
-        local detIconsW   = #detFactions > 0 and (detIconGap + #detFactions * detIconSz + (#detFactions - 1) * detIconGap) or 0
-        local detBlockX   = ox + math.floor((W - detNameW - detIconsW) / 2)
-        lg.setColor(1, 1, 1, 1)
-        lg.print(name, detBlockX, curY + math.floor((detLineH - detNameH) / 2))
+        local fi_sc  = math.max(3, math.floor(5 * sc))
+        local fi_sz  = 8 * fi_sc
+        local fi_gap = math.floor(6 * sc)
+        local fi_y   = backAnchorY + math.floor((backH - fi_sz) / 2)
+
+        -- Icons right-aligned to content-area right edge
+        local iconsW    = #detFactions > 0 and (#detFactions * fi_sz + (#detFactions - 1) * fi_gap) or 0
+        local iconsLeft = backX + _tabTotalW - iconsW
         for fi, fname in ipairs(detFactions) do
             local icon = detIcons[fname]
             if icon then
                 lg.setColor(1, 1, 1, 1)
-                local ix = detBlockX + detNameW + detIconGap + (fi - 1) * (detIconSz + detIconGap)
-                lg.draw(icon, ix, curY + math.floor((detLineH - detIconSz) / 2), 0, detIconSc, detIconSc)
+                lg.draw(icon, iconsLeft + (fi - 1) * (fi_sz + fi_gap), fi_y, 0, fi_sc, fi_sc)
             end
         end
-        curY = curY + detLineH + math.floor(5 * sc)
 
-        -- Stats row
-        lg.setFont(Fonts.tiny)
+        -- Name centered in the gap between X button and icons
+        local xBtnRight = backX + backW
+        local nameGapW  = iconsLeft - xBtnRight
+        lg.setFont(Fonts.large)
+        lg.setColor(1, 1, 1, 1)
+        if nameGapW > 0 then
+            lg.printf(name, xBtnRight, textCY(Fonts.large, backAnchorY, backH), nameGapW, 'center')
+        end
+
+        -- ── Text content (top to bottom, starting below back button) ──
+        local curY = backAnchorY + backH + backShadH + math.floor(14 * sc)
+
+        -- Stats row: left-aligned
+        lg.setFont(Fonts.small)
         lg.setColor(0.965, 0.839, 0.741, 1)
-        local s = string.format("HP %d  ATK %d  SPD %.1f  RNG %d  [%s]",
+        local s = string.format("HP %d   ATK %d   SPD %.1f   RNG %d   [%s]",
             info.hp, info.atk, info.spd, info.rng, info.unitClass)
-        lg.printf(s, textX, curY, textW, 'center')
-        curY = curY + Fonts.tiny:getHeight() + math.floor(7 * sc)
+        lg.printf(s, backX, curY, textW, 'left')
+        curY = curY + Fonts.small:getHeight() + math.floor(12 * sc)
 
         -- Separator
         lg.setColor(0.306, 0.286, 0.373, 1)
         lg.setLineWidth(math.max(1, math.floor(sc)))
-        lg.line(textX, curY, ox + W - math.floor(32 * sc), curY)
-        curY = curY + math.floor(7 * sc)
+        lg.line(backX, curY, ox + W - math.floor(32 * sc), curY)
+        curY = curY + math.floor(14 * sc)
 
         -- Passive description
-        local _, pLines = Fonts.tiny:getWrap(passive, textW)
-        lg.setFont(Fonts.tiny)
+        local _, pLines = Fonts.caption:getWrap(passive, textW)
+        lg.setFont(Fonts.caption)
         lg.setColor(0.765, 0.639, 0.541, 1)
-        lg.printf(passive, textX, curY, textW, 'left')
-        curY = curY + math.max(1, #pLines) * Fonts.tiny:getHeight() + math.floor(8 * sc)
+        lg.printf(passive, backX, curY, textW, 'left')
+        curY = curY + math.max(1, #pLines) * Fonts.caption:getHeight() + math.floor(14 * sc)
 
         -- Upgrades header
-        lg.setFont(Fonts.small)
+        lg.setFont(Fonts.medium)
         lg.setColor(0.965, 0.839, 0.741, 1)
-        lg.printf("Upgrades", textX, curY, textW, 'left')
-        curY = curY + Fonts.small:getHeight() + math.floor(4 * sc)
+        lg.printf("Upgrades", backX, curY, textW, 'left')
+        curY = curY + Fonts.medium:getHeight() + math.floor(6 * sc)
 
         -- Upgrade rows
-        lg.setFont(Fonts.tiny)
+        lg.setFont(Fonts.caption)
         for i, upg in ipairs(info.upgrades) do
+            local nameStr = i .. ". " .. upg.name
+            local _, nLines = Fonts.caption:getWrap(nameStr, textW)
             lg.setColor(0.965, 0.839, 0.741, 1)
-            lg.printf(i .. ". " .. upg.name, textX + math.floor(6 * sc), curY, textW, 'left')
-            curY = curY + Fonts.tiny:getHeight() + math.floor(2 * sc)
+            lg.printf(nameStr, backX + math.floor(8 * sc), curY, textW, 'left')
+            curY = curY + math.max(1, #nLines) * Fonts.caption:getHeight() + math.floor(3 * sc)
+            local descStr = "   " .. upg.description
+            local _, dLines = Fonts.caption:getWrap(descStr, textW)
             lg.setColor(0.765, 0.639, 0.541, 1)
-            lg.printf("   " .. upg.description, textX + math.floor(6 * sc), curY, textW, 'left')
-            curY = curY + Fonts.tiny:getHeight() + math.floor(4 * sc)
+            lg.printf(descStr, backX + math.floor(8 * sc), curY, textW, 'left')
+            curY = curY + math.max(1, #dLines) * Fonts.caption:getHeight() + math.floor(8 * sc)
         end
 
         -- ── Bottom sprite zone ──
@@ -1210,7 +1331,9 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             lg.setShader()
 
             -- Store sprite zone as drag rect
-            self._detailSpriteRect = { x = ox, y = spriteZoneY, w = W, h = spriteZoneH }
+            if not unitOverride then
+                self._detailSpriteRect = { x = ox, y = spriteZoneY, w = W, h = spriteZoneH }
+            end
         else
             -- ── Legacy unit: front + back side by side ──
             local frontImg   = self.sprites[utype]
@@ -1242,11 +1365,68 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
             self._detailSpriteRect = nil
         end
+
     end
 
     function self:drawCollectionPanel(ox, W, H, sc)
         if self.collectionView == "detail" then
+            -- Clip content so it disappears behind the ticker stripe when swiped upward
+            local stripeBottom = math.floor(75 * sc + Constants.MENU_CONTENT_PUSH)
+                                 + math.floor(36 * sc)
+            love.graphics.setScissor(0, stripeBottom, W, H - stripeBottom)
+
+            -- Compute swipe offsets for live drag and commit/snapback animations
+            local curOffset  = 0
+            local ghostUnit  = nil
+            local ghostOffset = 0
+
+            if self._detailSwipeDragY then
+                -- Live drag: current follows finger, adjacent card peeks in from opposite side
+                local dy  = self._detailSwipeDragY
+                local dir = dy < 0 and -1 or 1
+                curOffset = dy
+                local units = self:getOrderedUnlockedUnits()
+                local idx = 1
+                for i, u in ipairs(units) do
+                    if u == self.detailUnit then idx = i; break end
+                end
+                if dir == -1 and idx < #units then
+                    ghostUnit   = units[idx + 1]
+                    ghostOffset = dy + H
+                elseif dir == 1 and idx > 1 then
+                    ghostUnit   = units[idx - 1]
+                    ghostOffset = dy - H
+                end
+            elseif self._detailSwipeAnim then
+                local anim = self._detailSwipeAnim
+                -- Ease-out quad
+                local p = 1 - (1 - anim.t) * (1 - anim.t)
+                if anim.to then
+                    -- Commit: self.detailUnit (= anim.from) exits, anim.to enters as ghost
+                    curOffset   = anim.startOffset + (anim.dir * anim.H - anim.startOffset) * p
+                    ghostUnit   = anim.to
+                    ghostOffset = (anim.startOffset - anim.dir * anim.H) * (1 - p)
+                else
+                    -- Snap back
+                    curOffset = anim.startOffset * (1 - p)
+                end
+            end
+
+            local lg = love.graphics
+            -- Draw ghost card behind (no hit rects)
+            if ghostUnit then
+                lg.push()
+                lg.translate(0, math.floor(ghostOffset))
+                self:drawCollectionDetailPage(ox, W, H, sc, ghostUnit)
+                lg.pop()
+            end
+            -- Draw current card on top
+            if curOffset ~= 0 then lg.push(); lg.translate(0, math.floor(curOffset)) end
             self:drawCollectionDetailPage(ox, W, H, sc)
+            if curOffset ~= 0 then lg.pop() end
+
+            -- Restore outer scissor so subsequent panels are unaffected
+            love.graphics.setScissor(0, 0, W, H)
             return
         end
 
@@ -1268,7 +1448,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local numRows = math.ceil(#group.units / cols)
             contentH = contentH + headerH + 6 * sc + numRows * (cardH + gapY) + groupGap
         end
-        self.collectionScrollMax = math.max(0, startY + contentH + cardH * 0.5 - H)
+        self.collectionScrollMax = math.max(0, startY + contentH + cardH * 1.5 - H)
         local scrollY = math.floor(self.collectionScrollY)
 
         self._collectionCards = {}
@@ -1586,43 +1766,10 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.printf("Clear", clearX, textCY(Fonts.small, barY, barH), clearBtnW, 'center')
         self._deckClearRect = { x = clearX + self.panelOffset, y = barY, w = clearBtnW, h = barH }
 
-        -- ── Deck count banner ─────────────────────────────────────────────────
+        -- ── Deck count banner position (drawing deferred to after card grid) ───
         local bannerY = barY + barH + 8 * sc
         local bannerH = math.floor(40 * sc)
         local totalLabel = total >= 20 and (total .. " / 20  ") or (total .. " / 20")
-        self:drawGroupHeader(tabStartX, bannerY, tabTotalW, bannerH, totalLabel, sc)
-
-        -- Faction icons right-aligned in the banner
-        if UnitRegistry.factionIcons then
-            local deck = DeckManager.getDeck(self.selectedDeckSlot)
-            local presentFactions = {}
-            if deck and deck.counts then
-                for utype, cnt in pairs(deck.counts) do
-                    if cnt > 0 and UnitRegistry.factions and UnitRegistry.factions[utype] then
-                        for _, fname in ipairs(UnitRegistry.factions[utype]) do
-                            presentFactions[fname] = true
-                        end
-                    end
-                end
-            end
-            local factionOrder = {"brawler", "folk", "marksman", "monster", "support", "undead"}
-            local fIconSc  = math.max(3, math.floor(3 * sc))
-            local fIconSz  = 8 * fIconSc
-            local fIconGap = math.floor(3 * sc)
-            local totalIconW  = #factionOrder * fIconSz + (#factionOrder - 1) * fIconGap
-            local fIconStartX = tabStartX + tabTotalW - totalIconW - math.floor(10 * sc)
-            local fIconY      = bannerY + math.floor((bannerH - fIconSz) / 2)
-            for fi, fname in ipairs(factionOrder) do
-                local icon = UnitRegistry.factionIcons[fname]
-                if icon then
-                    local alpha = presentFactions[fname] and 1.0 or 0.25
-                    lg.setColor(1, 1, 1, alpha)
-                    local ix = fIconStartX + (fi - 1) * (fIconSz + fIconGap)
-                    lg.draw(icon, math.floor(ix), fIconY, 0, fIconSc, fIconSc)
-                end
-            end
-            lg.setColor(1, 1, 1, 1)
-        end
 
         -- ── Unit card grid ────────────────────────────────────────────────────
         local cols   = 4
@@ -1659,13 +1806,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         -- Compute total content height to know scroll bounds
         local numDeckRows = math.ceil(#sortedUnits / cols)
-        local deckContentH = numDeckRows * (cardH + gapY) + cardH * 0.5
+        local deckContentH = numDeckRows * (cardH + gapY) + cardH * 1.5
         self.deckScrollMax = math.max(0, startY + deckContentH - H)
         local scrollY = math.floor(self.deckScrollY)
 
-        -- Clip scrolled cards to the area below the controls bar (sort row bottom)
+        -- Clip scrolled cards to the area below the banner so cards never overlap it
         -- ox is in translated space; scissor needs screen-space x
-        local clipTop = math.floor(barY + barH)
+        local clipTop = math.floor(bannerY + bannerH)
         local clipX   = math.floor(ox + self.panelOffset)
         lg.setScissor(clipX, clipTop, math.floor(W), math.floor(H) - clipTop)
         lg.push()
@@ -1800,6 +1947,51 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         lg.pop()
         lg.setScissor()
+
+        -- ── Deck count banner (drawn on top of cards) ─────────────────────────
+        self:drawGroupHeader(tabStartX, bannerY, tabTotalW, bannerH, totalLabel, sc)
+
+        -- Faction icons right-aligned in the banner
+        if UnitRegistry.factionIcons then
+            local fDeck = DeckManager.getDeck(self.selectedDeckSlot)
+            local presentFactions = {}
+            if fDeck and fDeck.counts then
+                for utype, cnt in pairs(fDeck.counts) do
+                    if cnt > 0 and UnitRegistry.factions and UnitRegistry.factions[utype] then
+                        for _, fname in ipairs(UnitRegistry.factions[utype]) do
+                            presentFactions[fname] = true
+                        end
+                    end
+                end
+            end
+            local factionOrder = {"brawler", "folk", "marksman", "monster", "support", "undead"}
+            local fIconSc  = math.max(3, math.floor(3 * sc))
+            local fIconSz  = 8 * fIconSc
+            local fIconGap = math.floor(3 * sc)
+            local totalIconW  = #factionOrder * fIconSz + (#factionOrder - 1) * fIconGap
+            local fIconStartX = tabStartX + tabTotalW - totalIconW - math.floor(10 * sc)
+            local fIconY      = bannerY + math.floor((bannerH - fIconSz) / 2)
+            for fi, fname in ipairs(factionOrder) do
+                local icon = UnitRegistry.factionIcons[fname]
+                if icon then
+                    local alpha = presentFactions[fname] and 1.0 or 0.25
+                    lg.setColor(1, 1, 1, alpha)
+                    local ix = fIconStartX + (fi - 1) * (fIconSz + fIconGap)
+                    lg.draw(icon, math.floor(ix), fIconY, 0, fIconSc, fIconSc)
+                end
+            end
+            lg.setColor(1, 1, 1, 1)
+            -- Store rects in screen space (panel-local x + panelOffset = screen x)
+            local screenIconX = fIconStartX + self.panelOffset
+            self._deckFactionIconsRect = {
+                x = screenIconX, y = fIconY,
+                w = totalIconW,  h = fIconSz,
+            }
+            -- Store screen-space anchor for tooltip draw (done after lg.pop())
+            -- anchor = bottom-right corner of icon strip so tooltip opens below
+            self._deckTooltipAnchorX = screenIconX + totalIconW
+            self._deckTooltipAnchorY = fIconY + fIconSz
+        end
     end
 
     function self:drawRankingPanel(ox, W, H)
@@ -2062,6 +2254,44 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         else
             self._chestTimer = math.max(0, elapsed)
             self._chestState = "waiting"
+        end
+    end
+
+    function self:getOrderedUnlockedUnits()
+        local result  = {}
+        local unlocks = _G.PlayerData and _G.PlayerData.unlocks
+        for _, group in ipairs(UnitRegistry.groups) do
+            for _, utype in ipairs(group.units) do
+                local owned   = unlocks and unlocks.cards and (unlocks.cards[utype] or 0) or nil
+                local isLocked = (not _G.GodMode) and owned ~= nil and owned == 0
+                if not isLocked then
+                    table.insert(result, utype)
+                end
+            end
+        end
+        return result
+    end
+
+    function self:spawnFlyingCoins(n, originX, originY)
+        local sc = Constants.SCALE
+        local cx, cy
+        if originX and originY then
+            cx, cy = originX, originY
+        elseif self._chestBtnRect then
+            cx = self._chestBtnRect.x + self._chestBtnRect.w / 2
+            cy = self._chestBtnRect.y + self._chestBtnRect.h / 2
+        else
+            return
+        end
+        self._flyingCoins = {}
+        for i = 1, n do
+            table.insert(self._flyingCoins, {
+                delay  = (i - 1) * 0.07,
+                t      = 0,
+                active = false,
+                startX = cx + (love.math.random() - 0.5) * 18 * sc,
+                startY = cy + (love.math.random() - 0.5) * 18 * sc,
+            })
         end
     end
 
@@ -2373,7 +2603,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         local BAR_H = 100 * sc + Constants.SAFE_INSET_BOTTOM
         local barY  = H - BAR_H
         local tabW  = W / self.NUM_PANELS
-        local labels = { "Collection", "Decks", "Battle", "Ranking", "Shop" }
+        local labels = { "Collection", "Decks", "Battle", "Shop", "Ranking" }
 
         -- Bar background
         lg.setColor(0.031, 0.078, 0.118, 1)
@@ -2433,7 +2663,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 local pixSc     = math.max(basePixSc, math.floor(basePixSc * (1 + math.min(raise, 0.99))))
                 local ix = math.floor(tabCx - iw * pixSc / 2)
                 -- Icon pops above the card when active (intentionally overflows card top)
-                local iy = math.floor(barY + 6 * sc - 56 * sc * raise)
+                local iy = math.floor(barY + 14 * sc - 56 * sc * raise)
                 lg.setColor(isActive and {1, 1, 1, 1} or {0.306, 0.286, 0.373, 1})
                 lg.draw(img, ix, iy, 0, pixSc, pixSc)
             end
@@ -2441,7 +2671,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             -- Label stays at original position
             lg.setFont(Fonts.tiny)
             lg.setColor(1, 1, 1, 0.35 + 0.65 * raise)
-            local labelY = barY + 62 * sc - 12 * sc * raise
+            local labelY = barY + 70 * sc - 12 * sc * raise
             lg.printf(labels[i], tabCx - tabW / 2, labelY, tabW, 'center')
 
             -- Hit rect
@@ -2603,6 +2833,43 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         lg.pop()
         lg.setScissor()
 
+        -- Synergy reference tooltip (screen space, deck panel only)
+        if self.currentPanel == 2 and self._deckSynergyTooltipVisible
+           and self._deckTooltipAnchorX then
+            SynergyManager.drawAllPassivesTooltip(self._deckTooltipAnchorX, self._deckTooltipAnchorY)
+        end
+
+        -- Flying coins from chest to gold counter (screen space)
+        if #self._flyingCoins > 0 and self._goldCounterPos then
+            local gp   = self._goldCounterPos
+            local icon = self.goldIcon
+            local iw   = icon:getWidth()
+            local ih   = icon:getHeight()
+            local coinSc = math.floor(math.max(2, 3 * sc))
+            for _, c in ipairs(self._flyingCoins) do
+                if c.active then
+                    local tt  = math.min(c.t, 1)
+                    -- Ease-in curve: slow start, fast finish (sucked into counter)
+                    local e   = tt * tt
+                    -- X: lerp from start toward counter center
+                    local bx  = c.startX + (gp.x - c.startX) * e
+                    -- Y: travel upward from startY into counter from below
+                    -- entry point is well below counter; coins rise straight up into it
+                    local entryY = gp.y + 60 * sc
+                    local by  = c.startY + (entryY - c.startY) * e
+                    -- Last 30% of travel: close the gap into the counter center
+                    if tt > 0.7 then
+                        local snap = (tt - 0.7) / 0.3
+                        by = by + (gp.y - by) * snap
+                    end
+                    local angle = c.t * math.pi * 4
+                    lg.setColor(1, 1, 1, 1)
+                    lg.draw(icon, math.floor(bx), math.floor(by),
+                            angle, coinSc, coinSc, iw / 2, ih / 2)
+                end
+            end
+        end
+
         -- Scrolling ticker stripe (screen space, fixed above panel content)
         self:drawTickerStripe(W, sc)
 
@@ -2700,6 +2967,15 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     shakeX = math.floor(burst + idle)
                 end
 
+                -- Vertical squish spring for XP bar
+                local xs    = self._xpBarSpring.scale
+                local xbCx  = math.floor(barX + barW / 2)
+                local xbCy  = math.floor(stripY + stripH / 2)
+                lg.push()
+                lg.translate(xbCx, xbCy)
+                lg.scale(1.0, xs)
+                lg.translate(-xbCx, -xbCy)
+
                 -- Background (same dark as settings button bg)
                 lg.setColor(0.059, 0.165, 0.247, 1)
                 lg.rectangle('fill', barX + shakeX, stripY, barW, stripH, barR, barR)
@@ -2727,6 +3003,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     lg.printf("Level " .. plevel, barX, textCY(Fonts.small, stripY, stripH), barW, 'center')
                 end
 
+                lg.pop()
                 self._xpBarRect = { x = barX, y = stripY, w = barW, h = stripH }
             end
 
@@ -2735,6 +3012,16 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             local coinX   = barX + barW + coinGap
             local coinW   = sbX - barGap - coinX
             if coinW > 0 then
+                local pilCx = math.floor(coinX + coinW / 2)
+                local pilCy = math.floor(stripY + stripH / 2)
+                self._goldCounterPos = { x = pilCx, y = pilCy }
+
+                local ps = self._coinPillSpring.scale
+                lg.push()
+                lg.translate(pilCx, pilCy)
+                lg.scale(ps, ps)
+                lg.translate(-pilCx, -pilCy)
+
                 local barR = math.max(1, math.floor(3 * sc))
                 lg.setColor(0.059, 0.165, 0.247, 1)
                 lg.rectangle('fill', coinX, stripY, coinW, stripH, barR, barR)
@@ -2750,7 +3037,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 lg.setColor(1, 1, 1, 1)
                 lg.draw(self.goldIcon, iconX, iconY, 0, iconSc, iconSc)
 
-                local coins  = _G.PlayerData.gold or _G.PlayerData.coins or 0
+                local coins  = self._displayGold or (_G.PlayerData.gold or _G.PlayerData.coins or 0)
                 lg.setFont(Fonts.small)
                 lg.setColor(0.965, 0.839, 0.741, 1)
                 local textX  = iconX + iconW + math.floor(4 * sc)
@@ -2758,6 +3045,8 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 if textW > 0 then
                     lg.printf(tostring(coins), textX, textCY(Fonts.small, stripY, stripH), textW, 'left')
                 end
+
+                lg.pop()
             end
         end
         lg.pop()
@@ -3151,7 +3440,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         -- Overlays absorb all presses
         if self.showDetail or self.showSettings or self._rewardState == "revealing" then return end
 
-        -- Collection detail: start sprite rotation drag + back spring
+        -- Collection detail: start sprite rotation drag + back spring + swipe nav tracking
         if self.currentPanel == 1 and self.collectionView == "detail" then
             local r = self._detailSpriteRect
             if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
@@ -3238,6 +3527,21 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             return
         end
 
+        -- Collection detail: live vertical swipe tracking
+        if self.currentPanel == 1 and self.collectionView == "detail" then
+            local rawDY = y - self.pressY
+            local rawDX = x - self.pressX
+            if self._detailSwipeDragY ~= nil then
+                self._detailSwipeDragY = rawDY
+                self.hasMoved = true
+                return
+            elseif math.abs(rawDY) > self.SWIPE_THRESH and math.abs(rawDY) > math.abs(rawDX) * 1.5 then
+                self._detailSwipeDragY = rawDY
+                self.hasMoved = true
+                return
+            end
+        end
+
         local dx = x - self.pressX
         local dy = y - self.pressY
 
@@ -3307,6 +3611,40 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self._settingsSpring.pressed = false
         for i = 1, 3 do self._tradeBtnSprings[i].pressed = false end
         self._detailDragX = nil
+        -- Collection detail vertical swipe: commit or snap back
+        if self._detailSwipeDragY ~= nil then
+            local dragY = self._detailSwipeDragY
+            local sc    = Constants.SCALE
+            local pH    = Constants.GAME_HEIGHT
+            local units = self:getOrderedUnlockedUnits()
+            local idx   = 1
+            for i, u in ipairs(units) do
+                if u == self.detailUnit then idx = i; break end
+            end
+            local dir    = dragY < 0 and -1 or 1
+            local target = nil
+            if dragY < 0 and idx < #units then
+                target = units[idx + 1]
+            elseif dragY > 0 and idx > 1 then
+                target = units[idx - 1]
+            end
+            if target and math.abs(dragY) > 40 * sc then
+                self._detailSwipeAnim = {
+                    from = self.detailUnit, to = target,
+                    startOffset = dragY, dir = dir,
+                    t = 0, dur = 0.22, H = pH
+                }
+                -- detailUnit advances to target when animation completes (see update)
+                AudioManager.playTap()
+            elseif math.abs(dragY) > 2 then
+                self._detailSwipeAnim = {
+                    from = self.detailUnit, to = nil,
+                    startOffset = dragY, dir = dir,
+                    t = 0, dur = 0.15, H = pH
+                }
+            end
+            self._detailSwipeDragY = nil
+        end
         -- End collection scroll drag (keep velocity for momentum)
         if self._collectionScrollDragY ~= nil then
             self._collectionScrollDragY = nil
@@ -3569,11 +3907,12 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 self._detailDragX = nil
                 self.collectionScrollY = 0
             end
-            -- Leaving Decks panel: reset deck detail sub-view
+            -- Leaving Decks panel: reset deck detail sub-view + close synergy tooltip
             if self.currentPanel ~= 2 then
                 self.deckView = "grid"
                 self.deckDetailUnit = nil
                 self.deckScrollY = 0
+                self._deckSynergyTooltipVisible = false
             end
             return
         end
@@ -3613,11 +3952,12 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                         self._detailDragX = nil
                         self.collectionScrollY = 0
                     end
-                    -- Leaving Decks: reset deck detail sub-view
+                    -- Leaving Decks: reset deck detail sub-view + close synergy tooltip
                     if i ~= 2 then
                         self.deckView = "grid"
                         self.deckDetailUnit = nil
                         self.deckScrollY = 0
+                        self._deckSynergyTooltipVisible = false
                     end
                 end
                 return
@@ -3676,6 +4016,16 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         -- Tap: deck builder
         if self.currentPanel == 2 then
+            -- Faction icon strip → toggle synergy reference tooltip
+            local fir = self._deckFactionIconsRect
+            if fir and x >= fir.x and x <= fir.x + fir.w and
+                       y >= fir.y and y <= fir.y + fir.h then
+                AudioManager.playTap()
+                self._deckSynergyTooltipVisible = not self._deckSynergyTooltipVisible
+                return
+            end
+            -- Tapping anywhere else closes the tooltip
+            self._deckSynergyTooltipVisible = false
             -- Deck slot tabs
             for i, rect in ipairs(self._deckSlotRects) do
                 if x >= rect.x and x <= rect.x + rect.w and

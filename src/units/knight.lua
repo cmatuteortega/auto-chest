@@ -59,9 +59,10 @@ end
 -- Passive: Taunt all enemies in a 3x3 area in front at battle start
 function Knight:onBattleStart(grid)
     -- Store taunt params; fires when windup animation completes
+    local baseDuration = self:hasUpgrade(1) and 5 or 3
     self.pendingTaunt = {
         grid = grid,
-        tauntDuration = self:hasUpgrade(1) and 5 or 3,
+        tauntDuration = baseDuration * (self.synergyCCDurationMult or 1.0),
     }
     self.actionAnimPlaying  = true
     self.actionAnimProgress = 0
