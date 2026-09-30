@@ -1,0 +1,178 @@
+# Android APK (client only)
+#
+# Packages the game client into game.love and embeds it in a LÖVE for Android
+# build. Server-side code never reaches the APK, and commits that only touch
+# the server (or docs/tests/deploy scripts) don't trigger a build — the server
+# is deployed to the VPS independently.
+#
+# Outputs:
+#   - every run: the signed APK as a workflow artifact
+#   - tags v*:   a GitHub Release with the APK attached (what players download)
+#
+# Signing (repo Settings → Secrets and variables → Actions → Secrets):
+#   ANDROID_KEYSTORE_BASE64   base64 of the .jks / .keystore file
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+# Android only installs an update over an existing app when the signing key
+# (and application id) match. Without these secrets the APK is signed with a
+# throwaway key and players must uninstall before installing each build.
+#
+# Optional repo variables (Settings → Secrets and variables → Actions → Variables):
+#   ANDROID_APP_ID            application id (default com.cmatuteortega.autochest)
+
+name: Android APK
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths-ignore:
+      - 'server/**'
+      - 'deploy/**'
+      - 'tests/**'
+      - '**.md'
+      - '**.txt'
+      - '**.log'
+      - '**.sh'
+      - '.claude/**'
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # LÖVE for Android revision (12.0, matches t.version in conf.lua). Pinned so
+  # builds are reproducible and the native build cache stays valid; bump on purpose.
+  LOVE_ANDROID_REF: 4c65fff4f8b38693aca5d91bc06f254f86a97adf
+  APP_NAME: AutoChest
+  APP_ID: ${{ vars.ANDROID_APP_ID || 'com.cmatuteortega.autochest' }}
+  APP_ORIENTATION: portrait
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write   # GitHub Release on v* tags
+    steps:
+      - name: Checkout game
+        uses: actions/checkout@v4
+        with:
+          path: game
+          fetch-depth: 0   # tags for git describe
+
+      - name: Checkout LÖVE for Android
+        uses: actions/checkout@v4
+        with:
+          repository: love2d/love-android
+          ref: ${{ env.LOVE_ANDROID_REF }}
+          path: love-android
+          submodules: recursive
+
+      - name: Version
+        working-directory: game
+        run: |
+          # versionCode grows with every run so each APK installs over the last.
+          echo "VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$(git describe --tags --always | sed 's/^v//')" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Android NDK and CMake
+        working-directory: love-android
+        run: |
+          ndk=$(sed -n "s/.*ndkVersion '\([^']*\)'.*/\1/p" app/build.gradle)
+          echo "NDK $ndk"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" "cmake;3.22.1" > /dev/null
+
+      # Native LÖVE build is the slow part; ccache makes rebuilds near-instant
+      # when only the game (game.love) changed.
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: love-android-${{ env.LOVE_ANDROID_REF }}
+          max-size: 2G
+
+      - name: Configure LÖVE for Android
+        working-directory: love-android
+        run: |
+          # App identity
+          sed -i '/^app\.name_byte_array=/d; /^#\?app\.name=/d; /^app\.application_id=/d; /^app\.orientation=/d; /^app\.version_code=/d; /^app\.version_name=/d' gradle.properties
+          {
+            echo "app.name=$APP_NAME"
+            echo "app.application_id=$APP_ID"
+            echo "app.orientation=$APP_ORIENTATION"
+            echo "app.version_code=$VERSION_CODE"
+            echo "app.version_name=$VERSION_NAME"
+          } >> gradle.properties
+          # Phones only (drop x86_64 emulator ABI) and compile through ccache
+          sed -i "s/abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'/abiFilters 'armeabi-v7a', 'arm64-v8a'/" app/build.gradle
+          sed -i 's/arguments "-DANDROID_STL=c++_shared",/arguments "-DANDROID_STL=c++_shared", "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache",/' app/build.gradle
+          grep -q 'CMAKE_CXX_COMPILER_LAUNCHER=ccache' app/build.gradle || { echo "::error::ccache patch did not apply to app/build.gradle"; exit 1; }
+          grep -n '^app\.' gradle.properties
+
+      # Same contents as build-android.sh: client only, no server/deploy/tests.
+      - name: Package game.love
+        working-directory: game
+        run: |
+          mkdir -p ../love-android/app/src/embed/assets
+          zip -9 -r ../love-android/app/src/embed/assets/game.love . \
+            --exclude "server/*" "deploy/*" "tests/*" ".git/*" ".github/*" ".claude/*" \
+                      "*.sh" "*.love" "*.md" "*.txt" "*.log"
+          test -f ../love-android/app/src/embed/assets/game.love
+          unzip -l ../love-android/app/src/embed/assets/game.love | grep -E ' (main|conf)\.lua$'
+          ls -lh ../love-android/app/src/embed/assets/game.love
+
+      - name: Build APK
+        working-directory: love-android
+        run: ./gradlew assembleEmbedNoRecordRelease --stacktrace
+
+      - name: Sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          unsigned=$(ls love-android/app/build/outputs/apk/embedNoRecord/release/*.apk | head -1)
+          echo "Unsigned APK: $unsigned"
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          ks="$RUNNER_TEMP/release.keystore"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$ks"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a throwaway key. Players will have to uninstall before installing this APK."
+            KEYSTORE_PASSWORD=android KEY_ALIAS=autochest KEY_PASSWORD=android
+            keytool -genkeypair -keystore "$ks" -storepass android -keypass android \
+              -alias autochest -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AutoChest"
+          fi
+          out="$RUNNER_TEMP/AutoChest-$VERSION_NAME.apk"
+          "$bt/zipalign" -p -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          "$bt/apksigner" sign --ks "$ks" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
+            --out "$out" "$RUNNER_TEMP/aligned.apk"
+          "$bt/apksigner" verify --print-certs "$out"
+          rm -f "$ks"
+          echo "APK=$out" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoChest-${{ env.VERSION_NAME }}
+          path: ${{ env.APK }}
+          if-no-files-found: error
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.APK }}
+          generate_release_notes: true
