@@ -19,7 +19,10 @@
 # throwaway key and players must uninstall before installing each build.
 #
 # Optional repo variables (Settings → Secrets and variables → Actions → Variables):
-#   ANDROID_APP_ID            application id (default com.cmatuteortega.autochest)
+#   ANDROID_APP_ID            application id (default com.cmatute.tinyturf)
+#
+# Launcher icon: android/res/ (Boney bust on blue), copied over love-android's
+# res/. Regenerate with: python3 android/make_icons.py
 
 name: Android APK
 
@@ -46,8 +49,9 @@ env:
   # LÖVE for Android revision (12.0, matches t.version in conf.lua). Pinned so
   # builds are reproducible and the native build cache stays valid; bump on purpose.
   LOVE_ANDROID_REF: 4c65fff4f8b38693aca5d91bc06f254f86a97adf
-  APP_NAME: AutoChest
-  APP_ID: ${{ vars.ANDROID_APP_ID || 'com.cmatuteortega.autochest' }}
+  APP_NAME: Tiny Turf
+  APP_ID: ${{ vars.ANDROID_APP_ID || 'com.cmatute.tinyturf' }}
+  APK_BASENAME: TinyTurf
   APP_ORIENTATION: portrait
 
 jobs:
@@ -119,6 +123,8 @@ jobs:
           sed -i 's/arguments "-DANDROID_STL=c++_shared",/arguments "-DANDROID_STL=c++_shared", "-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache",/' app/build.gradle
           grep -q 'CMAKE_CXX_COMPILER_LAUNCHER=ccache' app/build.gradle || { echo "::error::ccache patch did not apply to app/build.gradle"; exit 1; }
           grep -n '^app\.' gradle.properties
+          # Tiny Turf launcher icon (replaces the LÖVE heart)
+          cp -rv ../game/android/res/. app/src/main/res/
 
       # Same contents as build-android.sh: client only, no server/deploy/tests.
       - name: Package game.love
@@ -126,7 +132,7 @@ jobs:
         run: |
           mkdir -p ../love-android/app/src/embed/assets
           zip -9 -r ../love-android/app/src/embed/assets/game.love . \
-            --exclude "server/*" "deploy/*" "tests/*" ".git/*" ".github/*" ".claude/*" \
+            --exclude "server/*" "deploy/*" "tests/*" "android/*" ".git/*" ".github/*" ".claude/*" \
                       "*.sh" "*.love" "*.md" "*.txt" "*.log"
           test -f ../love-android/app/src/embed/assets/game.love
           unzip -l ../love-android/app/src/embed/assets/game.love | grep -E ' (main|conf)\.lua$'
@@ -153,9 +159,9 @@ jobs:
             echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a throwaway key. Players will have to uninstall before installing this APK."
             KEYSTORE_PASSWORD=android KEY_ALIAS=autochest KEY_PASSWORD=android
             keytool -genkeypair -keystore "$ks" -storepass android -keypass android \
-              -alias autochest -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AutoChest"
+              -alias autochest -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Tiny Turf"
           fi
-          out="$RUNNER_TEMP/AutoChest-$VERSION_NAME.apk"
+          out="$RUNNER_TEMP/$APK_BASENAME-$VERSION_NAME.apk"
           "$bt/zipalign" -p -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
           "$bt/apksigner" sign --ks "$ks" --ks-pass env:KEYSTORE_PASSWORD \
             --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
@@ -168,7 +174,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AutoChest-${{ env.VERSION_NAME }}
+          name: ${{ env.APK_BASENAME }}-${{ env.VERSION_NAME }}
           path: ${{ env.APK }}
           if-no-files-found: error
 
