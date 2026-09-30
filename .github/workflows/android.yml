@@ -63,14 +63,6 @@ jobs:
           path: game
           fetch-depth: 0   # tags for git describe
 
-      - name: Checkout LÖVE for Android
-        uses: actions/checkout@v4
-        with:
-          repository: love2d/love-android
-          ref: ${{ env.LOVE_ANDROID_REF }}
-          path: love-android
-          submodules: recursive
-
       - name: Version
         working-directory: game
         run: |
@@ -84,6 +76,16 @@ jobs:
           java-version: 21
 
       - uses: gradle/actions/setup-gradle@v4
+
+      # After setup-gradle on purpose: its wrapper validation would otherwise
+      # trip on the unused sample wrapper JARs inside SDL's android-project.
+      - name: Checkout LÖVE for Android
+        uses: actions/checkout@v4
+        with:
+          repository: love2d/love-android
+          ref: ${{ env.LOVE_ANDROID_REF }}
+          path: love-android
+          submodules: recursive
 
       - name: Android NDK and CMake
         working-directory: love-android
