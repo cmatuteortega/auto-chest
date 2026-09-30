@@ -21,7 +21,7 @@
 # Optional repo variables (Settings → Secrets and variables → Actions → Variables):
 #   ANDROID_APP_ID            application id (default com.cmatute.tinyturf)
 #
-# Launcher icon: android/res/ (Boney bust on blue), copied over love-android's
+# Launcher icon: android/res/ (Mage bust on palette blue #20394F), copied over love-android's
 # res/. Regenerate with: python3 android/make_icons.py
 
 name: Android APK
