@@ -1,5 +1,5 @@
 -- Headless test for the server side of in-app purchases: the purchase ledger,
--- refunds into negative gold, and the verifier worker's Voided Purchases call
+-- refunds into negative gold, the daily chest cooldown, and the verifier worker's Voided Purchases call
 -- (Google is faked by stubbing io.popen).
 -- Needs lsqlite3complete (luarocks install lsqlite3complete).
 -- Run from project root: luajit tests/test_iap_server.lua
@@ -36,6 +36,12 @@ check("spending doesn't deepen debt", db:updateGold(id, -100) == -800)
 check("earnings pay it off", db:updateGold(id, 10) == -790)
 check("can climb back above 0", db:updateGold(id, 1000) == 210)
 check("spending stops at 0 again", db:updateGold(id, -500) == 0)
+
+-- Daily chest cooldown (server-enforced)
+check("first chest claim", db:claimDailyChest(id, 3600))
+check("second claim too early", not db:claimDailyChest(id, 3600))
+db.db:exec("UPDATE players SET last_chest_claim = last_chest_claim - 3600 WHERE id = " .. id)
+check("claim after cooldown", db:claimDailyChest(id, 3600))
 
 os.remove(dbPath)
 

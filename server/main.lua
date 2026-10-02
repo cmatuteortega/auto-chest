@@ -36,6 +36,15 @@ local IAP_PRODUCTS = {
     gold_1000 = { gold = 1000 },
 }
 
+-- Gold price of a Card Trade card (award_card). Set here, never taken from the client.
+local TRADE_CARD_COST = 100
+
+-- Daily chest rewards and cooldown (the client's chest timer is cosmetic).
+-- 23h instead of 24h absorbs clock differences between phone and server.
+local CHEST_GOLD     = 10
+local CHEST_XP       = 5
+local CHEST_COOLDOWN = 23 * 3600
+
 -- Forward declaration (defined fully after handleConnect/processMatchmaking)
 local handleDisconnect
 local log     = {}
@@ -621,18 +630,16 @@ local function handleMessage(peer, eventName, msgData)
             peer:send(encode("error", {reason = "Missing unit type"}))
             return
         end
-        local cost = tonumber(msgData.cost) or 0
-        local newGold
-        if cost > 0 then
-            -- Server-side balance check (a refund can leave gold negative)
-            local balance = db:updateGold(session.player_id, 0)
-            if balance < cost then
-                peer:send(encode("shop_error", {reason = "Not enough gold!"}))
-                peer:send(encode("currency_update", {gold = balance}))
-                return
-            end
-            newGold = db:updateGold(session.player_id, -cost)
+        -- msgData.cost is ignored: a modified client could send 0
+        local cost = TRADE_CARD_COST
+        -- Server-side balance check (a refund can leave gold negative)
+        local balance = db:updateGold(session.player_id, 0)
+        if balance < cost then
+            peer:send(encode("shop_error", {reason = "Not enough gold!"}))
+            peer:send(encode("currency_update", {gold = balance}))
+            return
         end
+        local newGold = db:updateGold(session.player_id, -cost)
         local unlocks = db:awardCard(session.player_id, unitType)
         if unlocks then
             peer:send(encode("card_awarded", { unlocks = unlocks, gold = newGold }))
@@ -647,9 +654,21 @@ local function handleMessage(peer, eventName, msgData)
             peer:send(encode("error", {reason = "Not authenticated"}))
             return
         end
-        local goldAmt  = tonumber(msgData.goldAmount) or 10
-        local xpAmt    = tonumber(msgData.xpAmount)   or 5
-        local cardUnit = msgData.cardUnit  -- may be nil
+        -- goldAmount/xpAmount from the client are ignored; rewards are set here
+        if not db:claimDailyChest(session.player_id, CHEST_COOLDOWN) then
+            -- Too early: undo the client's optimistic reward
+            local player = db:getPlayer(session.player_id)
+            if player then
+                peer:send(encode("currency_update", {
+                    gold = player.gold, xp = player.xp, level = player.level, unlocks = player.unlocks,
+                }))
+            end
+            pushLog("Daily chest claim rejected (cooldown): " .. session.username)
+            return
+        end
+        local goldAmt  = CHEST_GOLD
+        local xpAmt    = CHEST_XP
+        local cardUnit = msgData.cardUnit  -- may be nil (client rolls the 20% card)
 
         local newGold  = db:updateGold(session.player_id, goldAmt)
         local xpResult = db:updateXP(session.player_id, xpAmt)
@@ -878,19 +897,10 @@ local function handleMessage(peer, eventName, msgData)
             return
         end
 
-        local gem_amounts = {gems_10 = 10, gems_50 = 50, gems_100 = 100}
-        local package = msgData.package
-        local gemGain = gem_amounts[package]
-
-        if not gemGain then
-            peer:send(encode("error", {reason = "Unknown package"}))
-            return
-        end
-
-        local newGems = db:addGems(session.player_id, gemGain)
-        local currentGold = db:updateGold(session.player_id, 0)
-        pushLog("Gem purchase (mock): " .. session.username .. " +" .. gemGain .. " gems -> newGems=" .. tostring(newGems) .. " gold=" .. tostring(currentGold))
-        peer:send(encode("currency_update", {gold = currentGold, gems = newGems}))
+        -- Was a mock that granted gems for free (and gems convert to gold via
+        -- shop_purchase). Real-money purchases go through iap_purchase now.
+        pushLog("Gem purchase refused (mock disabled): " .. session.username)
+        peer:send(encode("shop_error", {reason = "Gem purchases are not available"}))
 
     elseif eventName == "claim_reward" then
         local session = sessions[ck]

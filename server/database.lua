@@ -169,6 +169,7 @@ function Database:createTables()
         CREATE INDEX IF NOT EXISTS idx_iap_player ON iap_purchases(player_id);
     ]])
     pcall(function() self.db:exec("ALTER TABLE iap_purchases ADD COLUMN refunded_at INTEGER") end)
+    pcall(function() self.db:exec("ALTER TABLE players ADD COLUMN last_chest_claim INTEGER") end)
 end
 
 -- Register a new player
@@ -714,6 +715,21 @@ function Database:updateGold(playerId, delta)
     if stmt:step() == sqlite3.ROW then newGold = stmt:get_value(0) end
     stmt:finalize()
     return newGold
+end
+
+-- Daily chest cooldown, enforced here rather than trusting the client's timer.
+-- Atomically stamps the claim time and returns true if at least `cooldown`
+-- seconds have passed since the last claim (or there never was one).
+function Database:claimDailyChest(playerId, cooldown)
+    local now = os.time()
+    local stmt = self.db:prepare([[
+        UPDATE players SET last_chest_claim = ?
+        WHERE id = ? AND (last_chest_claim IS NULL OR last_chest_claim <= ?)
+    ]])
+    stmt:bind_values(now, playerId, now - cooldown)
+    stmt:step()
+    stmt:finalize()
+    return self.db:changes() == 1
 end
 
 -- In-app purchase already granted for this store token:

@@ -199,7 +199,9 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 | `queue_join` / `queue_leave` | Matchmaking queue |
 | `sync_decks` | Save all 5 deck slots to server |
 | `update_active_deck` | Set active deck for battle |
-| `daily_chest_claim` | Claim daily chest (gold, XP, optional card) → `currency_update` |
+| `daily_chest_claim` | Claim daily chest → `currency_update`. Server sets the rewards (`CHEST_GOLD`/`CHEST_XP`) and enforces a 23h cooldown (`players.last_chest_claim`); an early claim gets a resync `currency_update` instead. Client still picks the optional card |
+| `award_card` | Card Trade buy: server charges `TRADE_CARD_COST` (100g; client `cost` ignored) after a balance check |
+| `gem_purchase` | Disabled (was a free-gems mock) → `shop_error` |
 | `iap_purchase` | Store purchase token → verified + recorded → `currency_update` + `iap_granted`, or `iap_rejected` (`retry` flag) |
 
 **Trophy System**: Winner: +20, Loser: -15 (min 0). Server updates DB after each match.
@@ -223,6 +225,7 @@ Shop panel **Gold** button sells `gold_1000` (1000 gold, €1 set in Play Consol
 - Gold is server-side, so `IapManager` returns `false` from `onPurchase` (purchase left unfinished), sends `iap_purchase` once logged in, and calls `iap.finish()` on `iap_granted`. Unfinished purchases are re-delivered every launch; the server's `iap_purchases` table (token PRIMARY KEY) prevents double grants.
 - Server verifies Google tokens with `purchases.products.get` on a `love.thread` worker (`server/iap_verify.lua`). Env: `IAP_GOOGLE_SERVICE_ACCOUNT`, `IAP_ANDROID_PACKAGE`, `IAP_ALLOW_UNVERIFIED=1` (testing only; also needed for desktop mock purchases).
 - **Refunds** (Google): `IapVerify.poll` asks the Voided Purchases API hourly; `IapVerify.onVoided` (server/main.lua) calls `db:refundIapPurchase`, which subtracts the gold **into negative** and sets `refunded_at`. `Database:updateGold` never clamps a negative balance to 0: spending stops at 0 / can't deepen debt, earnings pay it off. `award_card` checks the balance server-side.
+- **Server-authoritative economy**: the server never takes gold amounts or prices from the client (`TRADE_CARD_COST`, `CHEST_GOLD`/`CHEST_XP`/`CHEST_COOLDOWN` at the top of `server/main.lua`). The client's God Mode "Skip Timer" on the chest is now cosmetic: the server rejects the early claim.
 - Products the server grants: `IAP_PRODUCTS` in `server/main.lua`. Add new products there, in `IapManager.init`, and in Play Console.
 - Never display a hard-coded price: use `IapManager.goldPackPrice()` (store-formatted).
 - Setup steps: `deploy/IAP_SETUP.md`. Tests: `luajit tests/test_iap_manager.lua`, `luajit tests/test_iap_server.lua` (needs lsqlite3complete).
