@@ -21,6 +21,10 @@
 # Optional repo variables (Settings → Secrets and variables → Actions → Variables):
 #   ANDROID_APP_ID            application id (default com.cmatute.tinyturf)
 #
+# In-app purchases: the love-iap step adds Play Billing. Purchases only work
+# once the app (same ANDROID_APP_ID + same signing key) exists in Play Console
+# with the gold_1000 product active; see deploy/IAP_SETUP.md.
+#
 # Launcher icon: android/res/ (Mage bust on palette blue #20394F), copied over love-android's
 # res/. Regenerate with: python3 android/make_icons.py
 
@@ -125,6 +129,14 @@ jobs:
           grep -n '^app\.' gradle.properties
           # Tiny Turf launcher icon (replaces the LÖVE heart)
           cp -rv ../game/android/res/. app/src/main/res/
+
+      # In-app purchases: adds the Google Play Billing bridge (libliap.so +
+      # LoveIap.java + billing dependency). The game side is lib/iap.lua.
+      # Same love-android ref as love-iap's own CI.
+      - name: Add love-iap (Play Billing)
+        uses: cmatuteortega/love-iap@dccc8a5bfc1eecff756996d0d4526041c28ded1b
+        with:
+          love-android-path: love-android
 
       # Same contents as build-android.sh: client only, no server/deploy/tests.
       - name: Package game.love

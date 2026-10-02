@@ -8,6 +8,11 @@ User=root
 WorkingDirectory=/opt/autochest
 # Run with virtual display (headless Love2D)
 ExecStart=/usr/bin/xvfb-run -a love server/
+# In-app purchases (see deploy/IAP_SETUP.md). Keep the key outside /opt/autochest.
+#Environment=IAP_GOOGLE_SERVICE_ACCOUNT=/etc/autochest/play-service-account.json
+#Environment=IAP_ANDROID_PACKAGE=com.cmatute.tinyturf
+# Testing only -- grants purchases without asking the store:
+#Environment=IAP_ALLOW_UNVERIFIED=1
 Restart=always
 RestartSec=10
 

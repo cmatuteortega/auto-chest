@@ -9,6 +9,7 @@ local DeckManager    = require('src.deck_manager')
 local SocketManager  = require('src.socket_manager')
 local SpellRegistry  = require('src.spell_registry')
 local SynergyManager = require('src.synergy_manager')
+local IapManager     = require('src.iap_manager')
 local json           = require('lib.json')
 
 local MenuScreen = {}
@@ -179,6 +180,12 @@ function MenuScreen.new()
         self._shopGoldBtns = {}  -- hit rects for gold purchase buttons
         self.shopNotice    = nil
         self.shopNoticeTimer = 0
+        self._iapBtnRect   = nil  -- gold pack (real-money) button hit rect
+        self._iapSpring    = { scale = 1.0, vel = 0.0, pressed = false }
+        IapManager.onNotice = function(text)
+            self.shopNotice      = text
+            self.shopNoticeTimer = 3.0
+        end
 
         -- Daily chest state
         -- "waiting" = timer counting down, "ready" = claimable, "breaking" = Broken anim,
@@ -461,6 +468,7 @@ function MenuScreen.new()
     function self:close()
         love.keyboard.setKeyRepeat(false)
         self:removeSocketHandlers()
+        IapManager.onNotice = nil
     end
 
     function self:buildPreviewLayout()
@@ -813,6 +821,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         updateSpring(self._backSpring, dt)
         updateSpring(self._settingsSpring, dt)
         for i = 1, 3 do updateSpring(self._tradeBtnSprings[i], dt) end
+        updateSpring(self._iapSpring, dt)
 
         -- Coin-pill and XP bar springs
         local function updateGenericSpring(sp, dt2)
@@ -2596,6 +2605,59 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                 end
             end
         end
+
+        -- ── Gold pack (in-app purchase) ──────────────────────────────────────
+        local goldHdrY = tradeHdrY + hdrH + math.floor(28 * sc) + cardH
+                       + math.floor((18 + 42 + 4 + 30) * sc)
+        self:drawGroupHeader(startX, goldHdrY, totalW, hdrH, "Gold", sc)
+
+        local btnW  = math.floor(totalW * 0.6)
+        local btnH  = math.floor(48 * sc)
+        local btnShd = math.floor(4 * sc)
+        local bx    = math.floor(startX + (totalW - btnW) / 2)
+        local by    = goldHdrY + hdrH + math.floor(20 * sc)
+        local sp    = self._iapSpring
+        local maxF  = math.floor(4 * sc)
+        local flt   = math.floor(maxF * math.max(0, (sp.scale - 0.93) / 0.07))
+        local drawY = by - flt + math.floor(math.sin(love.timer.getTime() * 1.8) * 0.5 * sc)
+        local busy  = IapManager.hasPending()
+
+        lg.setColor(0.031, 0.078, 0.118, 1)
+        roundedRect(bx + math.floor(2 * sc), by + btnShd, btnW, btnH, 8, sc)
+        local pivX, pivY = bx + btnW / 2, drawY + btnH / 2
+        lg.push()
+        lg.translate(pivX, pivY)
+        lg.scale(sp.scale, sp.scale)
+        lg.translate(-pivX, -pivY)
+        lg.setColor(0.765, 0.639, 0.541, 1)
+        roundedRect(bx, drawY, btnW, btnH, 8, sc)
+        lg.setColor(0.965, 0.839, 0.741, 1)
+        roundedRectLine(bx, drawY, btnW, btnH, 8, sc, 2 * sc)
+
+        lg.setFont(Fonts.small)
+        lg.setColor(1, 1, 1, 1)
+        local midY = textCY(Fonts.small, drawY, btnH)
+        local pad  = math.floor(14 * sc)
+        -- Left: gold icon + amount
+        local amount = tostring(IapManager.GOLD_PACK_AMOUNT)
+        local iconH  = math.floor(btnH * 0.5)
+        local iconSc = iconH / self.goldIcon:getHeight()
+        local visH   = Fonts.small:getAscent() - Fonts.small:getDescent()
+        lg.draw(self.goldIcon, bx + pad, math.floor(midY + (visH - iconH) / 2), 0, iconSc, iconSc)
+        lg.print(amount, bx + pad + self.goldIcon:getWidth() * iconSc + math.floor(6 * sc), midY)
+        -- Right: store price, already in the player's currency (never hard-coded)
+        local priceStr = busy and "..." or (IapManager.goldPackPrice() or "--")
+        lg.printf(priceStr, bx, midY, btnW - pad, 'right')
+        lg.pop()
+
+        self._iapBtnRect = { x = bx + po, y = by - maxF, w = btnW, h = btnH + btnShd + maxF }
+
+        -- Shop notice (purchase results, "Not enough gold!", ...)
+        if self.shopNotice then
+            lg.setFont(Fonts.tiny)
+            lg.setColor(1, 0.85, 0.3, math.min(1, self.shopNoticeTimer * 2))
+            lg.printf(self.shopNotice, startX, by + btnH + btnShd + math.floor(14 * sc), totalW, 'center')
+        end
     end
 
     function self:drawBottomBar(W, H, sc)
@@ -3480,12 +3542,16 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
             end
         end
 
-        -- Spring press: trade buy buttons (shop panel)
+        -- Spring press: trade buy buttons + gold pack (shop panel)
         if self.currentPanel == 4 then
             for _, r in ipairs(self._tradeCardRects) do
                 if x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
                     self._tradeBtnSprings[r.slotIndex].pressed = true
                 end
+            end
+            local r = self._iapBtnRect
+            if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                self._iapSpring.pressed = true
             end
         end
 
@@ -3610,6 +3676,7 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
         self._backSpring.pressed     = false
         self._settingsSpring.pressed = false
         for i = 1, 3 do self._tradeBtnSprings[i].pressed = false end
+        self._iapSpring.pressed = false
         self._detailDragX = nil
         -- Collection detail vertical swipe: commit or snap back
         if self._detailSwipeDragY ~= nil then
@@ -3880,6 +3947,13 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
                     end
                     return
                 end
+            end
+            -- Gold pack: opens the store's purchase sheet
+            local r = self._iapBtnRect
+            if r and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h then
+                AudioManager.playTap()
+                if not IapManager.hasPending() then IapManager.buyGoldPack() end
+                return
             end
         end
 

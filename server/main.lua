@@ -9,6 +9,7 @@ local enet = require("enet")
 package.path = package.path .. ';../?.lua'
 
 local Database = require("server.database")
+local IapVerify = require("server.iap_verify")
 
 local PORT    = 12345
 local MAX_CONNECTIONS = 16
@@ -28,6 +29,12 @@ local peerByPlayerId = {}   -- player_id → peer (for evicting old connections 
 local function connKey(peer)
     return connKeys[tostring(peer)]
 end
+
+-- In-app products the server grants. Ids match the Play Console / App Store
+-- products and the client's src/iap_manager.lua.
+local IAP_PRODUCTS = {
+    gold_1000 = { gold = 1000 },
+}
 
 -- Forward declaration (defined fully after handleConnect/processMatchmaking)
 local handleDisconnect
@@ -795,6 +802,68 @@ local function handleMessage(peer, eventName, msgData)
         peer:send(encode("currency_update", {gold = newGold, gems = newGems}))
         pushLog("Shop purchase: " .. session.username .. " bought " .. item)
 
+    elseif eventName == "iap_purchase" then
+        -- A store purchase the client wants granted. The client keeps it
+        -- unfinished until it gets iap_granted, so every path here must answer.
+        local session = sessions[ck]
+        if not session then
+            peer:send(encode("error", {reason = "Not authenticated"}))
+            return
+        end
+        local product, token = msgData.product, msgData.token
+        local store = msgData.store
+        local order = type(msgData.order) == "string" and msgData.order:sub(1, 128) or nil
+        local def = IAP_PRODUCTS[product]
+        -- token and product end up in a curl URL on the verifier thread
+        if not def or type(token) ~= "string" or #token > 1024 or not token:match("^[%w%._%-]+$")
+           or (store ~= "google" and store ~= "apple" and store ~= "mock") then
+            peer:send(encode("iap_rejected", {token = token, reason = "invalid_purchase", retry = false}))
+            return
+        end
+
+        local existing = db:getIapPurchase(token)
+        if existing then
+            if existing.player_id == session.player_id then
+                -- Re-delivered after a crash or a lost reply: finish it, no second grant
+                peer:send(encode("iap_granted", {token = token, product = product,
+                    gold = db:updateGold(session.player_id, 0), fresh = false}))
+            else
+                pushLog("[IAP] Token reuse rejected: " .. session.username .. " (owner id " .. existing.player_id .. ")")
+                peer:send(encode("iap_rejected", {token = token, reason = "already_used", retry = false}))
+            end
+            return
+        end
+
+        local playerId, username = session.player_id, session.username
+        IapVerify.request({ store = store, product = product, token = token, order = order },
+            function(_, ok, reason, retry, orderId)
+                -- The player may have reconnected while Google answered.
+                local p = peerByPlayerId[playerId]
+                if not ok then
+                    pushLog("[IAP] " .. product .. " for " .. username .. " not granted: " ..
+                            tostring(reason) .. (retry and " (will retry)" or ""))
+                    if p then p:send(encode("iap_rejected", {token = token, reason = reason, retry = retry})) end
+                    return
+                end
+                local newGold = db:grantIapPurchase(token, playerId, product, store, orderId, def.gold)
+                if newGold then
+                    pushLog("[IAP] " .. username .. " bought " .. product .. " (+" .. def.gold ..
+                            "g, " .. store .. " " .. tostring(orderId) .. ")")
+                    if p then p:send(encode("currency_update", {gold = newGold})) end
+                else
+                    -- Recorded meanwhile by a duplicate request: only finish it if it's ours
+                    local owner = db:getIapPurchase(token)
+                    if not owner or owner.player_id ~= playerId then
+                        if p then p:send(encode("iap_rejected", {token = token, reason = "already_used", retry = false})) end
+                        return
+                    end
+                end
+                if p then
+                    p:send(encode("iap_granted", {token = token, product = product,
+                        gold = newGold or db:updateGold(playerId, 0), fresh = newGold ~= nil}))
+                end
+            end)
+
     elseif eventName == "gem_purchase" then
         local session = sessions[ck]
         if not session then
@@ -982,6 +1051,8 @@ function love.load()
     db = Database.new("server/players.db")
     pushLog("Database initialized")
 
+    IapVerify.init(pushLog)
+
     -- Start ENet host
     host = enet.host_create("*:"..PORT, MAX_CONNECTIONS)
     if not host then
@@ -1005,6 +1076,9 @@ function love.update(dt)
         end
         event = host:service(0)
     end
+
+    -- Deliver finished in-app purchase checks
+    IapVerify.poll()
 
     -- Process matchmaking (single players fall back to a bot match after a delay)
     if #queue >= 1 then

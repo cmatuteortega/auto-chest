@@ -153,6 +153,21 @@ function Database:createTables()
         CREATE INDEX IF NOT EXISTS idx_session_player ON sessions(player_id);
     ]]
     self.db:exec(sessionSchema)
+
+    -- One row per store purchase token ever granted. The PRIMARY KEY is what
+    -- stops a replayed or re-delivered token from granting twice.
+    self.db:exec([[
+        CREATE TABLE IF NOT EXISTS iap_purchases (
+            token      TEXT PRIMARY KEY,
+            player_id  INTEGER NOT NULL,
+            product_id TEXT NOT NULL,
+            store      TEXT NOT NULL,
+            order_id   TEXT,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY (player_id) REFERENCES players(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_iap_player ON iap_purchases(player_id);
+    ]])
 end
 
 -- Register a new player
@@ -696,6 +711,41 @@ function Database:updateGold(playerId, delta)
     if stmt:step() == sqlite3.ROW then newGold = stmt:get_value(0) end
     stmt:finalize()
     return newGold
+end
+
+-- In-app purchase already granted for this store token: { player_id, product_id } or nil
+function Database:getIapPurchase(token)
+    local stmt = self.db:prepare("SELECT player_id, product_id FROM iap_purchases WHERE token = ?")
+    stmt:bind_values(token)
+    local row
+    if stmt:step() == sqlite3.ROW then
+        row = { player_id = stmt:get_value(0), product_id = stmt:get_value(1) }
+    end
+    stmt:finalize()
+    return row
+end
+
+-- Record a verified purchase and add its gold in one transaction.
+-- Returns the new gold total, or nil if this token was already recorded.
+function Database:grantIapPurchase(token, playerId, productId, store, orderId, gold)
+    self.db:exec("BEGIN IMMEDIATE")
+    local stmt = self.db:prepare([[
+        INSERT OR IGNORE INTO iap_purchases (token, player_id, product_id, store, order_id)
+        VALUES (?, ?, ?, ?, ?)
+    ]])
+    stmt:bind_values(token, playerId, productId, store, orderId)
+    stmt:step()
+    stmt:finalize()
+    if self.db:changes() == 0 then
+        self.db:exec("ROLLBACK")
+        return nil
+    end
+    stmt = self.db:prepare("UPDATE players SET gold = gold + ? WHERE id = ?")
+    stmt:bind_values(gold, playerId)
+    stmt:step()
+    stmt:finalize()
+    self.db:exec("COMMIT")
+    return self:updateGold(playerId, 0)
 end
 
 -- Add gems to a player (delta can be negative)

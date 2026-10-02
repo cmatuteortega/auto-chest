@@ -55,12 +55,14 @@ autochest/
 ├── deploy/              # Cloud deployment files
 ├── server/              # Authentication + Matchmaking Server
 │   ├── main.lua         # ENet server: auth, queue-based matchmaking, relay
-│   ├── database.lua     # SQLite wrapper (bcrypt password hashing, session tokens)
+│   ├── database.lua     # SQLite wrapper (bcrypt password hashing, session tokens, iap_purchases ledger)
+│   ├── iap_verify.lua   # Store purchase verification (Google Play, worker thread)
 │   └── players.db       # SQLite database (created on first run)
 ├── lib/
 │   ├── classic.lua      # OOP (Class:extend())
 │   ├── sock.lua         # ENet networking wrapper
 │   ├── json.lua         # JSON encode/decode
+│   ├── iap.lua          # love-iap (vendored from cmatuteortega/love-iap)
 │   ├── screen.lua       # Base screen object
 │   ├── screen_manager.lua
 │   └── suit/            # Immediate-mode UI (buttons)
@@ -198,6 +200,7 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 | `sync_decks` | Save all 5 deck slots to server |
 | `update_active_deck` | Set active deck for battle |
 | `daily_chest_claim` | Claim daily chest (gold, XP, optional card) → `currency_update` |
+| `iap_purchase` | Store purchase token → verified + recorded → `currency_update` + `iap_granted`, or `iap_rejected` (`retry` flag) |
 
 **Trophy System**: Winner: +20, Loser: -15 (min 0). Server updates DB after each match.
 
@@ -210,6 +213,18 @@ setup → pre_battle → battle → battle_ending → intermission → setup (lo
 **Socket Keepalive**: Menu screen calls `_G.GameSocket:update()` every frame to prevent ENet timeout.
 
 **SocketManager** (`src/socket_manager.lua`): Use `SocketManager.isHealthy()` to check connection. `SocketManager.reconnect(onSuccess, onFailure)` handles async reconnection with saved token; pump with `SocketManager.updateReconnect(handle, dt)` each frame.
+
+---
+
+## In-App Purchases
+
+Shop panel **Gold** button sells `gold_1000` (1000 gold, €1 set in Play Console) via love-iap (`lib/iap.lua`, Android bridge added in CI by the `cmatuteortega/love-iap` action).
+
+- Gold is server-side, so `IapManager` returns `false` from `onPurchase` (purchase left unfinished), sends `iap_purchase` once logged in, and calls `iap.finish()` on `iap_granted`. Unfinished purchases are re-delivered every launch; the server's `iap_purchases` table (token PRIMARY KEY) prevents double grants.
+- Server verifies Google tokens with `purchases.products.get` on a `love.thread` worker (`server/iap_verify.lua`). Env: `IAP_GOOGLE_SERVICE_ACCOUNT`, `IAP_ANDROID_PACKAGE`, `IAP_ALLOW_UNVERIFIED=1` (testing only; also needed for desktop mock purchases).
+- Products the server grants: `IAP_PRODUCTS` in `server/main.lua`. Add new products there, in `IapManager.init`, and in Play Console.
+- Never display a hard-coded price: use `IapManager.goldPackPrice()` (store-formatted).
+- Setup steps: `deploy/IAP_SETUP.md`. Test: `luajit tests/test_iap_manager.lua`.
 
 ---
 
