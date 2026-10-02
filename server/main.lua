@@ -624,6 +624,13 @@ local function handleMessage(peer, eventName, msgData)
         local cost = tonumber(msgData.cost) or 0
         local newGold
         if cost > 0 then
+            -- Server-side balance check (a refund can leave gold negative)
+            local balance = db:updateGold(session.player_id, 0)
+            if balance < cost then
+                peer:send(encode("shop_error", {reason = "Not enough gold!"}))
+                peer:send(encode("currency_update", {gold = balance}))
+                return
+            end
             newGold = db:updateGold(session.player_id, -cost)
         end
         local unlocks = db:awardCard(session.player_id, unitType)
@@ -1052,6 +1059,22 @@ function love.load()
     pushLog("Database initialized")
 
     IapVerify.init(pushLog)
+    -- Refunded / charged-back purchases: take the gold back, even into debt
+    IapVerify.onVoided = function(tokens)
+        for _, token in ipairs(tokens) do
+            local row = db:getIapPurchase(token)
+            local def = row and not row.refunded and IAP_PRODUCTS[row.product_id]
+            if def then
+                local playerId, newGold = db:refundIapPurchase(token, def.gold)
+                if playerId then
+                    pushLog("[IAP] Refund: player " .. playerId .. " " .. row.product_id ..
+                            " -" .. def.gold .. "g -> " .. newGold)
+                    local p = peerByPlayerId[playerId]
+                    if p then p:send(encode("currency_update", {gold = newGold})) end
+                end
+            end
+        end
+    end
 
     -- Start ENet host
     host = enet.host_create("*:"..PORT, MAX_CONNECTIONS)
@@ -1078,7 +1101,7 @@ function love.update(dt)
     end
 
     -- Deliver finished in-app purchase checks
-    IapVerify.poll()
+    IapVerify.poll(dt)
 
     -- Process matchmaking (single players fall back to a bot match after a delay)
     if #queue >= 1 then

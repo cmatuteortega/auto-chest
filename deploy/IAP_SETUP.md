@@ -16,6 +16,13 @@ tap Gold ─► Play purchase sheet ─► paid
   client on iap_granted ─► iap.finish() consumes the purchase on Play
 ```
 
+Refunds: every hour the server asks Google's Voided Purchases API for
+purchases refunded, cancelled or charged back in the last 30 days. For each
+one in `iap_purchases` it marks the row `refunded_at` and subtracts the gold,
+**even below 0**. A negative balance can't buy anything; gold earned (match
+rewards, daily chest) pays it off first. The coin counter turns red and the
+shop explains why.
+
 Until the client consumes it, Play re-delivers the purchase at every launch,
 so a crash or lost message never loses a paid purchase, and the token ledger
 means it is never granted twice. Play refunds purchases left unconsumed for
@@ -55,7 +62,9 @@ means it is never granted twice. Play refunds purchases left unconsumed for
    Uncomment `IAP_GOOGLE_SERVICE_ACCOUNT` in
    `/etc/systemd/system/autochest-server.service`, then
    `sudo systemctl daemon-reload && sudo systemctl restart autochest-server`.
-   The log should show `[IAP] Google Play verification on (...)`.
+   The log should show `[IAP] Google Play verification on (...)`, and
+   `[IAP] Refund: ...` lines when refunds are taken back. The same service
+   account permissions cover the Voided Purchases API.
    The server needs `curl` and `openssl` (stock on Ubuntu).
 
 New permissions can take up to a day to reach the API; until then the log
@@ -74,12 +83,12 @@ love .
 Never set `IAP_ALLOW_UNVERIFIED` on the production server: anyone could send
 a made-up token and get gold.
 
-Tests: `luajit tests/test_iap_manager.lua` (client flow, mock store + fake socket).
+Tests: `luajit tests/test_iap_manager.lua` (client flow, mock store + fake socket),
+`luajit tests/test_iap_server.lua` (ledger, refunds, negative gold, voided-purchases
+paging; needs `luarocks install lsqlite3complete`).
 
 ## Not done yet
 
 - **iOS**: purchases arrive as `store = "apple"`, which the server can't
   verify yet, so they wait unfinished on the device (no gold, no charge lost).
   Needs App Store Server API verification in `server/iap_verify.lua`.
-- **Refunds**: a refunded purchase keeps its gold. Google's Voided Purchases
-  API could claw it back later.

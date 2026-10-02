@@ -11,6 +11,12 @@
 --   IAP_ALLOW_UNVERIFIED=1      accept tokens without asking the store. Testing only:
 --                               anyone could mint gold with a made-up token.
 --
+-- Refunds: every VOIDED_INTERVAL the worker asks Google's Voided Purchases
+-- API for purchases refunded, cancelled or charged back in the last 30 days
+-- and hands their tokens to IapVerify.onVoided (server/main.lua takes the gold
+-- back). The 30-day window overlaps every time; the ledger's refunded_at
+-- makes repeats no-ops.
+--
 -- Results are { ok, reason, retry, order }. retry = true means "not now"
 -- (store unreachable, verification not configured yet): the client keeps the
 -- purchase unfinished and sends it again, so a paid purchase is never lost.
@@ -21,10 +27,17 @@ local GOOGLE_PACKAGE   = os.getenv("IAP_ANDROID_PACKAGE") or "com.cmatute.tinytu
 local GOOGLE_KEY_PATH  = os.getenv("IAP_GOOGLE_SERVICE_ACCOUNT")
 local ALLOW_UNVERIFIED = os.getenv("IAP_ALLOW_UNVERIFIED") == "1"
 
+local VOIDED_INTERVAL   = 3600   -- seconds between refund checks
+local VOIDED_FIRST      = 60     -- first check this long after start
+
 local requests, results, thread
 local jobs   = {}   -- id -> caller's job table
 local nextId = 0
 local log    = print
+local voidedTimer, voidedInFlight = VOIDED_FIRST, false
+
+-- Set by the server: called with a list of refunded purchase tokens
+IapVerify.onVoided = nil
 
 -- Runs on the worker thread. Only the standard Lua libraries are used there.
 local WORKER = [[
@@ -110,10 +123,39 @@ local function verifyGoogle(job)
     return false, "store_unreachable", true
 end
 
+-- purchases.voidedpurchases.list (default window: the last 30 days).
+-- Returns the tokens joined by newlines (channels carry flat tables only).
+local function listVoided()
+    local access = getAccessToken()
+    if not access then return nil, "google_auth_failed" end
+    local tokens, page = {}, nil
+    for _ = 1, 20 do
+        local out = run("curl -sS --max-time 20 -w '\\n%{http_code}'" ..
+            " -H 'Authorization: Bearer " .. access .. "'" ..
+            " 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/" ..
+            package .. "/purchases/voidedpurchases?type=0&maxResults=1000" ..
+            (page and ("&token=" .. page) or "") .. "'")
+        local body, code = out:match("^(.*)\n(%d+)%s*$")
+        if tonumber(code) ~= 200 then
+            if tonumber(code) == 401 or tonumber(code) == 403 then accessToken = nil end
+            return nil, "http_" .. tostring(code)
+        end
+        for t in body:gmatch('"purchaseToken"%s*:%s*"([%w%._%-]+)"') do tokens[#tokens + 1] = t end
+        page = body:match('"nextPageToken"%s*:%s*"([%w%-_=]+)"')
+        if not page then break end
+    end
+    return table.concat(tokens, "\n")
+end
+
 while true do
     local job = requests:demand()
-    local ok, reason, retry, order = verifyGoogle(job)
-    results:push({ id = job.id, ok = ok, reason = reason or "", retry = retry and true or false, order = order or "" })
+    if job.kind == "voided" then
+        local tokens, err = listVoided()
+        results:push({ id = job.id, kind = "voided", ok = tokens ~= nil, tokens = tokens or "", reason = err or "" })
+    else
+        local ok, reason, retry, order = verifyGoogle(job)
+        results:push({ id = job.id, ok = ok, reason = reason or "", retry = retry and true or false, order = order or "" })
+    end
 end
 ]]
 
@@ -181,9 +223,17 @@ function IapVerify.request(job, onResult)
     end
 end
 
--- Call every server tick: delivers finished Google checks.
-function IapVerify.poll()
+-- Call every server tick: delivers finished Google checks and schedules the
+-- refund check.
+function IapVerify.poll(dt)
     if not results then return end
+    if thread and not voidedInFlight then
+        voidedTimer = voidedTimer - (dt or 0)
+        if voidedTimer <= 0 then
+            voidedTimer, voidedInFlight = VOIDED_INTERVAL, true
+            requests:push({ kind = "voided", id = 0 })
+        end
+    end
     if thread then
         local err = thread:getError()
         if err then
@@ -194,6 +244,16 @@ function IapVerify.poll()
     while true do
         local r = results:pop()
         if not r then break end
+        if r.kind == "voided" then
+            voidedInFlight = false
+            if not r.ok then
+                log("[IAP] refund check failed: " .. r.reason)
+            elseif r.tokens ~= "" and IapVerify.onVoided then
+                local list = {}
+                for t in r.tokens:gmatch("[^\n]+") do list[#list + 1] = t end
+                IapVerify.onVoided(list)
+            end
+        end
         local job = jobs[r.id]
         jobs[r.id] = nil
         if job then

@@ -2652,11 +2652,18 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
         self._iapBtnRect = { x = bx + po, y = by - maxF, w = btnW, h = btnH + btnShd + maxF }
 
-        -- Shop notice (purchase results, "Not enough gold!", ...)
+        -- Shop notice (purchase results, "Not enough gold!", ...), else explain
+        -- a negative balance (a refunded purchase whose gold was already spent)
+        local noticeY = by + btnH + btnShd + math.floor(14 * sc)
         if self.shopNotice then
             lg.setFont(Fonts.tiny)
             lg.setColor(1, 0.85, 0.3, math.min(1, self.shopNoticeTimer * 2))
-            lg.printf(self.shopNotice, startX, by + btnH + btnShd + math.floor(14 * sc), totalW, 'center')
+            lg.printf(self.shopNotice, startX, noticeY, totalW, 'center')
+        elseif _G.PlayerData and (_G.PlayerData.gold or 0) < 0 then
+            lg.setFont(Fonts.tiny)
+            lg.setColor(0.95, 0.35, 0.3, 1)
+            lg.printf("A gold purchase was refunded. Gold you earn pays it back first.",
+                      startX, noticeY, totalW, 'center')
         end
     end
 
@@ -3101,7 +3108,11 @@ local OPEN_FRAME_DT   = 0.06   -- 16 frames → ~0.96s
 
                 local coins  = self._displayGold or (_G.PlayerData.gold or _G.PlayerData.coins or 0)
                 lg.setFont(Fonts.small)
-                lg.setColor(0.965, 0.839, 0.741, 1)
+                if coins < 0 then
+                    lg.setColor(0.95, 0.35, 0.3, 1)   -- debt from a refunded purchase
+                else
+                    lg.setColor(0.965, 0.839, 0.741, 1)
+                end
                 local textX  = iconX + iconW + math.floor(4 * sc)
                 local textW  = coinX + coinW - textX - math.floor(4 * sc)
                 if textW > 0 then

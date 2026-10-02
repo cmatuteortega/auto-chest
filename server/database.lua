@@ -168,6 +168,7 @@ function Database:createTables()
         );
         CREATE INDEX IF NOT EXISTS idx_iap_player ON iap_purchases(player_id);
     ]])
+    pcall(function() self.db:exec("ALTER TABLE iap_purchases ADD COLUMN refunded_at INTEGER") end)
 end
 
 -- Register a new player
@@ -696,10 +697,12 @@ function Database:updateXP(playerId, amount)
     return { xp = xp, level = level, unlocks = unlocks }
 end
 
--- Add gold to a player (delta can be negative)
+-- Add gold to a player (delta can be negative). Spending stops at 0, and
+-- never deepens a negative balance (debt from a refunded purchase, see
+-- refundIapPurchase): earnings pay the debt off, spending leaves it alone.
 function Database:updateGold(playerId, delta)
     local stmt = self.db:prepare([[
-        UPDATE players SET gold = MAX(0, gold + ?) WHERE id = ?
+        UPDATE players SET gold = MAX(MIN(gold, 0), gold + ?) WHERE id = ?
     ]])
     stmt:bind_values(delta, playerId)
     stmt:step()
@@ -713,13 +716,15 @@ function Database:updateGold(playerId, delta)
     return newGold
 end
 
--- In-app purchase already granted for this store token: { player_id, product_id } or nil
+-- In-app purchase already granted for this store token:
+-- { player_id, product_id, refunded } or nil
 function Database:getIapPurchase(token)
-    local stmt = self.db:prepare("SELECT player_id, product_id FROM iap_purchases WHERE token = ?")
+    local stmt = self.db:prepare("SELECT player_id, product_id, refunded_at FROM iap_purchases WHERE token = ?")
     stmt:bind_values(token)
     local row
     if stmt:step() == sqlite3.ROW then
-        row = { player_id = stmt:get_value(0), product_id = stmt:get_value(1) }
+        row = { player_id = stmt:get_value(0), product_id = stmt:get_value(1),
+                refunded = stmt:get_value(2) ~= nil }
     end
     stmt:finalize()
     return row
@@ -746,6 +751,31 @@ function Database:grantIapPurchase(token, playerId, productId, store, orderId, g
     stmt:finalize()
     self.db:exec("COMMIT")
     return self:updateGold(playerId, 0)
+end
+
+-- Take back the gold of a refunded purchase, even below 0 (spent gold becomes
+-- debt). Returns player_id, new gold; or nil if unknown or already refunded.
+function Database:refundIapPurchase(token, gold)
+    local row = self:getIapPurchase(token)
+    if not row or row.refunded then return nil end
+    self.db:exec("BEGIN IMMEDIATE")
+    local stmt = self.db:prepare([[
+        UPDATE iap_purchases SET refunded_at = strftime('%s', 'now')
+        WHERE token = ? AND refunded_at IS NULL
+    ]])
+    stmt:bind_values(token)
+    stmt:step()
+    stmt:finalize()
+    if self.db:changes() == 0 then
+        self.db:exec("ROLLBACK")
+        return nil
+    end
+    stmt = self.db:prepare("UPDATE players SET gold = gold - ? WHERE id = ?")
+    stmt:bind_values(gold, row.player_id)
+    stmt:step()
+    stmt:finalize()
+    self.db:exec("COMMIT")
+    return row.player_id, self:updateGold(row.player_id, 0)
 end
 
 -- Add gems to a player (delta can be negative)
