@@ -7,6 +7,8 @@
 #
 # Outputs:
 #   - every run: the signed APK as a workflow artifact
+#   - every run with the signing secrets: a signed AAB artifact, for uploading
+#     to Play Console (Play only accepts AABs; this key is the upload key)
 #   - tags v*:   a GitHub Release with the APK attached (what players download)
 #
 # Signing (repo Settings → Secrets and variables → Actions → Secrets):
@@ -150,9 +152,9 @@ jobs:
           unzip -l ../love-android/app/src/embed/assets/game.love | grep -E ' (main|conf)\.lua$'
           ls -lh ../love-android/app/src/embed/assets/game.love
 
-      - name: Build APK
+      - name: Build APK and AAB
         working-directory: love-android
-        run: ./gradlew assembleEmbedNoRecordRelease --stacktrace
+        run: ./gradlew assembleEmbedNoRecordRelease bundleEmbedNoRecordRelease --stacktrace
 
       - name: Sign APK
         env:
@@ -179,8 +181,21 @@ jobs:
             --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
             --out "$out" "$RUNNER_TEMP/aligned.apk"
           "$bt/apksigner" verify --print-certs "$out"
-          rm -f "$ks"
           echo "APK=$out" >> "$GITHUB_ENV"
+
+          # AAB for Play Console: only with the real key. Play binds the first
+          # upload's key as the upload key, so a throwaway-signed AAB is useless.
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            bundle=$(ls love-android/app/build/outputs/bundle/embedNoRecordRelease/*.aab | head -1)
+            aab="$RUNNER_TEMP/$APK_BASENAME-$VERSION_NAME.aab"
+            jarsigner -keystore "$ks" -storepass:env KEYSTORE_PASSWORD -keypass:env KEY_PASSWORD \
+              -sigalg SHA256withRSA -digestalg SHA-256 -signedjar "$aab" "$bundle" "$KEY_ALIAS"
+            jarsigner -verify "$aab" | tail -1
+            echo "AAB=$aab" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing secrets: skipping the Play Console AAB (versionCode $VERSION_CODE)."
+          fi
+          rm -f "$ks"
         shell: bash
 
       - name: Upload APK
@@ -188,6 +203,14 @@ jobs:
         with:
           name: ${{ env.APK_BASENAME }}-${{ env.VERSION_NAME }}
           path: ${{ env.APK }}
+          if-no-files-found: error
+
+      - name: Upload AAB
+        if: env.AAB != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_BASENAME }}-${{ env.VERSION_NAME }}-aab
+          path: ${{ env.AAB }}
           if-no-files-found: error
 
       - name: GitHub Release

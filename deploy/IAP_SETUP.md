@@ -32,11 +32,12 @@ means it is never granted twice. Play refunds purchases left unconsumed for
 
 1. Create the app with application id **`com.cmatute.tinyturf`** (or whatever
    `ANDROID_APP_ID` is set to in the repo's Actions variables).
-2. Set the `ANDROID_KEYSTORE_*` secrets if not done yet. Every build must be
-   signed with the same key from now on.
-3. Play wants an AAB for uploads: build one with
-   `./gradlew bundleEmbedNoRecordRelease` in love-android (the CI builds the
-   APK only) and upload it to **Internal testing**.
+2. Set the four signing secrets (`ANDROID_KEYSTORE_BASE64`,
+   `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`;
+   see the top of `.github/workflows/android.yml`). Every build must be signed
+   with this key from now on; it becomes your Play *upload key*.
+3. With the secrets set, each CI run also produces a signed AAB artifact
+   (`TinyTurf-<version>-aab`). Upload it to **Internal testing**.
 4. *Monetize → Products → In-app products → Create*: id **`gold_1000`**,
    name "1000 Gold", price **€1.00** (Play converts for other countries).
    Activate it.
